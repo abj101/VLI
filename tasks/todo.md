@@ -47,7 +47,7 @@ See [plan.md](./plan.md) for full task descriptions. All `npm`/`tauri` commands 
 
 ---
 
-### Task 4a — Mic capture (cpal)
+### Task 4a — Mic capture (cpal) ✅ (2026-04-13)
 
 - `src/audio/capture.rs`: WASAPI mic stream, PCM f32 chunks → `mpsc::Sender<Vec<f32>>`
 - Emit `amplitude-update` (normalized 0.0–1.0) Tauri events during capture
@@ -55,7 +55,7 @@ See [plan.md](./plan.md) for full task descriptions. All `npm`/`tauri` commands 
 - Graceful error + event if no mic device found
 - **Verify:** `cargo test audio::capture`; manual devtools — `amplitude-update` events firing
 
-### Task 4b — Whisper inference + bundled model
+### Task 4b — Whisper inference + bundled model ✅ (2026-04-13)
 
 - `src/audio/stt.rs`: dedicated inference thread, consumes PCM from T4a channel, runs `whisper-rs`
 - Emit `transcript-update { text, is_final }` matching `src/types.ts`
