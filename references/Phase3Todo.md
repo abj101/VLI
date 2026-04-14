@@ -34,8 +34,8 @@
 
 ## Task 3-3: NodeList Panel
 
-- [ ] Create `editorStore.ts` (Zustand): `nodes`, `selectedId`, `setSelected`, `setNodes`, `deleteNode`, `toggleEnabled`
-- [ ] Write Vitest unit tests for `editorStore` (`NodeList.test.ts`)
+- [x] Create `editorStore.ts` (Zustand): `nodes`, `selectedId`, `setSelected`, `setNodes`, `deleteNode`, `toggleEnabled`
+- [x] Write Vitest unit tests for `editorStore` (`NodeList.test.ts`)
 - [ ] Create `NodeList.tsx`: loads via `invoke("list_commands")` on mount
 - [ ] Render each row: name, first trigger phrase, enabled toggle (pill switch), delete button
 - [ ] Enabled toggle: optimistic update + `invoke("update_command")` + revert on error with inline toast
@@ -46,7 +46,7 @@
 - [ ] **Verify:** Seeded nodes appear on first editor open
 - [ ] **Verify:** Delete node → close/reopen editor → gone
 - [ ] **Verify:** Toggle enabled → close/reopen → toggle state persisted
-- [ ] **Verify:** `cd jarvis && npm run test` — `editorStore` tests pass
+- [x] **Verify:** `cd jarvis && npm run test` — `editorStore` tests pass
 - [ ] **Verify:** `npm run lint` clean
 
 ---
