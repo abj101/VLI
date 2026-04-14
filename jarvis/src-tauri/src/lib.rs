@@ -33,10 +33,17 @@ struct HudRuntime {
 type SharedHud = Arc<Mutex<HudRuntime>>;
 
 fn try_start_listening_audio(app: &AppHandle, slot: &SharedAudioPipeline) {
-    let mut g = slot.lock().unwrap();
-    *g = None;
+    let old = {
+        let mut g = slot.lock().unwrap();
+        g.take()
+    };
+    drop(old);
+
     match audio::AudioPipeline::start(app) {
-        Ok(p) => *g = Some(p),
+        Ok(p) => {
+            let mut g = slot.lock().unwrap();
+            *g = Some(p);
+        }
         Err(msg) => {
             let _ = app.emit("audio-error", serde_json::json!({ "message": msg }));
         }
@@ -217,7 +224,11 @@ fn process_transcript_update(
     audio::stop_shared_pipeline(audio);
     let _ = set_phase(app, rt, HudPhase::Executing)?;
     if let Some(node) = nodes.iter().find(|n| n.id.to_string() == matched.node_id) {
-        commands::execute_command(node, &TauriActionRuntime::new(app));
+        let node = node.clone();
+        let app_h = app.clone();
+        std::thread::spawn(move || {
+            commands::execute_command(&node, &TauriActionRuntime::new(&app_h));
+        });
     }
 
     let done_session_id = set_phase(app, rt, HudPhase::Done)?;

@@ -86,8 +86,17 @@ impl Deref for SharedAudioPipeline {
 }
 
 /// Clears any live pipeline (stops capture and joins STT).
+///
+/// **Must not** drop [`AudioPipeline`] while holding `slot`'s mutex: `Drop` joins the STT thread,
+/// which may emit `transcript-update` and re-enter code that tries to lock the same mutex → deadlock.
+/// `AudioPipeline` is not `Send` (cpal), so we cannot move it to another thread; we `take()` then
+/// `drop` on this thread after releasing the mutex.
 pub fn stop_shared_pipeline(slot: &SharedAudioPipeline) {
-    *slot.lock().unwrap() = None;
+    let old = {
+        let mut g = slot.lock().unwrap();
+        g.take()
+    };
+    drop(old);
 }
 
 #[cfg(test)]
