@@ -1,0 +1,165 @@
+.editor-root {
+  height: 100%;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 12px;
+  padding: 12px;
+  box-sizing: border-box;
+  background: #0f1116;
+  color: #f3f5fb;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
+    sans-serif;
+}
+
+.editor-panel {
+  background: #171b23;
+  border: 1px solid #2a3342;
+  border-radius: 12px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.editor-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid #273041;
+}
+
+.editor-panel-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.editor-add-btn,
+.editor-empty-add,
+.editor-delete-btn,
+.editor-toggle {
+  border: 1px solid #394865;
+  background: #1f2736;
+  color: #f3f5fb;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.editor-add-btn {
+  width: 30px;
+  height: 30px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.editor-inline-toast {
+  margin: 10px 12px 0;
+  border: 1px solid #6b2934;
+  background: #3b1f26;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.editor-empty-state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  color: #c5ccda;
+}
+
+.editor-empty-state p {
+  margin: 0;
+}
+
+.editor-empty-add {
+  width: 64px;
+  height: 64px;
+  font-size: 44px;
+  border-radius: 16px;
+}
+
+.editor-node-list {
+  list-style: none;
+  padding: 10px 12px 12px;
+  margin: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.editor-node-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  border: 1px solid #374359;
+  border-radius: 10px;
+  background: #1d2431;
+  padding: 9px 10px;
+  cursor: pointer;
+}
+
+.editor-node-row.is-selected {
+  border-color: #5aa9ff;
+  box-shadow: 0 0 0 1px #5aa9ff inset;
+}
+
+.editor-node-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.editor-node-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f8f9fd;
+}
+
+.editor-node-trigger {
+  font-size: 12px;
+  color: #a9b4c9;
+}
+
+.editor-node-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editor-toggle,
+.editor-delete-btn {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.editor-toggle.is-on {
+  border-color: #2e8d60;
+  background: #1b3b2d;
+}
+
+.editor-delete-btn {
+  border-color: #6b2934;
+  background: #3b1f26;
+}
+
+.editor-form-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #a9b4c9;
+  padding: 12px;
+}
