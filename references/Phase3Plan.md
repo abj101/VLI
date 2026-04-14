@@ -388,12 +388,12 @@ Also wire the live pipeline's `ai_mode` path (from SPEC Phase 4 preview, minimal
 
 ### Checkpoint C — Phase 3 Complete
 
-- [ ] All Phase 3 tasks merged and passing CI quality gates.
-- [ ] Editor opens from tray; all CRUD operations work end-to-end.
-- [ ] Pipeline live-reloads after editor saves (no app restart needed).
-- [ ] `BrainStorm.md` restored.
-- [ ] `npm run tauri build` produces installable `.exe` with full Phase 3 feature set.
-- [ ] Human sign-off before Phase 4 (Porcupine/OpenWakeWord wake-word + Haiku `ai_mode` full integration).
+- [x] All Phase 3 tasks merged and passing CI quality gates.
+- [x] Editor opens from tray; all CRUD operations work end-to-end.
+- [x] Pipeline live-reloads after editor saves (no app restart needed).
+- [x] `BrainStorm.md` restored.
+- [x] `npm run tauri build` produces installable `.exe` with full Phase 3 feature set.
+- [x] Human sign-off before Phase 4 (Porcupine/OpenWakeWord wake-word + Haiku `ai_mode` full integration). *(2026-04-14)*
 
 ---
 

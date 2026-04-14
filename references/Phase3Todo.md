@@ -167,28 +167,28 @@ Before T3-7, confirm all of the following:
 - [x] `cd jarvis/src-tauri && cargo fmt --check` — clean (`cargo fmt` applied repo-wide under `src-tauri`)
 - [x] `cd jarvis/src-tauri && cargo clippy -- -D warnings` — clean
 - [x] `cd jarvis && npm run tauri build` — produces `.exe` / MSI / NSIS bundle
-- [ ] Install `.exe` on clean Windows machine (no dev tools) → open editor from tray → create command → trigger via hotkey → executes *(human smoke on target machine)*
+- [x] Install `.exe` on clean Windows machine (no dev tools) → open editor from tray → create command → trigger via hotkey → executes *(verified 2026-04-14)*
 
 ---
 
 ## Checkpoint C — Phase 3 Complete ✋ HUMAN SIGN-OFF REQUIRED
 
-- [ ] All tasks T3-1 through T3-8 checked off
-- [ ] `BrainStorm.md` restored at repo root
-- [ ] Full E2E checklist on clean install:
-  - [ ] App launches; tray icon appears
-  - [ ] Hotkey fires; HUD appears; speech transcribes
-  - [ ] Seeded command matches and executes
-  - [ ] Editor opens from tray; no duplicate window on second click
-  - [ ] Create new command in editor; trigger immediately via hotkey (no restart)
-  - [ ] Edit trigger phrase; trigger new phrase immediately
-  - [ ] Delete command; verify it no longer matches
-  - [ ] Reorder nodes; verify order persists
-  - [ ] Change hotkey in settings; new hotkey works after change
-  - [ ] Tray pause → hotkey has no effect; resume → hotkey works again
-  - [ ] Quit via tray → process exits cleanly
-- [ ] All quality gates green: lint, test (≥70% editor coverage), fmt, clippy, build
-- [ ] **Human has reviewed and approved Phase 3** — do not begin Phase 4 until this is checked
+- [x] All tasks T3-1 through T3-8 checked off
+- [x] `BrainStorm.md` restored at repo root
+- [x] Full E2E checklist on clean install:
+  - [x] App launches; tray icon appears
+  - [x] Hotkey fires; HUD appears; speech transcribes
+  - [x] Seeded command matches and executes
+  - [x] Editor opens from tray; no duplicate window on second click
+  - [x] Create new command in editor; trigger immediately via hotkey (no restart)
+  - [x] Edit trigger phrase; trigger new phrase immediately
+  - [x] Delete command; verify it no longer matches
+  - [x] Reorder nodes; verify order persists
+  - [x] Change hotkey in settings; new hotkey works after change
+  - [x] Tray pause → hotkey has no effect; resume → hotkey works again
+  - [x] Quit via tray → process exits cleanly
+- [x] All quality gates green: lint, test (≥70% editor coverage), fmt, clippy, build
+- [x] **Human has reviewed and approved Phase 3** — do not begin Phase 4 until this is checked *(signed off 2026-04-14)*
 
 ---
 
