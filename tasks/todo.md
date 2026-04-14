@@ -111,7 +111,7 @@ See [plan.md](./plan.md) for full task descriptions. All `npm`/`tauri` commands 
 
 ---
 
-### Task 9 — Integration
+### Task 9 — Integration ✅ (2026-04-13)
 
 - `lib.rs` orchestrator: hotkey → `is_paused` check → show HUD + start capture → transcript → matcher (on final segments) → `match-result` → stop mic → executor → `action-status` → **4s auto-dismiss** after completion
 - No-match **5s timeout** → dismiss HUD gracefully

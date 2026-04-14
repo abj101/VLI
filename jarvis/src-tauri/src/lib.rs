@@ -5,16 +5,22 @@ mod hud;
 mod tray;
 
 use audio::SharedAudioPipeline;
+use commands::TauriActionRuntime;
 use hud::{sync_hud_window, HudPhase, HUD_WINDOW_LABEL};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, Manager, State};
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
+
+const AUTO_DISMISS_AFTER: Duration = Duration::from_secs(4);
+const NO_MATCH_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Default)]
 struct HudRuntime {
     phase: HudPhase,
     visible: bool,
+    session_id: u64,
 }
 
 type SharedHud = Arc<Mutex<HudRuntime>>;
@@ -40,6 +46,106 @@ fn emit_hud_phase(app: &AppHandle, phase: HudPhase) {
     );
 }
 
+fn load_all_commands(app: &AppHandle) -> Result<Vec<db::CommandNode>, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let db_path = dir.join("jarvis.db");
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+    db::get_all_commands(&conn).map_err(|e| e.to_string())
+}
+
+fn should_process_final_transcript(rt: &HudRuntime, is_final: bool) -> bool {
+    is_final && rt.visible && rt.phase == HudPhase::Listening
+}
+
+fn should_fire_no_match_timeout(rt: &HudRuntime, expected_session_id: u64) -> bool {
+    rt.visible && rt.phase == HudPhase::Listening && rt.session_id == expected_session_id
+}
+
+fn should_fire_auto_dismiss(rt: &HudRuntime, expected_session_id: u64) -> bool {
+    rt.visible && rt.phase == HudPhase::Done && rt.session_id == expected_session_id
+}
+
+fn schedule_no_match_timeout(
+    app: AppHandle,
+    rt: SharedHud,
+    audio: SharedAudioPipeline,
+    expected_session_id: u64,
+) {
+    std::thread::spawn(move || {
+        std::thread::sleep(NO_MATCH_TIMEOUT);
+        let should_dismiss = rt
+            .lock()
+            .map(|s| should_fire_no_match_timeout(&s, expected_session_id))
+            .unwrap_or(false);
+        if !should_dismiss {
+            return;
+        }
+        let _ = dismiss_hud(&app, &rt);
+        audio::stop_shared_pipeline(&audio);
+    });
+}
+
+fn schedule_auto_dismiss(app: AppHandle, rt: SharedHud, audio: SharedAudioPipeline, expected_session_id: u64) {
+    std::thread::spawn(move || {
+        std::thread::sleep(AUTO_DISMISS_AFTER);
+        let should_dismiss = rt
+            .lock()
+            .map(|s| should_fire_auto_dismiss(&s, expected_session_id))
+            .unwrap_or(false);
+        if !should_dismiss {
+            return;
+        }
+        let _ = dismiss_hud(&app, &rt);
+        audio::stop_shared_pipeline(&audio);
+    });
+}
+
+fn set_phase(app: &AppHandle, rt: &SharedHud, phase: HudPhase) -> Result<u64, String> {
+    let session_id = {
+        let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+        s.phase = phase;
+        s.session_id
+    };
+    sync_hud_window(app, phase)?;
+    emit_hud_phase(app, phase);
+    Ok(session_id)
+}
+
+fn process_transcript_update(
+    app: &AppHandle,
+    rt: &SharedHud,
+    audio: &SharedAudioPipeline,
+    payload: &str,
+) -> Result<(), String> {
+    let update: audio::stt::TranscriptUpdate =
+        serde_json::from_str(payload).map_err(|e| format!("invalid transcript-update payload: {e}"))?;
+    let should_process = {
+        let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+        should_process_final_transcript(&s, update.is_final)
+    };
+    if !should_process {
+        return Ok(());
+    }
+
+    let nodes = load_all_commands(app)?;
+    let matched = match commands::match_command(&update.text, &nodes) {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+    let _ = app.emit("match-result", &matched);
+    let _ = set_phase(app, rt, HudPhase::Matched)?;
+
+    audio::stop_shared_pipeline(audio);
+    let _ = set_phase(app, rt, HudPhase::Executing)?;
+    if let Some(node) = nodes.iter().find(|n| n.id.to_string() == matched.node_id) {
+        commands::execute_command(node, &TauriActionRuntime::new(app));
+    }
+
+    let done_session_id = set_phase(app, rt, HudPhase::Done)?;
+    schedule_auto_dismiss(app.clone(), Arc::clone(rt), Arc::clone(audio), done_session_id);
+    Ok(())
+}
+
 fn show_hud_from_hotkey(
     app: &AppHandle,
     rt: &SharedHud,
@@ -51,9 +157,12 @@ fn show_hud_from_hotkey(
         .get_webview_window(HUD_WINDOW_LABEL)
         .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
 
+    let mut listening_session_id: Option<u64> = None;
     if !s.visible {
         s.visible = true;
         s.phase = HudPhase::Listening;
+        s.session_id = s.session_id.wrapping_add(1);
+        listening_session_id = Some(s.session_id);
         window
             .center()
             .map_err(|e| e.to_string())?;
@@ -62,10 +171,12 @@ fn show_hud_from_hotkey(
     } else {
         s.phase = HudPhase::Stopped;
         s.visible = false;
+        s.session_id = s.session_id.wrapping_add(1);
         window.hide().map_err(|e| e.to_string())?;
     }
 
     let phase = s.phase;
+    let session_id = s.session_id;
     drop(s);
 
     sync_hud_window(app, phase)?;
@@ -73,6 +184,9 @@ fn show_hud_from_hotkey(
 
     if tray::mic_start_allowed(is_paused, phase) {
         try_start_listening_audio(app, audio);
+        if let Some(sid) = listening_session_id.or(Some(session_id)) {
+            schedule_no_match_timeout(app.clone(), Arc::clone(rt), Arc::clone(audio), sid);
+        }
     } else {
         audio::stop_shared_pipeline(audio);
     }
@@ -88,6 +202,7 @@ fn dismiss_hud(app: &AppHandle, rt: &SharedHud) -> Result<(), String> {
 
     s.phase = HudPhase::Stopped;
     s.visible = false;
+    s.session_id = s.session_id.wrapping_add(1);
     window.hide().map_err(|e| e.to_string())?;
 
     let phase = s.phase;
@@ -109,11 +224,18 @@ fn hud_set_phase(phase: HudPhase, app: AppHandle, state: State<'_, SharedHud>) -
     {
         let mut s = state.lock().map_err(|_| "hud state poisoned".to_string())?;
         s.phase = phase;
+        match phase {
+            HudPhase::Listening => {
+                s.visible = true;
+                s.session_id = s.session_id.wrapping_add(1);
+            }
+            HudPhase::Stopped => {
+                s.visible = false;
+                s.session_id = s.session_id.wrapping_add(1);
+            }
+            _ => {}
+        }
     }
-    let phase = state
-        .lock()
-        .map_err(|_| "hud state poisoned".to_string())?
-        .phase;
     sync_hud_window(&app, phase)?;
     emit_hud_phase(&app, phase);
     Ok(())
@@ -163,6 +285,23 @@ pub fn run() {
 
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 {
+                    let transcript_hud = Arc::clone(&hud_state);
+                    let transcript_audio = Arc::clone(&audio_for_shortcut);
+                    let transcript_app = app.handle().clone();
+                    app.listen("transcript-update", move |event| {
+                        if let Err(err) = process_transcript_update(
+                            &transcript_app,
+                            &transcript_hud,
+                            &transcript_audio,
+                            event.payload(),
+                        ) {
+                            let _ = transcript_app.emit(
+                                "audio-error",
+                                serde_json::json!({ "message": err }),
+                            );
+                        }
+                    });
+
                     app.handle()
                         .plugin(
                             ShortcutBuilder::new()
@@ -202,4 +341,28 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn final_transcript_requires_listening_phase() {
+        let mut rt = HudRuntime::default();
+        rt.phase = HudPhase::Done;
+        assert!(!should_process_final_transcript(&rt, true));
+    }
+
+    #[test]
+    fn no_match_timeout_requires_same_session_and_listening() {
+        let mut rt = HudRuntime::default();
+        rt.visible = true;
+        rt.phase = HudPhase::Listening;
+        rt.session_id = 7;
+        assert!(should_fire_no_match_timeout(&rt, 7));
+        assert!(!should_fire_no_match_timeout(&rt, 8));
+        rt.phase = HudPhase::Done;
+        assert!(!should_fire_no_match_timeout(&rt, 7));
+    }
 }

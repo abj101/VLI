@@ -200,78 +200,6 @@ function HudBody() {
   );
 }
 
-const MOCK_PHASES: HudPhase[] = [
-  "idle",
-  "listening",
-  "matched",
-  "executing",
-  "awaiting_input",
-  "done",
-  "stopped",
-];
-
-/** Dev-only: drive Rust phase + local IPC for transcript/match/action/amplitude. */
-export function MockHudDemoBar() {
-  const applyIpc = useHudStore((s) => s.applyIpc);
-
-  const setPhase = (p: HudPhase) => {
-    void invoke("hud_set_phase", { phase: p }).catch(() => {});
-  };
-
-  return (
-    <div className="hud-mock">
-      <div className="hud-mock-title">Mock IPC (dev)</div>
-      <div className="hud-mock-row">
-        {MOCK_PHASES.map((p) => (
-          <button key={p} type="button" onClick={() => setPhase(p)}>
-            {p}
-          </button>
-        ))}
-      </div>
-      <div className="hud-mock-row">
-        <button
-          type="button"
-          onClick={() =>
-            applyIpc("transcript-update", {
-              text: "please open notepad",
-              is_final: false,
-            })
-          }
-        >
-          transcript
-        </button>
-        <button
-          type="button"
-          onClick={() =>
-            applyIpc("match-result", {
-              node_id: "seed-1",
-              matched_phrase: "open notepad",
-              span_start: 7,
-              span_end: 19,
-            })
-          }
-        >
-          match
-        </button>
-        <button
-          type="button"
-          onClick={() =>
-            applyIpc("action-status", { text: "Opening Notepad…" })
-          }
-        >
-          action
-        </button>
-        <button
-          type="button"
-          onClick={() => applyIpc("amplitude-update", { amplitude: 0.72 })}
-        >
-          amp
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export function HudPanel() {
   const applyIpc = useHudStore((s) => s.applyIpc);
   const mounted = useRef(false);
@@ -296,7 +224,6 @@ export function HudPanel() {
       <div className="hud-title">JARVIS</div>
       <HudBody />
       <p className="hud-hint">Toggle: Ctrl+Shift+J · Esc stops</p>
-      {import.meta.env.DEV ? <MockHudDemoBar /> : null}
     </div>
   );
 }
