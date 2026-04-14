@@ -1,4 +1,5 @@
 import type {
+  ActionErrorPayload,
   ActionStatus,
   AudioErrorPayload,
   HudPhase,
@@ -11,6 +12,7 @@ export type HudWireTopic =
   | "transcript-update"
   | "match-result"
   | "action-status"
+  | "action-error"
   | "amplitude-update"
   | "audio-error";
 
@@ -20,6 +22,7 @@ export type HudState = {
   transcriptFinal: boolean;
   match: MatchResult | null;
   actionText: string | null;
+  actionError: string | null;
   amplitude: number;
   audioError: string | null;
 };
@@ -30,6 +33,7 @@ export const initialHudState: HudState = {
   transcriptFinal: false,
   match: null,
   actionText: null,
+  actionError: null,
   amplitude: 0,
   audioError: null,
 };
@@ -63,6 +67,7 @@ export function reduceHudState(
     | TranscriptUpdate
     | MatchResult
     | ActionStatus
+    | ActionErrorPayload
     | { amplitude: number }
     | AudioErrorPayload,
 ): HudState {
@@ -75,6 +80,7 @@ export function reduceHudState(
         next.transcriptFinal = false;
         next.match = null;
         next.actionText = null;
+        next.actionError = null;
         next.amplitude = 0;
         next.audioError = null;
       }
@@ -94,7 +100,11 @@ export function reduceHudState(
     case "match-result":
       return { ...state, match: payload as MatchResult };
     case "action-status":
-      return { ...state, actionText: (payload as ActionStatus).text };
+      return { ...state, actionText: (payload as ActionStatus).text, actionError: null };
+    case "action-error": {
+      const { message } = payload as ActionErrorPayload;
+      return { ...state, actionError: message };
+    }
     case "amplitude-update": {
       const amp = (payload as { amplitude: number }).amplitude;
       const n = Number.isFinite(amp) ? amp : 0;

@@ -4,6 +4,8 @@ use crate::{
 };
 use log::debug;
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -12,6 +14,7 @@ use tauri_plugin_opener::OpenerExt;
 
 pub const ACTION_STATUS_EVENT: &str = "action-status";
 pub const ACTION_ERROR_EVENT: &str = "action-error";
+const ACTION_CANCELLED_MSG: &str = "Action run cancelled";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ActionStatus {
@@ -25,17 +28,22 @@ pub trait ActionRuntime {
     fn send_keys(&self, keys: &str) -> Result<(), String>;
     fn wait_ms(&self, ms: u64) -> Result<(), String>;
     fn speak(&self, text: &str) -> Result<(), String>;
+    fn is_cancelled(&self) -> bool;
     fn emit_status(&self, text: &str);
     fn emit_error(&self, message: &str);
 }
 
 pub struct TauriActionRuntime<'a> {
     app: &'a AppHandle,
+    cancel_flag: Option<Arc<AtomicBool>>,
 }
 
 impl<'a> TauriActionRuntime<'a> {
-    pub fn new(app: &'a AppHandle) -> Self {
-        Self { app }
+    pub fn new(app: &'a AppHandle, cancel_flag: Arc<AtomicBool>) -> Self {
+        Self {
+            app,
+            cancel_flag: Some(cancel_flag),
+        }
     }
 }
 
@@ -105,13 +113,28 @@ impl ActionRuntime for TauriActionRuntime<'_> {
 
     fn wait_ms(&self, ms: u64) -> Result<(), String> {
         debug!("executor: wait_ms ms={ms}");
-        thread::sleep(Duration::from_millis(ms));
+        let mut remaining = ms;
+        while remaining > 0 {
+            if self.is_cancelled() {
+                return Err(ACTION_CANCELLED_MSG.to_string());
+            }
+            let chunk = remaining.min(50);
+            thread::sleep(Duration::from_millis(chunk));
+            remaining -= chunk;
+        }
         Ok(())
     }
 
     fn speak(&self, text: &str) -> Result<(), String> {
         debug!("executor: speak chars={}", text.chars().count());
         tts::speak_with_piper(self.app, text)
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancel_flag
+            .as_ref()
+            .map(|f| f.load(Ordering::Relaxed))
+            .unwrap_or(false)
     }
 
     fn emit_status(&self, text: &str) {
@@ -144,9 +167,17 @@ pub fn execute_command(node: &CommandNode, runtime: &impl ActionRuntime) {
 
 fn execute_actions(actions: &[Action], runtime: &impl ActionRuntime) {
     for action in actions {
+        if runtime.is_cancelled() {
+            runtime.emit_status(ACTION_CANCELLED_MSG);
+            return;
+        }
         match execute_one_action(action, runtime) {
             Ok(text) => runtime.emit_status(&text),
             Err(err) => {
+                if err == ACTION_CANCELLED_MSG {
+                    runtime.emit_status(ACTION_CANCELLED_MSG);
+                    return;
+                }
                 runtime.emit_status(&format!("Failed: {err}"));
                 runtime.emit_error(&err);
             }
@@ -320,6 +351,7 @@ mod tests {
         fail_scripts: Vec<String>,
         fail_keys: Vec<String>,
         fail_speak_texts: Vec<String>,
+        cancelled: bool,
     }
 
     #[derive(Clone, Default, Debug)]
@@ -349,6 +381,14 @@ mod tests {
         fn snapshot(&self) -> MockState {
             self.state.lock().unwrap().clone()
         }
+
+        fn with_cancelled() -> Self {
+            let mut s = MockState::default();
+            s.cancelled = true;
+            Self {
+                state: Arc::new(Mutex::new(s)),
+            }
+        }
     }
 
     impl Clone for MockState {
@@ -367,6 +407,7 @@ mod tests {
                 fail_scripts: self.fail_scripts.clone(),
                 fail_keys: self.fail_keys.clone(),
                 fail_speak_texts: self.fail_speak_texts.clone(),
+                cancelled: self.cancelled,
             }
         }
     }
@@ -420,6 +461,10 @@ mod tests {
                 return Err(format!("mock speak failed: {text}"));
             }
             Ok(())
+        }
+
+        fn is_cancelled(&self) -> bool {
+            self.state.lock().unwrap().cancelled
         }
 
         fn emit_status(&self, text: &str) {
@@ -612,5 +657,25 @@ mod tests {
         assert!(s.speak_calls.is_empty());
         assert_eq!(s.errors.len(), 1);
         assert!(s.errors[0].contains("Speak text cannot be empty"));
+    }
+
+    #[test]
+    fn cancelled_run_stops_before_next_action() {
+        let runtime = MockRuntime::with_cancelled();
+        let node = node_with_actions(vec![
+            Action::OpenUrl {
+                url: "https://example.com".into(),
+            },
+            Action::Speak {
+                text: "never runs".into(),
+            },
+        ]);
+
+        execute_command(&node, &runtime);
+        let s = runtime.snapshot();
+        assert!(s.url_calls.is_empty());
+        assert!(s.speak_calls.is_empty());
+        assert_eq!(s.statuses, vec![ACTION_CANCELLED_MSG.to_string()]);
+        assert!(s.errors.is_empty());
     }
 }

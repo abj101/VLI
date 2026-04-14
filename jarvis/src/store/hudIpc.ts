@@ -62,6 +62,7 @@ export async function subscribeHudIpc(): Promise<() => void> {
 
   const uActErr = await listen<ActionErrorPayload>("action-error", (e) => {
     ipcLog("action-error", e.payload);
+    useHudStore.getState().applyIpc("action-error", e.payload);
   });
   unsubs.push(uActErr);
 

@@ -6,6 +6,7 @@ import {
   type HudWireTopic,
 } from "./hudReducer";
 import type {
+  ActionErrorPayload,
   ActionStatus,
   AudioErrorPayload,
   HudPhase,
@@ -20,6 +21,7 @@ function pickHudState(s: HudStore): HudState {
     transcriptFinal: s.transcriptFinal,
     match: s.match,
     actionText: s.actionText,
+    actionError: s.actionError,
     amplitude: s.amplitude,
     audioError: s.audioError,
   };
@@ -33,6 +35,7 @@ export type HudStore = HudState & {
       | TranscriptUpdate
       | MatchResult
       | ActionStatus
+      | ActionErrorPayload
       | { amplitude: number }
       | AudioErrorPayload,
   ) => void;

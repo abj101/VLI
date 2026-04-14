@@ -8,7 +8,7 @@ use audio::SharedAudioPipeline;
 use commands::TauriActionRuntime;
 use hud::{sync_hud_window, HudPhase, HUD_WINDOW_LABEL};
 use log::{debug, info, warn};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Listener, Manager, State};
@@ -19,6 +19,8 @@ const NO_MATCH_TIMEOUT: Duration = Duration::from_secs(5);
 /// After the last speech-related activity, wait this long before treating speech as finished
 /// (starts the 4s auto-dismiss countdown only after this gap).
 const SILENCE_BEFORE_AUTO_DISMISS: Duration = Duration::from_millis(450);
+/// Debounce partial STT updates so commands do not fire mid-sentence.
+const SILENCE_BEFORE_MATCH: Duration = Duration::from_millis(550);
 /// Amplitude above this (0..1) counts as speech for activity / silence detection.
 const SPEECH_AMPLITUDE_THRESHOLD: f64 = 0.02;
 
@@ -29,6 +31,14 @@ struct HudRuntime {
     session_id: u64,
     /// Last time we saw speech (transcript text or mic level). Used so timers run on silence, not wall-clock from HUD open.
     last_speech_activity: Option<Instant>,
+    /// Last non-empty transcript seen while listening.
+    pending_transcript: String,
+    /// Monotonic version for pending transcript debounce scheduling.
+    transcript_revision: u64,
+    /// Cooperative cancellation handle for currently running action chain.
+    active_run_cancel: Option<Arc<AtomicBool>>,
+    /// Session id that owns `active_run_cancel`.
+    active_run_session_id: Option<u64>,
 }
 
 type SharedHud = Arc<Mutex<HudRuntime>>;
@@ -72,10 +82,53 @@ fn load_all_commands(app: &AppHandle) -> Result<Vec<db::CommandNode>, String> {
     db::get_all_commands(&conn).map_err(|e| e.to_string())
 }
 
-/// Live STT emits partial `transcript-update` (`is_final: false`). `is_final` is only set when the
-/// mic pipeline stops, so matching must run on partials while listening — otherwise commands never fire.
+/// Live STT emits partial `transcript-update` (`is_final: false`). Matching is gated on a short
+/// silence window so commands do not fire before the user finishes their phrase.
 fn should_attempt_command_match(rt: &HudRuntime) -> bool {
     rt.visible && rt.phase == HudPhase::Listening
+}
+
+fn should_attempt_match_for_update(rt: &HudRuntime, is_final: bool) -> bool {
+    if is_final {
+        return true;
+    }
+    match rt.last_speech_activity {
+        Some(last) => last.elapsed() >= SILENCE_BEFORE_MATCH,
+        None => true,
+    }
+}
+
+fn update_pending_transcript(rt: &SharedHud, text: &str) -> Option<(u64, u64)> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut s = rt.lock().ok()?;
+    if !should_attempt_command_match(&s) {
+        return None;
+    }
+    s.pending_transcript = trimmed.to_string();
+    s.transcript_revision = s.transcript_revision.wrapping_add(1);
+    Some((s.session_id, s.transcript_revision))
+}
+
+fn cancel_active_run_in_state(s: &mut HudRuntime) {
+    if let Some(cancel) = s.active_run_cancel.take() {
+        cancel.store(true, Ordering::Relaxed);
+    }
+    s.active_run_session_id = None;
+}
+
+fn should_finalize_execution(
+    rt: &HudRuntime,
+    expected_session_id: u64,
+    is_cancelled: bool,
+) -> bool {
+    rt.visible
+        && rt.phase == HudPhase::Executing
+        && rt.session_id == expected_session_id
+        && rt.active_run_session_id == Some(expected_session_id)
+        && !is_cancelled
 }
 
 fn should_fire_no_match_timeout(rt: &HudRuntime, expected_session_id: u64) -> bool {
@@ -185,6 +238,38 @@ fn schedule_auto_dismiss(
     });
 }
 
+fn spawn_deferred_partial_match(
+    app: AppHandle,
+    rt: SharedHud,
+    audio: SharedAudioPipeline,
+    expected_session_id: u64,
+    expected_revision: u64,
+) {
+    std::thread::spawn(move || {
+        std::thread::sleep(SILENCE_BEFORE_MATCH);
+        let text = {
+            let s = match rt.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            if !should_attempt_command_match(&s) || s.session_id != expected_session_id {
+                return;
+            }
+            if s.transcript_revision != expected_revision {
+                return;
+            }
+            let Some(last) = s.last_speech_activity else {
+                return;
+            };
+            if last.elapsed() < SILENCE_BEFORE_MATCH {
+                return;
+            }
+            s.pending_transcript.clone()
+        };
+        let _ = try_match_and_execute(&app, &rt, &audio, &text);
+    });
+}
+
 fn set_phase(app: &AppHandle, rt: &SharedHud, phase: HudPhase) -> Result<u64, String> {
     debug!("flow: set_phase -> {}", phase.as_str());
     let session_id = {
@@ -195,6 +280,89 @@ fn set_phase(app: &AppHandle, rt: &SharedHud, phase: HudPhase) -> Result<u64, St
     sync_hud_window(app, phase)?;
     emit_hud_phase(app, phase);
     Ok(session_id)
+}
+
+fn try_match_and_execute(
+    app: &AppHandle,
+    rt: &SharedHud,
+    audio: &SharedAudioPipeline,
+    text: &str,
+) -> Result<(), String> {
+    let nodes = load_all_commands(app)?;
+    let matched = match commands::match_command(text, &nodes) {
+        Some(m) => m,
+        None => {
+            debug!("flow: no trigger phrase matched");
+            return Ok(());
+        }
+    };
+
+    {
+        let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+        if s.phase != HudPhase::Listening || !s.visible {
+            debug!("flow: skip match (phase changed before commit)");
+            return Ok(());
+        }
+    }
+    info!(
+        "flow: MATCH node_id={} phrase={:?} span={}..{}",
+        matched.node_id, matched.matched_phrase, matched.span_start, matched.span_end
+    );
+    let _ = app.emit("match-result", &matched);
+    let _ = set_phase(app, rt, HudPhase::Matched)?;
+
+    debug!("flow: stopping mic pipeline");
+    audio::stop_shared_pipeline(audio);
+    debug!("flow: mic stopped; phase executing");
+    let executing_session_id = set_phase(app, rt, HudPhase::Executing)?;
+    if let Some(node) = nodes.iter().find(|n| n.id.to_string() == matched.node_id) {
+        let node = node.clone();
+        let app_h = app.clone();
+        let rt_h = Arc::clone(rt);
+        let audio_h = audio.clone();
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        {
+            let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+            if s.session_id != executing_session_id || s.phase != HudPhase::Executing {
+                debug!("flow: skip execute spawn (phase/session changed)");
+                return Ok(());
+            }
+            cancel_active_run_in_state(&mut s);
+            s.active_run_cancel = Some(cancel_flag.clone());
+            s.active_run_session_id = Some(executing_session_id);
+        }
+        info!("flow: spawn execute_command for node_id={}", node.id);
+        std::thread::spawn(move || {
+            commands::execute_command(&node, &TauriActionRuntime::new(&app_h, cancel_flag.clone()));
+            let should_finalize = {
+                let mut s = match rt_h.lock() {
+                    Ok(g) => g,
+                    Err(_) => return,
+                };
+                let allowed =
+                    should_finalize_execution(&s, executing_session_id, cancel_flag.load(Ordering::Relaxed));
+                if allowed {
+                    s.active_run_cancel = None;
+                    s.active_run_session_id = None;
+                }
+                allowed
+            };
+            if !should_finalize {
+                return;
+            }
+            if let Ok(done_session_id) = set_phase(&app_h, &rt_h, HudPhase::Done) {
+                debug!("flow: scheduled auto-dismiss session_id={done_session_id}");
+                schedule_auto_dismiss(app_h.clone(), Arc::clone(&rt_h), audio_h, done_session_id);
+            }
+        });
+    } else {
+        warn!(
+            "flow: matched node_id={} but no row in loaded nodes (count={})",
+            matched.node_id,
+            nodes.len()
+        );
+    }
+    Ok(())
 }
 
 /// # Transcription → recognition → action
@@ -224,7 +392,7 @@ fn process_transcript_update(
         preview_chars(&update.text, 72)
     );
 
-    let can_match = {
+    let (can_match, can_attempt_this_update) = {
         let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
         if update.hud_session_id != s.session_id {
             debug!(
@@ -233,9 +401,13 @@ fn process_transcript_update(
             );
             return Ok(());
         }
-        should_attempt_command_match(&s)
+        (
+            should_attempt_command_match(&s),
+            should_attempt_match_for_update(&s, update.is_final),
+        )
     };
     touch_speech_on_transcript(rt, &update.text);
+    let pending_meta = update_pending_transcript(rt, &update.text);
     if !can_match {
         debug!("flow: skip (not listening or not visible)");
         return Ok(());
@@ -244,53 +416,19 @@ fn process_transcript_update(
         debug!("flow: skip (empty transcript)");
         return Ok(());
     }
-
-    let nodes = load_all_commands(app)?;
-    let matched = match commands::match_command(&update.text, &nodes) {
-        Some(m) => m,
-        None => {
-            debug!("flow: no trigger phrase matched");
-            return Ok(());
+    if !can_attempt_this_update {
+        if let Some((session_id, revision)) = pending_meta {
+            debug!(
+                "flow: defer match until silence window session={} rev={}",
+                session_id, revision
+            );
+            spawn_deferred_partial_match(app.clone(), Arc::clone(rt), audio.clone(), session_id, revision);
+        } else {
+            debug!("flow: defer match until silence window");
         }
-    };
-
-    {
-        let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
-        if s.phase != HudPhase::Listening || !s.visible {
-            debug!("flow: skip match (phase changed before commit)");
-            return Ok(());
-        }
+        return Ok(());
     }
-    info!(
-        "flow: MATCH node_id={} phrase={:?} span={}..{}",
-        matched.node_id, matched.matched_phrase, matched.span_start, matched.span_end
-    );
-    let _ = app.emit("match-result", &matched);
-    let _ = set_phase(app, rt, HudPhase::Matched)?;
-
-    debug!("flow: stopping mic pipeline");
-    audio::stop_shared_pipeline(audio);
-    debug!("flow: mic stopped; phase executing");
-    let _ = set_phase(app, rt, HudPhase::Executing)?;
-    if let Some(node) = nodes.iter().find(|n| n.id.to_string() == matched.node_id) {
-        let node = node.clone();
-        let app_h = app.clone();
-        info!("flow: spawn execute_command for node_id={}", node.id);
-        std::thread::spawn(move || {
-            commands::execute_command(&node, &TauriActionRuntime::new(&app_h));
-        });
-    } else {
-        warn!(
-            "flow: matched node_id={} but no row in loaded nodes (count={})",
-            matched.node_id,
-            nodes.len()
-        );
-    }
-
-    let done_session_id = set_phase(app, rt, HudPhase::Done)?;
-    debug!("flow: scheduled auto-dismiss session_id={done_session_id}");
-    schedule_auto_dismiss(app.clone(), Arc::clone(rt), audio.clone(), done_session_id);
-    Ok(())
+    try_match_and_execute(app, rt, audio, &update.text)
 }
 
 fn show_hud_from_hotkey(
@@ -310,6 +448,9 @@ fn show_hud_from_hotkey(
         s.phase = HudPhase::Listening;
         s.session_id = s.session_id.wrapping_add(1);
         s.last_speech_activity = Some(Instant::now());
+        s.pending_transcript.clear();
+        s.transcript_revision = 0;
+        cancel_active_run_in_state(&mut s);
         listening_session_id = Some(s.session_id);
         window.center().map_err(|e| e.to_string())?;
         window.show().map_err(|e| e.to_string())?;
@@ -318,6 +459,9 @@ fn show_hud_from_hotkey(
         s.phase = HudPhase::Stopped;
         s.visible = false;
         s.session_id = s.session_id.wrapping_add(1);
+        s.pending_transcript.clear();
+        s.transcript_revision = 0;
+        cancel_active_run_in_state(&mut s);
         window.hide().map_err(|e| e.to_string())?;
     }
 
@@ -349,6 +493,9 @@ fn dismiss_hud(app: &AppHandle, rt: &SharedHud) -> Result<(), String> {
     s.phase = HudPhase::Stopped;
     s.visible = false;
     s.session_id = s.session_id.wrapping_add(1);
+    s.pending_transcript.clear();
+    s.transcript_revision = 0;
+    cancel_active_run_in_state(&mut s);
     window.hide().map_err(|e| e.to_string())?;
 
     let phase = s.phase;
@@ -379,10 +526,16 @@ fn hud_set_phase(
                 s.visible = true;
                 s.session_id = s.session_id.wrapping_add(1);
                 s.last_speech_activity = Some(Instant::now());
+                s.pending_transcript.clear();
+                s.transcript_revision = 0;
+                cancel_active_run_in_state(&mut s);
             }
             HudPhase::Stopped => {
                 s.visible = false;
                 s.session_id = s.session_id.wrapping_add(1);
+                s.pending_transcript.clear();
+                s.transcript_revision = 0;
+                cancel_active_run_in_state(&mut s);
             }
             _ => {}
         }
@@ -511,6 +664,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering;
 
     #[test]
     fn command_match_requires_listening_visible() {
@@ -523,6 +677,28 @@ mod tests {
         rt.phase = HudPhase::Listening;
         rt.visible = false;
         assert!(!should_attempt_command_match(&rt));
+    }
+
+    #[test]
+    fn partial_transcript_match_is_debounced_while_speaking() {
+        let mut rt = HudRuntime::default();
+        rt.last_speech_activity = Some(Instant::now());
+        assert!(!should_attempt_match_for_update(&rt, false));
+    }
+
+    #[test]
+    fn partial_transcript_match_allowed_after_silence_gap() {
+        let mut rt = HudRuntime::default();
+        rt.last_speech_activity =
+            Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
+        assert!(should_attempt_match_for_update(&rt, false));
+    }
+
+    #[test]
+    fn final_transcript_bypasses_match_debounce() {
+        let mut rt = HudRuntime::default();
+        rt.last_speech_activity = Some(Instant::now());
+        assert!(should_attempt_match_for_update(&rt, true));
     }
 
     #[test]
@@ -542,5 +718,31 @@ mod tests {
     fn no_match_fires_when_idle_since_last_speech_exceeds_timeout() {
         let last = Instant::now() - NO_MATCH_TIMEOUT - Duration::from_millis(50);
         assert!(last.elapsed() >= NO_MATCH_TIMEOUT);
+    }
+
+    #[test]
+    fn finalize_execution_requires_matching_active_session() {
+        let mut rt = HudRuntime::default();
+        rt.visible = true;
+        rt.phase = HudPhase::Executing;
+        rt.session_id = 11;
+        rt.active_run_session_id = Some(11);
+        assert!(should_finalize_execution(&rt, 11, false));
+        assert!(!should_finalize_execution(&rt, 11, true));
+        assert!(!should_finalize_execution(&rt, 12, false));
+        rt.phase = HudPhase::Done;
+        assert!(!should_finalize_execution(&rt, 11, false));
+    }
+
+    #[test]
+    fn cancel_active_run_sets_flag_and_clears_tracking() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut rt = HudRuntime::default();
+        rt.active_run_cancel = Some(cancel.clone());
+        rt.active_run_session_id = Some(2);
+        cancel_active_run_in_state(&mut rt);
+        assert!(cancel.load(Ordering::Relaxed));
+        assert!(rt.active_run_cancel.is_none());
+        assert_eq!(rt.active_run_session_id, None);
     }
 }

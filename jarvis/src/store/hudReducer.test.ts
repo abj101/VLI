@@ -14,7 +14,7 @@ describe("reduceHudState", () => {
     expect(next.phase).toBe("listening");
   });
 
-  it("on listening, clears prior transcript, match, action, amplitude", () => {
+  it("on listening, clears prior transcript, match, action, errors, amplitude", () => {
     const dirty = {
       ...initialHudState,
       phase: "done" as const,
@@ -27,6 +27,7 @@ describe("reduceHudState", () => {
         span_end: 12,
       },
       actionText: "Opening…",
+      actionError: "launch failed",
       amplitude: 0.8,
       audioError: "mic failed",
     };
@@ -35,6 +36,7 @@ describe("reduceHudState", () => {
     expect(next.transcriptFinal).toBe(false);
     expect(next.match).toBeNull();
     expect(next.actionText).toBeNull();
+    expect(next.actionError).toBeNull();
     expect(next.amplitude).toBe(0);
     expect(next.audioError).toBeNull();
   });
@@ -112,6 +114,14 @@ describe("reduceHudState", () => {
       text: "Opening Notepad…",
     });
     expect(s.actionText).toBe("Opening Notepad…");
+    expect(s.actionError).toBeNull();
+  });
+
+  it("applies action-error message", () => {
+    const s = reduceHudState(initialHudState, "action-error", {
+      message: "launch failed",
+    });
+    expect(s.actionError).toBe("launch failed");
   });
 
   it("applies amplitude-update and clamps to 0..1", () => {

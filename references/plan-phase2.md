@@ -128,12 +128,12 @@ flowchart TD
 **Description:** Wire new matcher outputs and executor statuses into main pipeline; preserve cancel/timeout semantics.
 
 **Acceptance criteria:**
-- [ ] Transcript finalization triggers fuzzy match path.
-- [ ] Action status/error events stream through full chain.
-- [ ] Stop/Esc cancellation still aborts active run safely.
+- [x] Transcript finalization triggers fuzzy match path.
+- [x] Action status/error events stream through full chain.
+- [x] Stop/Esc cancellation still aborts active run safely.
 
 **Verification:**
-- [ ] `cargo test` for `lib.rs` orchestration logic
+- [x] `cargo test` for `lib.rs` orchestration logic
 - [ ] Manual: fuzzy phrase triggers multi-step chain end-to-end.
 
 **Dependencies:** Tasks 2-4.
