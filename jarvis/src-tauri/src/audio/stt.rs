@@ -10,13 +10,13 @@ use tauri::{AppHandle, Emitter, Manager};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
 
 const WHISPER_MODEL_FILE: &str = "ggml-tiny.en.bin";
-const TARGET_RATE: u32 = 16_000;
+pub(crate) const TARGET_RATE: u32 = 16_000;
 /// Ring buffer cap (~4 s at 16 kHz) to bound work per `full` call.
 const MAX_BUFFER_SAMPLES: usize = TARGET_RATE as usize * 4;
 /// Partial transcript cadence.
-const INFER_EVERY: Duration = Duration::from_millis(750);
+pub(crate) const INFER_EVERY: Duration = Duration::from_millis(750);
 /// Need some audio before first decode.
-const MIN_DECODE_SAMPLES: usize = TARGET_RATE as usize / 4;
+pub(crate) const MIN_DECODE_SAMPLES: usize = TARGET_RATE as usize / 4;
 /// Treat chunks below this peak as silence and eventually reset rolling transcript context.
 const SILENCE_PEAK_THRESHOLD: f32 = 0.01;
 /// Clear stale decode context after this much continuous silence.

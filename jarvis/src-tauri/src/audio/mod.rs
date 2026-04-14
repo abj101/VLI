@@ -1,7 +1,8 @@
-//! Mic capture (cpal) + Whisper STT (Task 4).
+//! Mic capture (cpal) + STT pipeline (Whisper local / OS stub / remote HTTP) (Phase 4).
 
 pub mod capture;
 pub mod stt;
+pub mod transcription;
 pub mod tts;
 // Wake path wired in T4-5; keep module compiled without orchestrator references.
 #[allow(dead_code)]
@@ -18,7 +19,17 @@ use tauri::Emitter;
 
 use capture::CaptureSession;
 use stt::{resolve_whisper_model_path, spawn_stt_thread};
+use transcription::{spawn_os_stt_thread, spawn_remote_stt_thread};
 use whisper_rs::{WhisperContext, WhisperContextParameters};
+
+pub use transcription::RemoteSttParams;
+
+/// Resolved STT path for [`AudioPipeline::start`].
+pub enum SttPipelineChoice {
+    Local,
+    Os,
+    Remote(RemoteSttParams),
+}
 
 /// Consumes PCM when STT is unavailable so the capture thread keeps running and amplitude events fire.
 fn spawn_pcm_drain(pcm_rx: Receiver<Vec<f32>>) -> JoinHandle<()> {
@@ -32,35 +43,63 @@ pub struct AudioPipeline {
 }
 
 impl AudioPipeline {
-    /// Starts default input → PCM channel. Whisper/STT starts only when the model loads; mic + amplitude always run if capture succeeds.
-    pub fn start(app: &AppHandle, hud_session_id: u64) -> Result<Self, String> {
+    /// Starts default input → PCM channel. STT worker depends on `choice`; mic + amplitude run if capture succeeds.
+    pub fn start(
+        app: &AppHandle,
+        hud_session_id: u64,
+        choice: SttPipelineChoice,
+    ) -> Result<Self, String> {
         let (pcm_tx, pcm_rx) = std::sync::mpsc::channel();
         let (capture, sample_rate) = capture::start_capture(app.clone(), pcm_tx)?;
 
-        let stt = match resolve_whisper_model_path(app) {
-            Ok(model_path) => match WhisperContext::new_with_params(
-                model_path.to_string_lossy().as_ref(),
-                WhisperContextParameters::default(),
-            ) {
-                Ok(ctx) => Some(spawn_stt_thread(
-                    app.clone(),
-                    ctx,
-                    pcm_rx,
-                    sample_rate,
-                    hud_session_id,
-                )),
-                Err(e) => {
+        let stt = match choice {
+            SttPipelineChoice::Os => Some(spawn_os_stt_thread(
+                app.clone(),
+                pcm_rx,
+                hud_session_id,
+            )),
+            SttPipelineChoice::Remote(params) => {
+                if params.endpoint.trim().is_empty() {
                     let _ = app.emit(
                         "audio-error",
-                        serde_json::json!({ "message": format!("failed to load whisper model: {e}") }),
+                        serde_json::json!({ "message": "Remote STT: set an HTTPS endpoint URL in Settings." }),
                     );
+                    Some(spawn_pcm_drain(pcm_rx))
+                } else {
+                    Some(spawn_remote_stt_thread(
+                        app.clone(),
+                        params,
+                        pcm_rx,
+                        sample_rate,
+                        hud_session_id,
+                    ))
+                }
+            }
+            SttPipelineChoice::Local => match resolve_whisper_model_path(app) {
+                Ok(model_path) => match WhisperContext::new_with_params(
+                    model_path.to_string_lossy().as_ref(),
+                    WhisperContextParameters::default(),
+                ) {
+                    Ok(ctx) => Some(spawn_stt_thread(
+                        app.clone(),
+                        ctx,
+                        pcm_rx,
+                        sample_rate,
+                        hud_session_id,
+                    )),
+                    Err(e) => {
+                        let _ = app.emit(
+                            "audio-error",
+                            serde_json::json!({ "message": format!("failed to load whisper model: {e}") }),
+                        );
+                        Some(spawn_pcm_drain(pcm_rx))
+                    }
+                },
+                Err(msg) => {
+                    let _ = app.emit("audio-error", serde_json::json!({ "message": msg }));
                     Some(spawn_pcm_drain(pcm_rx))
                 }
             },
-            Err(msg) => {
-                let _ = app.emit("audio-error", serde_json::json!({ "message": msg }));
-                Some(spawn_pcm_drain(pcm_rx))
-            }
         };
 
         Ok(Self { capture, stt })

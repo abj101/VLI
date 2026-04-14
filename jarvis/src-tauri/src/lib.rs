@@ -178,6 +178,33 @@ fn preview_chars(s: &str, max: usize) -> String {
     }
 }
 
+fn load_stt_pipeline_choice(app: &AppHandle) -> audio::SttPipelineChoice {
+    let Ok(conn) = open_db_connection(app) else {
+        return audio::SttPipelineChoice::Local;
+    };
+    let Ok(settings) = db::get_app_settings(&conn) else {
+        return audio::SttPipelineChoice::Local;
+    };
+    match audio::transcription::parse_stt_provider(Some(settings.stt_provider.as_str())) {
+        audio::transcription::SttProvider::Local => audio::SttPipelineChoice::Local,
+        audio::transcription::SttProvider::Os => audio::SttPipelineChoice::Os,
+        audio::transcription::SttProvider::Remote => {
+            let key = if settings.remote_stt_key_stored {
+                keychain::get_api_key("remote_stt").ok().flatten()
+            } else {
+                None
+            };
+            let params = audio::RemoteSttParams {
+                endpoint: settings.remote_stt_url.clone(),
+                model: settings.remote_stt_model.clone(),
+                bearer_token: key,
+                timeout: audio::RemoteSttParams::sanitized_timeout(settings.remote_stt_timeout_secs),
+            };
+            audio::SttPipelineChoice::Remote(params)
+        }
+    }
+}
+
 fn try_start_listening_audio(app: &AppHandle, slot: &SharedAudioPipeline, hud_session_id: u64) {
     let old = {
         let mut g = slot.lock().unwrap();
@@ -185,7 +212,8 @@ fn try_start_listening_audio(app: &AppHandle, slot: &SharedAudioPipeline, hud_se
     };
     drop(old);
 
-    match audio::AudioPipeline::start(app, hud_session_id) {
+    let choice = load_stt_pipeline_choice(app);
+    match audio::AudioPipeline::start(app, hud_session_id, choice) {
         Ok(p) => {
             let mut g = slot.lock().unwrap();
             *g = Some(p);

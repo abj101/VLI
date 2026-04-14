@@ -9,7 +9,7 @@
 
 - [x] **T4-1** `WakeDetector` trait + Porcupine backend *(implemented; see checklist below)*
 - [x] **T4-2** OpenWakeWord backend (feature-gated) *(implemented)*
-- [ ] **T4-3** Transcription backend abstraction + local path + settings contract *(replaces old “Haiku client” milestone — STT only)*
+- [x] **T4-3** Transcription backend abstraction + local path + settings contract *(replaces old “Haiku client” milestone — STT only)*
 - [ ] **T4-4** Settings IPC + UI — wake, Porcupine, **STT provider**; **remove** Anthropic / global AI mode UI *(coordinate with T4-6)*
 
 ### Legacy note (codebase today)
@@ -49,13 +49,13 @@ Earlier Phase 4 work added **Haiku `ai_mode`** (`src/ai/`, Anthropic settings). 
 
 **Replaces obsolete milestone “Haiku HTTP client” — product has no command LLM.**
 
-- [ ] `TranscriptionBackend` (or equivalent) trait / enum: **local on-device**, **OS speech API**, **remote HTTP STT**
-- [ ] Settings row / keys for `stt_provider` + remote endpoint metadata (secrets via keychain, not SQLite)
-- [ ] **Local** path: current Whisper (or bundled) pipeline selected by default; behavior matches Phase 1–3 when chosen
-- [ ] **OS** path: Windows implementation or documented stub + `cfg` for other OSes
-- [ ] **Remote** path: HTTP contract documented; timeout; errors surfaced to HUD/status (no key in logs)
-- [ ] `cargo test` for transcription module(s)
-- [ ] `cargo clippy -- -D warnings` on touched modules
+- [x] `TranscriptionBackend` (or equivalent) trait / enum: **local on-device**, **OS speech API**, **remote HTTP STT**
+- [x] Settings row / keys for `stt_provider` + remote endpoint metadata (secrets via keychain, not SQLite)
+- [x] **Local** path: current Whisper (or bundled) pipeline selected by default; behavior matches Phase 1–3 when chosen
+- [x] **OS** path: Windows implementation or documented stub + `cfg` for other OSes
+- [x] **Remote** path: HTTP contract documented; timeout; errors surfaced to HUD/status (no key in logs)
+- [x] `cargo test` for transcription module(s)
+- [x] `cargo clippy -- -D warnings` on touched modules
 
 ---
 
@@ -95,7 +95,7 @@ Earlier Phase 4 work added **Haiku `ai_mode`** (`src/ai/`, Anthropic settings). 
 
 - [x] `WakeDetector` trait + Porcupine unit tests green
 - [x] OWW compiles behind `oww` feature
-- [ ] Transcription abstraction + local path wired; settings keys defined
+- [x] Transcription abstraction + local path wired; settings keys defined
 - [ ] OS keychain read/write works in bundled `.exe` on Windows (Porcupine / STT secrets)
 - [ ] Key material never surfaces in logs
 - [ ] `cargo clippy -- -D warnings` clean on touched modules
