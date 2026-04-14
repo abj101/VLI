@@ -5,8 +5,28 @@ use crate::audio::stt::resample_mono_to_16k;
 use log::{info, warn};
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
+use std::thread::JoinHandle;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+
+const WAKE_RECV_TICK: Duration = Duration::from_millis(100);
+
+/// Handle to stop and join the wake worker (live reload when settings change).
+pub struct WakeSupervisor {
+    stop: Arc<AtomicBool>,
+    join: Option<JoinHandle<()>>,
+}
+
+impl WakeSupervisor {
+    pub fn shutdown(mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(h) = self.join.take() {
+            let _ = h.join();
+        }
+    }
+}
 
 fn extend_i16_from_f32(out: &mut Vec<i16>, samples: &[f32]) {
     out.extend(
@@ -25,19 +45,34 @@ pub(crate) fn spawn_wake_thread(
     settings: &crate::db::AppSettings,
     is_paused: Arc<AtomicBool>,
     on_wake: Arc<dyn Fn() + Send + Sync + 'static>,
-) -> Result<(), String> {
+) -> Result<WakeSupervisor, String> {
     let detector = super::build_wake_detector(engine, resource_dir.as_path(), settings)?;
     let fixed = detector.fixed_input_frame_len();
     let label = detector.backend_name().to_string();
     info!("wake: spawning thread backend={label}");
 
-    std::thread::Builder::new()
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_thread = Arc::clone(&stop);
+
+    let join = std::thread::Builder::new()
         .name("jarvis-wake".into())
         .spawn(move || {
-            wake_thread_main(app, detector, fixed, label, is_paused, on_wake);
+            wake_thread_main(
+                app,
+                detector,
+                fixed,
+                label,
+                stop_thread,
+                is_paused,
+                on_wake,
+            );
         })
         .map_err(|e| e.to_string())?;
-    Ok(())
+
+    Ok(WakeSupervisor {
+        stop,
+        join: Some(join),
+    })
 }
 
 fn wake_thread_main(
@@ -45,6 +80,7 @@ fn wake_thread_main(
     mut detector: Box<dyn super::WakeDetector>,
     fixed: Option<usize>,
     backend_label: String,
+    stop: Arc<AtomicBool>,
     is_paused: Arc<AtomicBool>,
     on_wake: Arc<dyn Fn() + Send + Sync + 'static>,
 ) {
@@ -59,7 +95,16 @@ fn wake_thread_main(
 
     let mut pending_i16: Vec<i16> = Vec::new();
 
-    for chunk in pcm_rx {
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        let chunk = match pcm_rx.recv_timeout(WAKE_RECV_TICK) {
+            Ok(c) => c,
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
+
         if is_paused.load(Ordering::Relaxed) {
             continue;
         }
@@ -70,6 +115,9 @@ fn wake_thread_main(
             Some(len) => {
                 extend_i16_from_f32(&mut pending_i16, &resampled);
                 while pending_i16.len() >= len {
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
                     let hit = match detector.process_frame(&pending_i16[..len]) {
                         Ok(v) => v,
                         Err(e) => {

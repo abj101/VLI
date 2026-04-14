@@ -163,6 +163,15 @@ struct HudRuntime {
 
 type SharedHud = Arc<Mutex<HudRuntime>>;
 
+/// Holds the running wake worker so `update_settings` can restart it (live reload).
+pub struct WakeSupervisorState(pub Mutex<Option<audio::wake::thread::WakeSupervisor>>);
+
+impl Default for WakeSupervisorState {
+    fn default() -> Self {
+        Self(Mutex::new(None))
+    }
+}
+
 #[derive(Debug)]
 struct HotkeyBindingState {
     current: Mutex<String>,
@@ -926,6 +935,94 @@ fn wake_request_hud(
     Ok(())
 }
 
+fn make_wake_callback(
+    wake_app: AppHandle,
+    wake_hud: SharedHud,
+    wake_audio: SharedAudioPipeline,
+    wake_paused: Arc<AtomicBool>,
+) -> Arc<dyn Fn() + Send + Sync + 'static> {
+    Arc::new(move || {
+        let app = wake_app.clone();
+        let hud = Arc::clone(&wake_hud);
+        let aud = wake_audio.clone();
+        let p = Arc::clone(&wake_paused);
+        let app_for_inner = app.clone();
+        if let Err(err) = app.run_on_main_thread(move || {
+            if let Err(e) = wake_request_hud(&app_for_inner, &hud, &aud, &p) {
+                warn!("wake_request_hud: {e}");
+            }
+        }) {
+            warn!("wake main-thread dispatch: {err:?}");
+        }
+    })
+}
+
+fn try_start_wake_supervisor(
+    app: &AppHandle,
+    resource_dir: std::path::PathBuf,
+    settings: &db::AppSettings,
+    hud: &SharedHud,
+    audio: &SharedAudioPipeline,
+    is_paused: &Arc<AtomicBool>,
+) -> Result<Option<audio::wake::thread::WakeSupervisor>, String> {
+    if !matches!(
+        settings.wake_engine.as_str(),
+        "porcupine" | "oww"
+    ) {
+        return Ok(None);
+    }
+    let cb = make_wake_callback(
+        app.clone(),
+        Arc::clone(hud),
+        audio.clone(),
+        Arc::clone(is_paused),
+    );
+    audio::wake::thread::spawn_wake_thread(
+        app.clone(),
+        resource_dir,
+        settings.wake_engine.as_str(),
+        settings,
+        is_paused.clone(),
+        cb,
+    )
+    .map(Some)
+}
+
+fn wake_reload_from_settings(
+    app: &AppHandle,
+    slot: &WakeSupervisorState,
+    resource_dir: std::path::PathBuf,
+    settings: &db::AppSettings,
+    hud: &SharedHud,
+    audio: &SharedAudioPipeline,
+    is_paused: &Arc<AtomicBool>,
+) {
+    if let Ok(mut g) = slot.0.lock() {
+        if let Some(prev) = g.take() {
+            prev.shutdown();
+        }
+    }
+    match try_start_wake_supervisor(app, resource_dir, settings, hud, audio, is_paused) {
+        Ok(Some(s)) => {
+            if let Ok(mut g) = slot.0.lock() {
+                *g = Some(s);
+            }
+        }
+        Ok(None) => {}
+        Err(e) => warn!("wake thread not started: {e}"),
+    }
+}
+
+fn settings_patch_triggers_wake_reload(
+    patch: &db::SettingsPatch,
+    settings_after: &db::AppSettings,
+) -> bool {
+    if patch.wake_engine.is_some() {
+        return true;
+    }
+    patch.oww_threshold.is_some() && settings_after.wake_engine == "oww"
+}
+
 fn dismiss_hud(app: &AppHandle, rt: &SharedHud) -> Result<(), String> {
     let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
     let window = app
@@ -1150,26 +1247,95 @@ fn get_settings(app: AppHandle) -> Result<db::AppSettings, String> {
 }
 
 #[tauri::command]
-fn update_settings(app: AppHandle, patch: db::SettingsPatch) -> Result<db::AppSettings, String> {
+fn update_settings(
+    app: AppHandle,
+    patch: db::SettingsPatch,
+    wake_slot: State<'_, WakeSupervisorState>,
+    hud_state: State<'_, SharedHud>,
+    audio: State<'_, SharedAudioPipeline>,
+    is_paused: State<'_, Arc<AtomicBool>>,
+) -> Result<db::AppSettings, String> {
     let conn = open_db_connection(&app)?;
     db::apply_settings_patch(&conn, &patch).map_err(|e| e.to_string())?;
-    db::get_app_settings(&conn).map_err(|e| e.to_string())
+    let settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
+    if settings_patch_triggers_wake_reload(&patch, &settings) {
+        let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+        wake_reload_from_settings(
+            &app,
+            wake_slot.inner(),
+            resource_dir,
+            &settings,
+            hud_state.inner(),
+            audio.inner(),
+            is_paused.inner(),
+        );
+    }
+    Ok(settings)
 }
 
 #[tauri::command]
-fn save_api_key(app: AppHandle, service: String, key: String) -> Result<(), String> {
+fn save_api_key(
+    app: AppHandle,
+    service: String,
+    key: String,
+    wake_slot: State<'_, WakeSupervisorState>,
+    hud_state: State<'_, SharedHud>,
+    audio: State<'_, SharedAudioPipeline>,
+    is_paused: State<'_, Arc<AtomicBool>>,
+) -> Result<(), String> {
     let normalized = service.trim().to_ascii_lowercase();
     keychain::save_api_key(&normalized, &key)?;
     let conn = open_db_connection(&app)?;
-    db::set_key_stored_flag(&conn, &normalized, true).map_err(|e| e.to_string())
+    db::set_key_stored_flag(&conn, &normalized, true).map_err(|e| e.to_string())?;
+    if normalized == "porcupine" {
+        let conn = open_db_connection(&app)?;
+        let settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
+        if settings.wake_engine == "porcupine" {
+            let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+            wake_reload_from_settings(
+                &app,
+                wake_slot.inner(),
+                resource_dir,
+                &settings,
+                hud_state.inner(),
+                audio.inner(),
+                is_paused.inner(),
+            );
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
-fn delete_api_key(app: AppHandle, service: String) -> Result<(), String> {
+fn delete_api_key(
+    app: AppHandle,
+    service: String,
+    wake_slot: State<'_, WakeSupervisorState>,
+    hud_state: State<'_, SharedHud>,
+    audio: State<'_, SharedAudioPipeline>,
+    is_paused: State<'_, Arc<AtomicBool>>,
+) -> Result<(), String> {
     let normalized = service.trim().to_ascii_lowercase();
     keychain::delete_api_key(&normalized)?;
     let conn = open_db_connection(&app)?;
-    db::set_key_stored_flag(&conn, &normalized, false).map_err(|e| e.to_string())
+    db::set_key_stored_flag(&conn, &normalized, false).map_err(|e| e.to_string())?;
+    if normalized == "porcupine" {
+        let conn = open_db_connection(&app)?;
+        let settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
+        if settings.wake_engine == "porcupine" {
+            let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+            wake_reload_from_settings(
+                &app,
+                wake_slot.inner(),
+                resource_dir,
+                &settings,
+                hud_state.inner(),
+                audio.inner(),
+                is_paused.inner(),
+            );
+        }
+    }
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1192,6 +1358,7 @@ pub fn run() {
         .manage(HotkeyBindingState {
             current: Mutex::new(DEFAULT_HOTKEY.to_string()),
         })
+        .manage(WakeSupervisorState::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .setup({
@@ -1210,40 +1377,23 @@ pub fn run() {
                 let conn = open_db_connection(app.handle())?;
                 let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
                 let app_settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
-                if matches!(
-                    app_settings.wake_engine.as_str(),
-                    "porcupine" | "oww"
+                let wake_slot = app.state::<WakeSupervisorState>();
+                let app_h = app.handle().clone();
+                match try_start_wake_supervisor(
+                    &app_h,
+                    resource_dir,
+                    &app_settings,
+                    &hud_state,
+                    &audio_for_shortcut,
+                    &is_paused_for_shortcut,
                 ) {
-                    let wake_app = app.handle().clone();
-                    let wake_hud = Arc::clone(&hud_state);
-                    let wake_audio = audio_for_shortcut.clone();
-                    let wake_paused = Arc::clone(&is_paused_for_shortcut);
-                    let engine = app_settings.wake_engine.clone();
-                    if let Err(e) = audio::wake::thread::spawn_wake_thread(
-                        wake_app.clone(),
-                        resource_dir,
-                        engine.as_str(),
-                        &app_settings,
-                        wake_paused.clone(),
-                        Arc::new(move || {
-                            let app = wake_app.clone();
-                            let hud = Arc::clone(&wake_hud);
-                            let aud = wake_audio.clone();
-                            let p = Arc::clone(&wake_paused);
-                            let app_for_inner = app.clone();
-                            if let Err(err) = app.run_on_main_thread(move || {
-                                if let Err(e) =
-                                    wake_request_hud(&app_for_inner, &hud, &aud, &p)
-                                {
-                                    warn!("wake_request_hud: {e}");
-                                }
-                            }) {
-                                warn!("wake main-thread dispatch: {err:?}");
-                            }
-                        }),
-                    ) {
-                        warn!("wake thread not started: {e}");
+                    Ok(Some(s)) => {
+                        if let Ok(mut g) = wake_slot.0.lock() {
+                            *g = Some(s);
+                        }
                     }
+                    Ok(None) => {}
+                    Err(e) => warn!("wake thread not started: {e}"),
                 }
                 let configured_hotkey =
                     match db::get_setting(&conn, SETTING_KEY_HOTKEY).map_err(|e| e.to_string())? {
@@ -1369,6 +1519,55 @@ mod tests {
     fn open_editor_focuses_existing_window_instead_of_duplicate() {
         assert!(should_focus_existing_editor_window(true));
         assert!(!should_focus_existing_editor_window(false));
+    }
+
+    fn sample_settings(wake_engine: &str) -> db::AppSettings {
+        db::AppSettings {
+            porcupine_key_stored: false,
+            wake_engine: wake_engine.into(),
+            oww_threshold: 0.5,
+            stt_provider: "local".into(),
+            remote_stt_url: String::new(),
+            remote_stt_model: None,
+            remote_stt_timeout_secs: 30,
+            remote_stt_key_stored: false,
+        }
+    }
+
+    #[test]
+    fn settings_patch_wake_engine_triggers_wake_reload() {
+        let patch = db::SettingsPatch {
+            wake_engine: Some("porcupine".into()),
+            oww_threshold: None,
+            stt_provider: None,
+            remote_stt_url: None,
+            remote_stt_model: None,
+            remote_stt_timeout_secs: None,
+        };
+        assert!(settings_patch_triggers_wake_reload(
+            &patch,
+            &sample_settings("porcupine")
+        ));
+    }
+
+    #[test]
+    fn oww_threshold_patch_triggers_reload_only_when_engine_is_oww() {
+        let patch = db::SettingsPatch {
+            wake_engine: None,
+            oww_threshold: Some(0.6),
+            stt_provider: None,
+            remote_stt_url: None,
+            remote_stt_model: None,
+            remote_stt_timeout_secs: None,
+        };
+        assert!(!settings_patch_triggers_wake_reload(
+            &patch,
+            &sample_settings("hotkey")
+        ));
+        assert!(settings_patch_triggers_wake_reload(
+            &patch,
+            &sample_settings("oww")
+        ));
     }
 
     #[test]
