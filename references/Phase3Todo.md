@@ -139,10 +139,10 @@ Before T3-7, confirm all of the following:
 
 ## Task 3-7: Integration — Live Pipeline Reload + ai_mode Preview
 
-- [ ] Introduce `CommandCache` in `lib.rs`: `Arc<RwLock<Vec<CommandNode>>>` loaded from DB on startup
-- [ ] Matcher reads from cache (read lock) instead of querying DB per transcript segment
-- [ ] Each editor IPC write (create, update, delete, reorder) refreshes cache after DB write (write lock)
-- [ ] Invalidate `editorStore` / trigger refresh in React after save (so NodeList stays in sync)
+- [x] Introduce `CommandCache` in `lib.rs`: `Arc<RwLock<Vec<CommandNode>>>` loaded from DB on startup
+- [x] Matcher reads from cache (read lock) instead of querying DB per transcript segment
+- [x] Each editor IPC write (create, update, delete, reorder) refreshes cache after DB write (write lock)
+- [x] Invalidate `editorStore` / trigger refresh in React after save (so NodeList stays in sync)
 - [ ] Implement `ai_mode` branch in `executor.rs`: after actions run, if `node.ai_mode == true` AND `ANTHROPIC_API_KEY` env var is set → call `claude-haiku-4-5` with `sub_prompt` text → emit result as `transcript-update { text: <response>, is_final: true }`
 - [ ] **Confirm `reqwest` or Anthropic crate addition before adding dep**
 - [ ] If `ai_mode == true` but no key → log warning, skip silently, no panic

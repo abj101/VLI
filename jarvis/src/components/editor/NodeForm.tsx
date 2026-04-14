@@ -84,13 +84,8 @@ export function NodeForm() {
         ? await invoke<CommandNodePayload>("update_command", { id: model.id, node: payload })
         : await invoke<CommandNodePayload>("create_command", { node: payload });
 
-      const latestNodes = useEditorStore.getState().nodes;
-      const existingIndex = latestNodes.findIndex((entry) => entry.id === saved.id);
-      const nextNodes =
-        existingIndex === -1
-          ? [...latestNodes, saved]
-          : latestNodes.map((entry) => (entry.id === saved.id ? saved : entry));
-      setNodes(nextNodes);
+      const refreshed = await invoke<CommandNodePayload[]>("list_commands");
+      setNodes(refreshed);
       setSelected(saved.id);
       setModel(modelFromNode(saved));
       showToast("Saved");

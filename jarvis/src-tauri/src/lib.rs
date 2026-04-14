@@ -10,7 +10,7 @@ use hud::{sync_hud_window, HudPhase, HUD_WINDOW_LABEL};
 use log::{debug, info, warn};
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Listener, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, GlobalShortcutExt, ShortcutState};
@@ -22,6 +22,7 @@ const DEFAULT_HOTKEY: &str = "ctrl+shift+j";
 const SETTING_KEY_HOTKEY: &str = "hotkey";
 const SETTING_KEY_DEFAULT_THRESHOLD: &str = "default_fuzzy_threshold_pct";
 const DEFAULT_THRESHOLD_PCT: u16 = 80;
+const EDITOR_COMMANDS_CHANGED_EVENT: &str = "editor-commands-changed";
 /// After the last speech-related activity, wait this long before treating speech as finished
 /// (starts the 4s auto-dismiss countdown only after this gap).
 const SILENCE_BEFORE_AUTO_DISMISS: Duration = Duration::from_millis(450);
@@ -34,6 +35,7 @@ const FOLLOW_UP_TIMEOUT_MSG: &str = "Follow-up input timed out";
 const ACTION_RUN_CANCELLED_MSG: &str = "Action run cancelled";
 
 type ActionPayload = db::Action;
+type CommandCache = Arc<RwLock<Vec<db::CommandNode>>>;
 
 #[derive(Debug, Clone, Deserialize)]
 struct CommandNodePayload {
@@ -198,6 +200,34 @@ fn emit_hud_phase(app: &AppHandle, phase: HudPhase) {
 fn load_all_commands(app: &AppHandle) -> Result<Vec<db::CommandNode>, String> {
     let conn = open_db_connection(app)?;
     db::get_all_commands(&conn).map_err(|e| e.to_string())
+}
+
+fn read_command_cache(cache: &CommandCache) -> Result<Vec<db::CommandNode>, String> {
+    cache
+        .read()
+        .map_err(|_| "command cache lock poisoned".to_string())
+        .map(|rows| rows.clone())
+}
+
+fn refresh_command_cache_from_rows(
+    cache: &CommandCache,
+    rows: Vec<db::CommandNode>,
+) -> Result<(), String> {
+    let mut guard = cache
+        .write()
+        .map_err(|_| "command cache lock poisoned".to_string())?;
+    *guard = rows;
+    Ok(())
+}
+
+fn refresh_command_cache(app: &AppHandle, cache: &CommandCache) -> Result<Vec<db::CommandNode>, String> {
+    let rows = load_all_commands(app)?;
+    refresh_command_cache_from_rows(cache, rows.clone())?;
+    Ok(rows)
+}
+
+fn emit_editor_commands_changed(app: &AppHandle) {
+    let _ = app.emit(EDITOR_COMMANDS_CHANGED_EVENT, serde_json::json!({}));
 }
 
 fn should_focus_existing_editor_window(window_exists: bool) -> bool {
@@ -580,7 +610,8 @@ fn try_match_and_execute(
     audio: &SharedAudioPipeline,
     text: &str,
 ) -> Result<(), String> {
-    let nodes = load_all_commands(app)?;
+    let command_cache = app.state::<CommandCache>();
+    let nodes = read_command_cache(&command_cache)?;
     let default_threshold_pct = load_default_fuzzy_threshold_pct(app);
     let matcher_nodes: Vec<db::CommandNode> = nodes
         .iter()
@@ -918,13 +949,20 @@ fn get_command(app: AppHandle, id: i64) -> Result<Option<db::CommandNode>, Strin
 }
 
 #[tauri::command]
-fn create_command(app: AppHandle, node: CommandNodePayload) -> Result<db::CommandNode, String> {
+fn create_command(
+    app: AppHandle,
+    node: CommandNodePayload,
+    command_cache: State<'_, CommandCache>,
+) -> Result<db::CommandNode, String> {
     let conn = open_db_connection(&app)?;
     let row = node.try_into_new_command_node()?;
     let id = db::insert_command(&conn, &row).map_err(|e| e.to_string())?;
-    db::get_command_by_id(&conn, id)
+    let saved = db::get_command_by_id(&conn, id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("created node {id} was not found"))
+        .ok_or_else(|| format!("created node {id} was not found"))?;
+    refresh_command_cache(&app, &command_cache)?;
+    emit_editor_commands_changed(&app);
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -932,6 +970,7 @@ fn update_command(
     app: AppHandle,
     id: i64,
     node: CommandNodePayload,
+    command_cache: State<'_, CommandCache>,
 ) -> Result<db::CommandNode, String> {
     let conn = open_db_connection(&app)?;
     let row = node.try_into_new_command_node()?;
@@ -939,21 +978,40 @@ fn update_command(
     if !changed {
         return Err(format!("command with id {id} was not found"));
     }
-    db::get_command_by_id(&conn, id)
+    let saved = db::get_command_by_id(&conn, id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("updated node {id} was not found"))
+        .ok_or_else(|| format!("updated node {id} was not found"))?;
+    refresh_command_cache(&app, &command_cache)?;
+    emit_editor_commands_changed(&app);
+    Ok(saved)
 }
 
 #[tauri::command]
-fn delete_command(app: AppHandle, id: i64) -> Result<bool, String> {
+fn delete_command(
+    app: AppHandle,
+    id: i64,
+    command_cache: State<'_, CommandCache>,
+) -> Result<bool, String> {
     let conn = open_db_connection(&app)?;
-    db::delete_command(&conn, id).map_err(|e| e.to_string())
+    let deleted = db::delete_command(&conn, id).map_err(|e| e.to_string())?;
+    if deleted {
+        refresh_command_cache(&app, &command_cache)?;
+        emit_editor_commands_changed(&app);
+    }
+    Ok(deleted)
 }
 
 #[tauri::command]
-fn reorder_commands(app: AppHandle, payload: ReorderCommandsPayload) -> Result<(), String> {
+fn reorder_commands(
+    app: AppHandle,
+    payload: ReorderCommandsPayload,
+    command_cache: State<'_, CommandCache>,
+) -> Result<(), String> {
     let conn = open_db_connection(&app)?;
-    db::reorder_commands(&conn, &payload.ordered_ids).map_err(|e| e.to_string())
+    db::reorder_commands(&conn, &payload.ordered_ids).map_err(|e| e.to_string())?;
+    refresh_command_cache(&app, &command_cache)?;
+    emit_editor_commands_changed(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1020,11 +1078,13 @@ pub fn run() {
     #[allow(clippy::arc_with_non_send_sync)]
     let audio_pipeline = SharedAudioPipeline(Arc::new(Mutex::new(None)));
     let is_paused = Arc::new(AtomicBool::new(false));
+    let command_cache: CommandCache = Arc::new(RwLock::new(Vec::new()));
 
     tauri::Builder::default()
         .manage(Arc::clone(&hud_state))
         .manage(audio_pipeline.clone())
         .manage(Arc::clone(&is_paused))
+        .manage(command_cache.clone())
         .manage(HotkeyBindingState {
             current: Mutex::new(DEFAULT_HOTKEY.to_string()),
         })
@@ -1034,10 +1094,12 @@ pub fn run() {
             let hud_state = Arc::clone(&hud_state);
             let audio_for_shortcut = audio_pipeline.clone();
             let is_paused_for_shortcut = Arc::clone(&is_paused);
+            let command_cache_for_setup = command_cache.clone();
             move |app| {
                 let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                 db::init_db(&dir.join("jarvis.db")).map_err(|e| e.to_string())?;
+                refresh_command_cache(app.handle(), &command_cache_for_setup)?;
                 let conn = open_db_connection(app.handle())?;
                 let configured_hotkey = match db::get_setting(&conn, SETTING_KEY_HOTKEY)
                     .map_err(|e| e.to_string())?
@@ -1151,7 +1213,9 @@ pub fn run() {
 mod tests {
     use super::*;
     use db::Action;
+    use rusqlite::Connection;
     use std::sync::atomic::Ordering;
+    use tempfile::tempdir;
 
     #[test]
     fn open_editor_focuses_existing_window_instead_of_duplicate() {
@@ -1379,5 +1443,38 @@ mod tests {
     fn default_threshold_applies_when_node_threshold_is_zero() {
         assert_eq!(resolve_fuzzy_threshold_pct(0, 77), 77);
         assert_eq!(resolve_fuzzy_threshold_pct(88, 77), 88);
+    }
+
+    #[test]
+    fn refresh_command_cache_replaces_previous_snapshot() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("cache-test.db");
+        db::init_db(&path).expect("init db");
+        let conn = Connection::open(&path).expect("open db");
+
+        let inserted_id = db::insert_command(
+            &conn,
+            &db::NewCommandNode {
+                name: "Cache Node".into(),
+                trigger_phrases: vec!["cache me".into()],
+                actions: vec![Action::Wait { ms: 25 }],
+                enabled: true,
+                fuzzy_threshold_pct: 80,
+            },
+        )
+        .expect("insert");
+        let inserted = db::get_command_by_id(&conn, inserted_id)
+            .expect("get inserted")
+            .expect("inserted row");
+
+        let cache: CommandCache = Arc::new(std::sync::RwLock::new(vec![]));
+        refresh_command_cache_from_rows(&cache, vec![inserted.clone()]).expect("prime cache");
+        assert_eq!(read_command_cache(&cache).expect("read first").len(), 1);
+
+        refresh_command_cache_from_rows(&cache, Vec::new()).expect("replace with empty");
+        assert!(
+            read_command_cache(&cache).expect("read second").is_empty(),
+            "cache should be replaced, not appended"
+        );
     }
 }

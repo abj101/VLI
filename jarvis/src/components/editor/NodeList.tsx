@@ -10,6 +10,7 @@ import {
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import { useEditorStore } from "../../store/editorStore";
 import type { CommandNodePayload } from "../../types";
@@ -48,18 +49,34 @@ export function NodeList() {
 
   useEffect(() => {
     let mounted = true;
-    void invoke<CommandNodePayload[]>("list_commands")
-      .then((list) => {
+    const loadNodes = async () => {
+      try {
+        const list = await invoke<CommandNodePayload[]>("list_commands");
         if (!mounted) return;
         setNodes(list);
-      })
-      .catch((err: unknown) => {
+      } catch (err: unknown) {
         if (!mounted) return;
         showError(`Failed to load commands: ${String(err)}`);
-      });
+      }
+    };
+    void loadNodes();
+
+    let unlisten: (() => void) | null = null;
+    void listen("editor-commands-changed", () => {
+      void loadNodes();
+    }).then((off) => {
+      if (mounted) {
+        unlisten = off;
+      } else {
+        off();
+      }
+    });
 
     return () => {
       mounted = false;
+      if (unlisten) {
+        unlisten();
+      }
       if (errorTimeoutRef.current) {
         window.clearTimeout(errorTimeoutRef.current);
       }
