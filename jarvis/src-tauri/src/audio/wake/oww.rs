@@ -4,7 +4,7 @@
 
 use crate::audio::wake::{WakeDetector, WakeError};
 use log::warn;
-use ndarray::{concatenate, s, Array2, Array3, Axis};
+use ndarray::{concatenate, s, Array2, Array3, ArrayBase, Axis, OwnedRepr};
 use ort::session::builder::SessionBuilder;
 use ort::session::Session;
 use ort::value::TensorRef;
@@ -222,6 +222,27 @@ fn get_melspectrogram(session: &mut Session, x: &[i16]) -> Result<Array2<f32>, W
     Ok(spec2)
 }
 
+/// ONNX embedding output can be rank 2–4 depending on export + ORT layout (e.g. `[1,1,1,96]`).
+/// Collapse leading singleton axes until we have a row matrix `[rows, features]`.
+fn embedding_activations_to_matrix(
+    mut a: ArrayBase<OwnedRepr<f32>, ndarray::IxDyn>,
+) -> Result<Array2<f32>, WakeError> {
+    while a.ndim() > 2 {
+        if a.len_of(Axis(0)) != 1 {
+            return Err(WakeError::Process(format!(
+                "embedding: unexpected shape {:?} (need leading singleton axes to squeeze to 2D)",
+                a.shape()
+            )));
+        }
+        a = a.index_axis_move(Axis(0), 0);
+    }
+    if a.ndim() == 1 {
+        a = a.insert_axis(Axis(0));
+    }
+    a.into_dimensionality::<ndarray::Ix2>()
+        .map_err(|e| WakeError::Process(format!("emb: {e}")))
+}
+
 fn embedding_predict(
     session: &mut Session,
     window76: &Array2<f32>,
@@ -234,17 +255,7 @@ fn embedding_predict(
     let arr = v
         .try_extract_array::<f32>()
         .map_err(|e| WakeError::Process(format!("embedding extract: {e}")))?;
-    let flat = arr.to_owned();
-    match flat.ndim() {
-        2 => flat
-            .into_dimensionality()
-            .map_err(|e| WakeError::Process(format!("emb: {e}"))),
-        3 => {
-            let d = flat.into_dimensionality::<ndarray::Ix3>().unwrap();
-            Ok(d.index_axis_move(Axis(0), 0))
-        }
-        n => Err(WakeError::Process(format!("embedding rank {n}"))),
-    }
+    embedding_activations_to_matrix(arr.to_owned().into_dyn())
 }
 
 impl OpenWakeWordBackend {
@@ -354,7 +365,40 @@ impl WakeDetector for OpenWakeWordBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::Array;
     use std::path::PathBuf;
+
+    #[test]
+    fn embedding_activations_squeezes_rank4_leading_ones_to_matrix() {
+        let a = Array::from_elem(ndarray::Ix4(1, 1, 1, 96), 0.25f32).into_dyn();
+        let m = embedding_activations_to_matrix(a).expect("rank4");
+        assert_eq!(m.shape(), &[1, 96]);
+        assert!((m[[0, 0]] - 0.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn embedding_activations_rank3_batch_one_becomes_rows() {
+        let a = Array::from_elem(ndarray::Ix3(1, 2, 96), 0.5f32).into_dyn();
+        let m = embedding_activations_to_matrix(a).expect("rank3");
+        assert_eq!(m.shape(), &[2, 96]);
+    }
+
+    #[test]
+    fn embedding_activations_rank1_becomes_single_row() {
+        let a = Array::linspace(0.0, 1.0, 96).into_dyn();
+        let m = embedding_activations_to_matrix(a).expect("rank1");
+        assert_eq!(m.shape(), &[1, 96]);
+    }
+
+    #[test]
+    fn embedding_activations_rejects_non_singleton_leading_axis() {
+        let a = Array::from_elem(ndarray::Ix3(2, 1, 96), 1.0f32).into_dyn();
+        let e = embedding_activations_to_matrix(a).expect_err("ambiguous");
+        match e {
+            WakeError::Process(msg) => assert!(msg.contains("unexpected shape")),
+            _ => panic!("expected Process error"),
+        }
+    }
 
     #[test]
     fn oww_try_new_without_models_errors() {

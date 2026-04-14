@@ -10,6 +10,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:wake": "vitest run scripts/fetch-wake-models.config.test.mjs && cargo test --manifest-path src-tauri/Cargo.toml --features oww audio::wake::oww",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
     "tauri": "tauri"
