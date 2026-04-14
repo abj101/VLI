@@ -122,6 +122,7 @@ type CenterSelectorInput = {
   transcript: string;
   match: MatchResult | null;
   actionText: string | null;
+  actionError: string | null;
   audioError: string | null;
 };
 
@@ -137,6 +138,10 @@ export function selectCenterContent(
 ): CenterSelectorResult {
   if (input.phase === "listening" && input.audioError) {
     return { kind: "error", text: input.audioError };
+  }
+
+  if (input.actionError) {
+    return { kind: "error", text: input.actionError };
   }
 
   if (input.match) {
@@ -158,7 +163,30 @@ export function selectCenterContent(
     return { kind: "transcript", text: input.transcript };
   }
 
+  if (input.phase === "awaiting_input") {
+    return { kind: "action", text: "Awaiting follow-up input..." };
+  }
+
   return { kind: "placeholder" };
+}
+
+export function selectPhaseLabel(phase: HudPhase): string | null {
+  switch (phase) {
+    case "listening":
+      return "Listening";
+    case "matched":
+      return "Matched";
+    case "awaiting_input":
+      return "Awaiting input";
+    case "executing":
+      return "Executing";
+    case "done":
+      return "Done";
+    case "stopped":
+      return "Stopped";
+    default:
+      return null;
+  }
 }
 
 function CenterContent() {
@@ -166,12 +194,14 @@ function CenterContent() {
   const transcript = useHudStore((s) => s.transcript);
   const match = useHudStore((s) => s.match);
   const actionText = useHudStore((s) => s.actionText);
+  const actionError = useHudStore((s) => s.actionError);
   const audioError = useHudStore((s) => s.audioError);
   const selected = selectCenterContent({
     phase,
     transcript,
     match,
     actionText,
+    actionError,
     audioError,
   });
 
@@ -196,6 +226,7 @@ function CenterContent() {
 function HudShell() {
   const phase = useHudStore((s) => s.phase);
   const match = useHudStore((s) => s.match);
+  const phaseLabel = selectPhaseLabel(phase);
 
   const showListeningChrome =
     phase === "listening" && !match;
@@ -239,6 +270,7 @@ function HudShell() {
           showListeningChrome ? "hud-body" : "hud-body hud-body--solo"
         }
       >
+        {phaseLabel && <div className="hud-phase-label">{phaseLabel}</div>}
         <div className="hud-transcript-wrap">
           <CenterContent />
         </div>

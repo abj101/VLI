@@ -176,12 +176,12 @@ flowchart TD
 **Description:** Update reducer/panel rendering for fuzzy confidence cues (if exposed), awaiting-input messaging, and richer action-chain progress/errors.
 
 **Acceptance criteria:**
-- [ ] HUD clearly distinguishes `listening`, `matched`, `awaiting_input`, `executing`, `done`, `stopped` for new flows.
-- [ ] Follow-up prompt text and terminal errors are user-visible.
-- [ ] Existing keyboard controls (`Esc`) remain identical behavior.
+- [x] HUD clearly distinguishes `listening`, `matched`, `awaiting_input`, `executing`, `done`, `stopped` for new flows.
+- [x] Follow-up prompt text and terminal errors are user-visible.
+- [x] Existing keyboard controls (`Esc`) remain identical behavior.
 
 **Verification:**
-- [ ] `npm test` for reducer/panel logic
+- [x] `npm test` for reducer/panel logic
 - [ ] Manual scripted phase demo with mocked + real IPC.
 
 **Dependencies:** Task 6.
