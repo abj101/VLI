@@ -9,18 +9,25 @@ use commands::TauriActionRuntime;
 use hud::{sync_hud_window, HudPhase, HUD_WINDOW_LABEL};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
 
 const AUTO_DISMISS_AFTER: Duration = Duration::from_secs(4);
 const NO_MATCH_TIMEOUT: Duration = Duration::from_secs(5);
+/// After the last speech-related activity, wait this long before treating speech as finished
+/// (starts the 4s auto-dismiss countdown only after this gap).
+const SILENCE_BEFORE_AUTO_DISMISS: Duration = Duration::from_millis(450);
+/// Amplitude above this (0..1) counts as speech for activity / silence detection.
+const SPEECH_AMPLITUDE_THRESHOLD: f64 = 0.02;
 
 #[derive(Debug, Default)]
 struct HudRuntime {
     phase: HudPhase,
     visible: bool,
     session_id: u64,
+    /// Last time we saw speech (transcript text or mic level). Used so timers run on silence, not wall-clock from HUD open.
+    last_speech_activity: Option<Instant>,
 }
 
 type SharedHud = Arc<Mutex<HudRuntime>>;
@@ -59,19 +66,59 @@ fn should_fire_auto_dismiss(rt: &HudRuntime, expected_session_id: u64) -> bool {
     rt.visible && rt.phase == HudPhase::Done && rt.session_id == expected_session_id
 }
 
-fn schedule_no_match_timeout(
+fn touch_speech_activity(rt: &SharedHud) {
+    if let Ok(mut s) = rt.lock() {
+        if s.visible && s.phase == HudPhase::Listening {
+            s.last_speech_activity = Some(Instant::now());
+        }
+    }
+}
+
+fn touch_speech_on_transcript(rt: &SharedHud, text: &str) {
+    if !text.trim().is_empty() {
+        touch_speech_activity(rt);
+    }
+}
+
+fn touch_speech_on_amplitude(rt: &SharedHud, amplitude: f64) {
+    if amplitude >= SPEECH_AMPLITUDE_THRESHOLD {
+        touch_speech_activity(rt);
+    }
+}
+
+/// Dismiss after `NO_MATCH_TIMEOUT` since **last speech** (transcript or mic), not since HUD opened.
+fn spawn_no_match_watchdog(
     app: AppHandle,
     rt: SharedHud,
     audio: SharedAudioPipeline,
     expected_session_id: u64,
 ) {
+    const TICK: Duration = Duration::from_millis(200);
     std::thread::spawn(move || {
-        std::thread::sleep(NO_MATCH_TIMEOUT);
-        let should_dismiss = rt
+        loop {
+            std::thread::sleep(TICK);
+            let should_dismiss = {
+                let s = match rt.lock() {
+                    Ok(g) => g,
+                    Err(_) => return,
+                };
+                if !should_fire_no_match_timeout(&s, expected_session_id) {
+                    return;
+                }
+                let Some(last) = s.last_speech_activity else {
+                    continue;
+                };
+                last.elapsed() >= NO_MATCH_TIMEOUT
+            };
+            if should_dismiss {
+                break;
+            }
+        }
+        let should = rt
             .lock()
             .map(|s| should_fire_no_match_timeout(&s, expected_session_id))
             .unwrap_or(false);
-        if !should_dismiss {
+        if !should {
             return;
         }
         let _ = dismiss_hud(&app, &rt);
@@ -79,13 +126,32 @@ fn schedule_no_match_timeout(
     });
 }
 
+/// After `Done`, wait until **silence** after last speech activity, then run the 4s countdown before dismissing.
 fn schedule_auto_dismiss(
     app: AppHandle,
     rt: SharedHud,
     audio: SharedAudioPipeline,
     expected_session_id: u64,
 ) {
+    const TICK: Duration = Duration::from_millis(50);
     std::thread::spawn(move || {
+        if let Some(last) = rt
+            .lock()
+            .ok()
+            .and_then(|s| s.last_speech_activity)
+        {
+            let silence_end = last + SILENCE_BEFORE_AUTO_DISMISS;
+            while Instant::now() < silence_end {
+                std::thread::sleep(TICK);
+                if !rt
+                    .lock()
+                    .map(|s| should_fire_auto_dismiss(&s, expected_session_id))
+                    .unwrap_or(false)
+                {
+                    return;
+                }
+            }
+        }
         std::thread::sleep(AUTO_DISMISS_AFTER);
         let should_dismiss = rt
             .lock()
@@ -118,6 +184,8 @@ fn process_transcript_update(
 ) -> Result<(), String> {
     let update: audio::stt::TranscriptUpdate = serde_json::from_str(payload)
         .map_err(|e| format!("invalid transcript-update payload: {e}"))?;
+    touch_speech_on_transcript(rt, &update.text);
+
     let should_process = {
         let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
         should_process_final_transcript(&s, update.is_final)
@@ -161,6 +229,7 @@ fn show_hud_from_hotkey(
         s.visible = true;
         s.phase = HudPhase::Listening;
         s.session_id = s.session_id.wrapping_add(1);
+        s.last_speech_activity = Some(Instant::now());
         listening_session_id = Some(s.session_id);
         window.center().map_err(|e| e.to_string())?;
         window.show().map_err(|e| e.to_string())?;
@@ -182,7 +251,7 @@ fn show_hud_from_hotkey(
     if tray::mic_start_allowed(is_paused, phase) {
         try_start_listening_audio(app, audio);
         if let Some(sid) = listening_session_id.or(Some(session_id)) {
-            schedule_no_match_timeout(app.clone(), Arc::clone(rt), audio.clone(), sid);
+            spawn_no_match_watchdog(app.clone(), Arc::clone(rt), audio.clone(), sid);
         }
     } else {
         audio::stop_shared_pipeline(audio);
@@ -229,6 +298,7 @@ fn hud_set_phase(
             HudPhase::Listening => {
                 s.visible = true;
                 s.session_id = s.session_id.wrapping_add(1);
+                s.last_speech_activity = Some(Instant::now());
             }
             HudPhase::Stopped => {
                 s.visible = false;
@@ -303,6 +373,17 @@ pub fn run() {
                         }
                     });
 
+                    let amp_hud = Arc::clone(&hud_state);
+                    app.listen("amplitude-update", move |event| {
+                        let Ok(v) = serde_json::from_str::<serde_json::Value>(event.payload()) else {
+                            return;
+                        };
+                        let Some(a) = v.get("amplitude").and_then(|x| x.as_f64()) else {
+                            return;
+                        };
+                        touch_speech_on_amplitude(&amp_hud, a);
+                    });
+
                     app.handle()
                         .plugin(
                             ShortcutBuilder::new()
@@ -365,5 +446,12 @@ mod tests {
         assert!(!should_fire_no_match_timeout(&rt, 8));
         rt.phase = HudPhase::Done;
         assert!(!should_fire_no_match_timeout(&rt, 7));
+    }
+
+    /// Watchdog fires only once `last.elapsed()` exceeds the window (speech resets `last`).
+    #[test]
+    fn no_match_fires_when_idle_since_last_speech_exceeds_timeout() {
+        let last = Instant::now() - NO_MATCH_TIMEOUT - Duration::from_millis(50);
+        assert!(last.elapsed() >= NO_MATCH_TIMEOUT);
     }
 }
