@@ -70,8 +70,8 @@ Earlier Phase 4 work added **Haiku `ai_mode`** (`src/ai/`, Anthropic settings). 
 ### React
 
 - [ ] Wake engine selector (hotkey / porcupine / oww) persists
-- [ ] **Transcription provider** UI: local / OS / online (labels clear)
-- [ ] Remote STT: masked key + endpoint fields as required by T4-3 contract
+- [x] **Transcription provider** UI: local / OS / online (labels clear)
+- [x] Remote STT: masked key + endpoint fields as required by T4-3 contract
 - [ ] **Remove** global `ai_mode` toggle and Anthropic key panel *(can defer to T4-6 if same PR)*
 - [ ] Porcupine access key: masked, Save / Clear
 - [ ] "App Index" status from `app-index-ready`

@@ -432,6 +432,13 @@ html[data-theme="light"] {
   font-size: 14px;
 }
 
+.editor-settings-section h4 {
+  margin: 10px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e5e7eb;
+}
+
 .editor-settings-content {
   display: flex;
   flex-direction: column;
