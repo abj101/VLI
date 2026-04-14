@@ -13,11 +13,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Listener, Manager, State, WebviewUrl, WebviewWindowBuilder};
-use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
+use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, GlobalShortcutExt, ShortcutState};
 
 const AUTO_DISMISS_AFTER: Duration = Duration::from_secs(4);
 const NO_MATCH_TIMEOUT: Duration = Duration::from_secs(5);
 const EDITOR_WINDOW_LABEL: &str = "editor";
+const DEFAULT_HOTKEY: &str = "ctrl+shift+j";
+const SETTING_KEY_HOTKEY: &str = "hotkey";
+const SETTING_KEY_DEFAULT_THRESHOLD: &str = "default_fuzzy_threshold_pct";
+const DEFAULT_THRESHOLD_PCT: u16 = 80;
 /// After the last speech-related activity, wait this long before treating speech as finished
 /// (starts the 4s auto-dismiss countdown only after this gap).
 const SILENCE_BEFORE_AUTO_DISMISS: Duration = Duration::from_millis(450);
@@ -84,6 +88,45 @@ fn open_db_connection(app: &AppHandle) -> Result<rusqlite::Connection, String> {
     rusqlite::Connection::open(db_path).map_err(|e| e.to_string())
 }
 
+fn validate_setting_key(key: &str) -> Result<String, String> {
+    let normalized = key.trim();
+    if normalized.is_empty() {
+        return Err("setting key is required".to_string());
+    }
+    Ok(normalized.to_string())
+}
+
+fn normalize_hotkey_input(hotkey: &str) -> Result<String, String> {
+    let normalized = hotkey.trim();
+    if normalized.is_empty() {
+        return Err("hotkey is required".to_string());
+    }
+    Ok(normalized.to_string())
+}
+
+fn resolve_fuzzy_threshold_pct(node_threshold_pct: u16, default_threshold_pct: u16) -> u16 {
+    if node_threshold_pct == 0 {
+        return default_threshold_pct.clamp(50, 100);
+    }
+    node_threshold_pct.clamp(1, 100)
+}
+
+fn load_default_fuzzy_threshold_pct(app: &AppHandle) -> u16 {
+    let Ok(conn) = open_db_connection(app) else {
+        return DEFAULT_THRESHOLD_PCT;
+    };
+    let Ok(value_opt) = db::get_setting(&conn, SETTING_KEY_DEFAULT_THRESHOLD) else {
+        return DEFAULT_THRESHOLD_PCT;
+    };
+    let Some(raw) = value_opt else {
+        return DEFAULT_THRESHOLD_PCT;
+    };
+    match raw.trim().parse::<u16>() {
+        Ok(value) if (50..=100).contains(&value) => value,
+        _ => DEFAULT_THRESHOLD_PCT,
+    }
+}
+
 #[derive(Debug, Default)]
 struct HudRuntime {
     phase: HudPhase,
@@ -108,6 +151,11 @@ struct HudRuntime {
 }
 
 type SharedHud = Arc<Mutex<HudRuntime>>;
+
+#[derive(Debug)]
+struct HotkeyBindingState {
+    current: Mutex<String>,
+}
 
 fn preview_chars(s: &str, max: usize) -> String {
     let n = s.chars().count();
@@ -527,7 +575,17 @@ fn try_match_and_execute(
     text: &str,
 ) -> Result<(), String> {
     let nodes = load_all_commands(app)?;
-    let matched = match commands::match_command(text, &nodes) {
+    let default_threshold_pct = load_default_fuzzy_threshold_pct(app);
+    let matcher_nodes: Vec<db::CommandNode> = nodes
+        .iter()
+        .cloned()
+        .map(|mut node| {
+            node.fuzzy_threshold_pct =
+                resolve_fuzzy_threshold_pct(node.fuzzy_threshold_pct, default_threshold_pct);
+            node
+        })
+        .collect();
+    let matched = match commands::match_command(text, &matcher_nodes) {
         Some(m) => m,
         None => {
             debug!("flow: no trigger phrase matched");
@@ -886,6 +944,60 @@ fn delete_command(app: AppHandle, id: i64) -> Result<bool, String> {
     db::delete_command(&conn, id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn get_setting(app: AppHandle, key: String) -> Result<Option<String>, String> {
+    let normalized_key = validate_setting_key(&key)?;
+    let conn = open_db_connection(&app)?;
+    db::get_setting(&conn, &normalized_key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_setting(app: AppHandle, key: String, value: String) -> Result<(), String> {
+    let normalized_key = validate_setting_key(&key)?;
+    let conn = open_db_connection(&app)?;
+    db::set_setting(&conn, &normalized_key, value.trim())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_hotkey(
+    app: AppHandle,
+    hotkey: String,
+    hotkey_state: State<'_, HotkeyBindingState>,
+) -> Result<String, String> {
+    let next_hotkey = normalize_hotkey_input(&hotkey)?;
+    let conn = open_db_connection(&app)?;
+    let mut current_hotkey = hotkey_state
+        .current
+        .lock()
+        .map_err(|_| "hotkey state poisoned".to_string())?;
+    let existing_hotkey = current_hotkey.clone();
+    if existing_hotkey == next_hotkey {
+        db::set_setting(&conn, SETTING_KEY_HOTKEY, &next_hotkey).map_err(|e| e.to_string())?;
+        return Ok(next_hotkey);
+    }
+
+    app.global_shortcut()
+        .unregister(existing_hotkey.as_str())
+        .map_err(|e| format!("failed to unregister current hotkey `{existing_hotkey}`: {e}"))?;
+
+    if let Err(register_error) = app.global_shortcut().register(next_hotkey.as_str()) {
+        let _ = app.global_shortcut().register(existing_hotkey.as_str());
+        return Err(format!(
+            "failed to register new hotkey `{next_hotkey}`: {register_error}"
+        ));
+    }
+
+    if let Err(persist_error) = db::set_setting(&conn, SETTING_KEY_HOTKEY, &next_hotkey) {
+        let _ = app.global_shortcut().unregister(next_hotkey.as_str());
+        let _ = app.global_shortcut().register(existing_hotkey.as_str());
+        return Err(format!("failed to persist hotkey: {persist_error}"));
+    }
+
+    *current_hotkey = next_hotkey.clone();
+    Ok(next_hotkey)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -901,6 +1013,9 @@ pub fn run() {
         .manage(Arc::clone(&hud_state))
         .manage(audio_pipeline.clone())
         .manage(Arc::clone(&is_paused))
+        .manage(HotkeyBindingState {
+            current: Mutex::new(DEFAULT_HOTKEY.to_string()),
+        })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .setup({
@@ -911,6 +1026,25 @@ pub fn run() {
                 let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                 db::init_db(&dir.join("jarvis.db")).map_err(|e| e.to_string())?;
+                let conn = open_db_connection(app.handle())?;
+                let configured_hotkey = match db::get_setting(&conn, SETTING_KEY_HOTKEY)
+                    .map_err(|e| e.to_string())?
+                {
+                    Some(value) if !value.trim().is_empty() => value.trim().to_string(),
+                    _ => {
+                        db::set_setting(&conn, SETTING_KEY_HOTKEY, DEFAULT_HOTKEY)
+                            .map_err(|e| e.to_string())?;
+                        DEFAULT_HOTKEY.to_string()
+                    }
+                };
+                {
+                    let hotkey_state = app.state::<HotkeyBindingState>();
+                    let mut current = hotkey_state
+                        .current
+                        .lock()
+                        .map_err(|_| "hotkey state poisoned".to_string())?;
+                    *current = configured_hotkey.clone();
+                }
 
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 {
@@ -953,7 +1087,7 @@ pub fn run() {
                     app.handle()
                         .plugin(
                             ShortcutBuilder::new()
-                                .with_shortcuts(["ctrl+shift+j"])
+                                .with_shortcuts([configured_hotkey.as_str()])
                                 .map_err(|e| e.to_string())?
                                 .with_handler({
                                     let hud_state = Arc::clone(&hud_state);
@@ -991,7 +1125,10 @@ pub fn run() {
             get_command,
             create_command,
             update_command,
-            delete_command
+            delete_command,
+            get_setting,
+            set_setting,
+            set_hotkey
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1223,5 +1360,11 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn default_threshold_applies_when_node_threshold_is_zero() {
+        assert_eq!(resolve_fuzzy_threshold_pct(0, 77), 77);
+        assert_eq!(resolve_fuzzy_threshold_pct(88, 77), 88);
     }
 }

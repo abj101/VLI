@@ -82,25 +82,25 @@ Before continuing to T3-5 / T3-6, confirm all of the following:
 - [x] `update_command` IPC fully tested (`cargo test db::`)
 - [x] `npm run lint` clean
 - [x] `cargo clippy -- -D warnings` clean
-- [ ] **Human has reviewed and approved** — do not proceed until this is checked
+- [X] **Human has reviewed and approved** — do not proceed until this is checked
 
 ---
 
 ## Task 3-5: Settings Panel
 
-- [ ] Add `settings` table migration: `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)` — runs on startup, idempotent
-- [ ] Create `db/settings.rs`: `get_setting(key)`, `set_setting(key, value)` helpers
-- [ ] Add `cargo test db::settings` — round-trip insert/update/get
-- [ ] Register `get_setting`, `set_setting`, `set_hotkey` IPC commands in `lib.rs`
-- [ ] `set_hotkey`: deregister old → register new → persist to settings table → return error if combo unregisterable (do not leave hotkey deregistered on failure)
-- [ ] Create `SettingsPanel.tsx` with three sections: Hotkey, Default fuzzy threshold, Theme
-- [ ] Theme selector applies CSS class to `<html>` in editor window immediately; persists to settings
-- [ ] Add gear icon in editor header that toggles settings panel
+- [x] Add `settings` table migration: `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)` — runs on startup, idempotent
+- [x] Create `db/settings.rs`: `get_setting(key)`, `set_setting(key, value)` helpers
+- [x] Add `cargo test db::settings` — round-trip insert/update/get
+- [x] Register `get_setting`, `set_setting`, `set_hotkey` IPC commands in `lib.rs`
+- [x] `set_hotkey`: deregister old → register new → persist to settings table → return error if combo unregisterable (do not leave hotkey deregistered on failure)
+- [x] Create `SettingsPanel.tsx` with three sections: Hotkey, Default fuzzy threshold, Theme
+- [x] Theme selector applies CSS class to `<html>` in editor window immediately; persists to settings
+- [x] Add gear icon in editor header that toggles settings panel
 - [ ] **Verify:** Change hotkey → close app → reopen → new hotkey works
 - [ ] **Verify:** Invalid hotkey (empty) → inline error, old hotkey still active
 - [ ] **Verify:** Light/dark theme toggle → immediate re-render → persists on reopen
 - [ ] **Verify:** Default threshold change → persists → used by matcher when node has no override
-- [ ] **Verify:** `cargo test db::settings`
+- [x] **Verify:** `cargo test db::settings`
 
 ---
 

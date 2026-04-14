@@ -1,8 +1,10 @@
 //! SQLite command storage (`command_nodes`).
 
 mod models;
+mod settings;
 
 pub use models::{Action, CommandNode, NewCommandNode};
+pub use settings::{get_setting, set_setting};
 
 use rusqlite::Connection;
 use std::path::Path;
@@ -29,6 +31,10 @@ pub fn init_db(path: &Path) -> Result<(), DbError> {
             enabled INTEGER NOT NULL DEFAULT 1,
             fuzzy_threshold_pct INTEGER NOT NULL DEFAULT 80,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         );
         ",
     )?;
@@ -502,6 +508,42 @@ mod update {
                     text: "done".into()
                 }
             ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+    use rusqlite::Connection;
+    use tempfile::tempdir;
+
+    fn open_temp() -> (tempfile::TempDir, Connection) {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("settings-test.db");
+        init_db(&path).expect("init db");
+        let conn = Connection::open(&path).expect("open db");
+        (dir, conn)
+    }
+
+    #[test]
+    fn round_trip_insert_update_get_setting() {
+        let (_dir, conn) = open_temp();
+        assert_eq!(
+            get_setting(&conn, "theme").expect("get before set"),
+            None
+        );
+
+        set_setting(&conn, "theme", "dark").expect("set dark");
+        assert_eq!(
+            get_setting(&conn, "theme").expect("get dark"),
+            Some("dark".to_string())
+        );
+
+        set_setting(&conn, "theme", "light").expect("set light");
+        assert_eq!(
+            get_setting(&conn, "theme").expect("get light"),
+            Some("light".to_string())
         );
     }
 }
