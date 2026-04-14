@@ -3,9 +3,9 @@
 ## Prerequisites (Windows)
 
 - [Rust](https://rustup.rs/) stable, [Node.js](https://nodejs.org/) LTS
-- **Whisper / `whisper-rs`:** **CMake** (e.g. `winget install Kitware.CMake`) and **LLVM 18.x** (winget; for bindgen set user env `LIBCLANG_PATH` to `C:\Program Files\LLVM\bin` so `libclang.dll` is found), plus a **MSVC** C++ build environment (Visual Studio “Desktop development with C++” workload, or Build Tools). `whisper-rs` builds native `whisper.cpp` sources via CMake.
+- **Whisper / `whisper-rs`:** **CMake** (e.g. `winget install Kitware.CMake`) and **LLVM 18.x** (winget; for bindgen set user env `LIBCLANG_PATH` to `C:\Program Files\LLVM\bin` so `libclang.dll` is found), plus a **MSVC** C++build environment (Visual Studio “Desktop development with C++” workload, or Build Tools). `whisper-rs` builds native `whisper.cpp` sources via CMake.
 - **Piper TTS (`Speak` action):** install/download `piper.exe` and one `.onnx` voice model. Configure with env vars `JARVIS_PIPER_BIN` and `JARVIS_PIPER_MODEL` (or `PIPER_BIN` / `PIPER_MODEL`). Fallback search paths include `src-tauri/resources/piper/`.
-- **PATH / discovery:** This repo prepends **`%ProgramFiles%\CMake\bin`** and **`%ProgramFiles%\LLVM\bin`** to `PATH` in **`.vscode/settings.json`** (repo root and under `jarvis/`) so Cursor/VS Code integrated terminals find `cmake` and LLVM. Rust builds also read **`src-tauri/.cargo/config.toml`**, which sets **`CMAKE`** to the default Kitware path when that file exists (override with your own `CMAKE` env if CMake is installed elsewhere). For shells outside the editor, add those directories to your user **PATH** or export **`CMAKE`**.
+- **PATH / discovery:** This repo prepends `**%ProgramFiles%\CMake\bin`** and `**%ProgramFiles%\LLVM\bin**` to `PATH` in `**.vscode/settings.json**` (repo root and under `jarvis/`) so Cursor/VS Code integrated terminals find `cmake` and LLVM. Rust builds also read `**src-tauri/.cargo/config.toml**`, which sets `**CMAKE**` to the default Kitware path when that file exists (override with your own `CMAKE` env if CMake is installed elsewhere). For shells outside the editor, add those directories to your user **PATH** or export `**CMAKE`**.
 - **Microphone** permission for the dev or packaged app
 
 ## Whisper model (bundled path)
@@ -29,7 +29,7 @@ Successful synth output is cached in app data under `tts-cache/` to avoid repeat
 
 ## Commands (from `jarvis/`)
 
-Convention: clone the repo, then **`cd jarvis`** for every Node/npm/Tauri command below. Raw `cargo` commands use **`cd jarvis/src-tauri`**.
+Convention: clone the repo, then `**cd jarvis**` for every Node/npm/Tauri command below. Raw `cargo` commands use `**cd jarvis/src-tauri**`.
 
 - `npm install`
 - `npm run lint` — ESLint (TypeScript + React)
@@ -78,11 +78,11 @@ The **React command editor** is a second window (not the HUD). Open it from the 
 
 ### Migrations
 
-SQLite schema changes are **additive** migrations run at startup (e.g. `sort_order` on `command_nodes`). See **`src-tauri/MIGRATIONS.md`** for the log and idempotency notes. Copy existing user DBs forward without destructive resets for Phase 3 changes.
+SQLite schema changes are **additive** migrations run at startup (e.g. `sort_order` on `command_nodes`). See `**src-tauri/MIGRATIONS.md`** for the log and idempotency notes. Copy existing user DBs forward without destructive resets for Phase 3 changes.
 
 ### Tests and coverage
 
-From **`jarvis/`**: `npm run test` runs Vitest. Coverage thresholds (**≥70%** lines on `editorStore`, `NodeForm.logic`, `ActionChain.logic`) are enforced when you run `npm run test:coverage`.
+From `**jarvis/**`: `npm run test` runs Vitest. Coverage thresholds (**≥70%** lines on `editorStore`, `NodeForm.logic`, `ActionChain.logic`) are enforced when you run `npm run test:coverage`.
 
 ## Phase 2 manual verification (Windows)
 

@@ -9,8 +9,8 @@
 
 - [x] **T4-1** `WakeDetector` trait + Porcupine backend
 - [x] **T4-2** OpenWakeWord backend (feature-gated)
-- [ ] **T4-3** Haiku `ai_mode` HTTP client
-- [ ] **T4-4** API key storage + Settings IPC + Settings UI
+- [x] **T4-3** Haiku `ai_mode` HTTP client
+- [x] **T4-4** API key storage + Settings IPC + Settings UI
 
 ---
 
@@ -32,7 +32,7 @@
 
 - [x] `audio/wake/oww.rs` — `OpenWakeWordBackend` implements `WakeDetector` trait
 - [x] ONNX runtime via `ort` crate; no Python dependency in bundled app
-- [ ] `oww_threshold` persisted in settings + passed into `try_new` (constructor accepts `threshold: f32` today; **T4-4**)
+- [ ] `oww_threshold` persisted in settings + passed into `try_new` (persisted in **T4-4**; wake thread wiring **T4-5**)
 - [x] Gated behind `feature = "oww"` in `Cargo.toml`
 - [x] Default build compiles without OWW symbols (`cargo build` — no `oww` feature)
 - [x] `scripts/download-oww-model.ps1` fetches `.onnx` (v0.5.1 release assets → `resources/oww/`)
@@ -43,40 +43,40 @@
 
 ## T4-3 · Haiku `ai_mode` HTTP client
 
-- [ ] `src/ai/mod.rs` created — `run_ai_mode(node, transcript, api_key)` async fn
-- [ ] `reqwest` with `rustls` added to `Cargo.toml`
-- [ ] Calls `https://api.anthropic.com/v1/messages` with `claude-haiku-4-5`
-- [ ] `sub_prompt` on `CommandNode` used as system prompt (fallback to default)
-- [ ] Response parsed into `AiResponse { text, actions: Vec<Action> }`
-- [ ] Malformed JSON → graceful degradation (raw text, no panic)
-- [ ] 10-second hard timeout → `AiError::Timeout` returned
-- [ ] API key does not appear in any log line (`--nocapture` inspected)
-- [ ] `mockito` (or `httpmock`) used in tests — no real network calls in CI
-- [ ] `cargo test ai::` passes
+- [x] `src/ai/mod.rs` created — `run_ai_mode(node, transcript, api_key)` async fn (+ `run_ai_mode_with_config` + `AiEndpointConfig` for Anthropic default, OpenAI-compatible, or Ollama local endpoints)
+- [x] `reqwest` with `rustls` added to `Cargo.toml` (`rustls-tls`)
+- [x] Calls `https://api.anthropic.com/v1/messages` with `claude-haiku-4-5` (default `AiEndpointConfig`)
+- [x] `sub_prompt` on `CommandNode` used as system prompt (fallback to default)
+- [x] Response parsed into `AiResponse { text, actions: Vec<Action> }`
+- [x] Malformed JSON → graceful degradation (raw text, no panic)
+- [x] 10-second hard timeout → `AiError::Timeout` returned
+- [x] API key does not appear in any log line (`ai` module has no `log!`/`debug!` of key; `--nocapture` clean)
+- [x] `httpmock` used in tests — no real network calls in CI
+- [x] `cargo test ai::` passes
 
 ---
 
 ## T4-4 · API key storage + Settings IPC + Settings UI
 
 ### Rust / DB
-- [ ] `settings` table created (single-row upsert pattern; schema in `plan4.md`)
-- [ ] `keyring` crate added to `Cargo.toml`
-- [ ] `save_api_key(service, key)` writes to OS keychain — not SQLite
-- [ ] `delete_api_key(service)` removes from keychain, flips stored flag
-- [ ] `get_settings()` returns flag only (`anthropic_key_stored: bool`) — never key value
-- [ ] `update_settings(patch)` persists wake engine + threshold changes
-- [ ] `cargo test db::settings` passes
-- [ ] Schema migration idempotent on existing Phase 3 DB
+- [x] `settings` table created (single-row upsert pattern; schema in `plan4.md`)
+- [x] `keyring` crate added to `Cargo.toml`
+- [x] `save_api_key(service, key)` writes to OS keychain — not SQLite
+- [x] `delete_api_key(service)` removes from keychain, flips stored flag
+- [x] `get_settings()` returns flag only (`anthropic_key_stored: bool`) — never key value
+- [x] `update_settings(patch)` persists wake engine + threshold changes
+- [x] `cargo test db::settings` passes
+- [x] Schema migration idempotent on existing Phase 3 DB
 
 ### React
-- [ ] `SettingsPanel.tsx` created in `src/components/Settings/`
-- [ ] `settingsStore.ts` Zustand store created
-- [ ] Wake engine selector (hotkey / porcupine / oww) persists across restart
-- [ ] Anthropic API key input: masked, Save / Clear buttons functional
-- [ ] Porcupine access key input: masked, Save / Clear buttons functional
-- [ ] Global `ai_mode` toggle visible and persists
-- [ ] "App Index" status shows count from `app-index-ready` event
-- [ ] Tray "Settings" menu item opens `SettingsPanel`
+- [x] `SettingsPanel.tsx` created in `src/components/Settings/`
+- [x] `settingsStore.ts` Zustand store created
+- [x] Wake engine selector (hotkey / porcupine / oww) persists across restart
+- [x] Anthropic API key input: masked, Save / Clear buttons functional
+- [x] Porcupine access key input: masked, Save / Clear buttons functional
+- [x] Global `ai_mode` toggle visible and persists
+- [x] "App Index" status shows count from `app-index-ready` event
+- [x] Tray "Settings" menu item opens `SettingsPanel`
 
 ---
 
@@ -84,11 +84,11 @@
 
 - [x] `WakeDetector` trait + Porcupine unit tests green
 - [x] OWW compiles behind `oww` feature; feature isolation confirmed
-- [ ] Haiku client unit tests green (mock server only)
+- [x] Haiku client unit tests green (mock server only)
 - [ ] OS keychain read/write works in bundled `.exe` on Windows
-- [ ] Key never surfaces in logs
-- [ ] Settings table persists across restart; UI shows correct flag state
-- [ ] `cargo clippy -- -D warnings` clean across all new modules
+- [x] Key never surfaces in logs
+- [x] Settings table persists across restart; UI shows correct flag state
+- [x] `cargo clippy -- -D warnings` clean across all new modules
 
 ---
 
@@ -173,7 +173,7 @@
 - [ ] `ai-response` → AI text displayed before `executing` phase
 
 ### Tray updates
-- [ ] "Settings" tray item opens `SettingsPanel`
+- [x] "Settings" tray item opens `SettingsPanel`
 - [ ] Tray tooltip reflects active wake engine (e.g. "JARVIS — Porcupine active")
 
 ### Startup sequencing (`lib.rs`)
