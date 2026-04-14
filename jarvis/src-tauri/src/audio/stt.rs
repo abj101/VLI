@@ -6,9 +6,7 @@ use std::sync::mpsc::Receiver;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
-use whisper_rs::{
-    FullParams, SamplingStrategy, WhisperContext, WhisperState,
-};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
 
 const WHISPER_MODEL_FILE: &str = "ggml-tiny.en.bin";
 const TARGET_RATE: u32 = 16_000;
@@ -26,10 +24,7 @@ pub struct TranscriptUpdate {
 }
 
 pub fn resolve_whisper_model_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| e.to_string())?;
+    let dir = app.path().resource_dir().map_err(|e| e.to_string())?;
     let path = dir.join(WHISPER_MODEL_FILE);
     if !path.is_file() {
         return Err(format!(
@@ -49,7 +44,9 @@ pub fn resample_mono_to_16k(input: &[f32], input_rate: u32) -> Vec<f32> {
         return input.to_vec();
     }
     let in_len = input.len() as f64;
-    let out_len = ((in_len * TARGET_RATE as f64) / input_rate as f64).floor().max(0.0) as usize;
+    let out_len = ((in_len * TARGET_RATE as f64) / input_rate as f64)
+        .floor()
+        .max(0.0) as usize;
     if out_len == 0 {
         return Vec::new();
     }
@@ -66,12 +63,28 @@ pub fn resample_mono_to_16k(input: &[f32], input_rate: u32) -> Vec<f32> {
     out
 }
 
-fn run_decode(state: &mut WhisperState, audio_16k: &[f32]) -> Result<String, whisper_rs::WhisperError> {
+/// Boost quiet mic levels toward ~0.5 peak so Whisper gets usable SNR (WASAPI f32 can sit very low).
+fn normalize_peak_f32(samples: &[f32]) -> Vec<f32> {
+    let peak = samples.iter().fold(0.0f32, |a, &s| a.max(s.abs()));
+    if peak < 1e-8 {
+        return samples.to_vec();
+    }
+    let scale = (0.5_f32 / peak).min(128.0_f32);
+    samples.iter().map(|s| (s * scale).clamp(-1.0, 1.0)).collect()
+}
+
+/// One-shot decode: fresh [`whisper_rs::WhisperState`] per call so sliding-window passes do not
+/// reuse stale KV / prompt state (see `FullParams::set_no_context` / `set_single_segment`).
+fn run_decode(ctx: &WhisperContext, audio_16k: &[f32]) -> Result<String, whisper_rs::WhisperError> {
     if audio_16k.len() < MIN_DECODE_SAMPLES {
         return Ok(String::new());
     }
+    let audio = normalize_peak_f32(audio_16k);
+    let mut state = ctx.create_state()?;
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
     params.set_language(Some("en"));
+    params.set_no_context(true);
+    params.set_single_segment(true);
     params.set_print_special(false);
     params.set_print_progress(false);
     params.set_print_realtime(false);
@@ -80,7 +93,7 @@ fn run_decode(state: &mut WhisperState, audio_16k: &[f32]) -> Result<String, whi
         .map(|n| n.get().min(4) as i32)
         .unwrap_or(2);
     params.set_n_threads(threads);
-    state.full(params, audio_16k)?;
+    state.full(params, &audio)?;
     let n = state.full_n_segments()?;
     let mut s = String::new();
     for i in 0..n {
@@ -125,10 +138,6 @@ fn stt_loop(
     pcm_rx: Receiver<Vec<f32>>,
     input_sample_rate: u32,
 ) -> Result<(), String> {
-    let mut state = ctx
-        .create_state()
-        .map_err(|e| format!("failed to create whisper state: {e}"))?;
-
     let mut buffer_16k: Vec<f32> = Vec::new();
     let mut last_decode = Instant::now() - INFER_EVERY;
     let mut last_text = String::new();
@@ -142,7 +151,7 @@ fn stt_loop(
         }
         last_decode = Instant::now();
 
-        let text = match run_decode(&mut state, &buffer_16k) {
+        let text = match run_decode(&ctx, &buffer_16k) {
             Ok(t) => t,
             Err(e) => {
                 let _ = app.emit(
@@ -167,7 +176,7 @@ fn stt_loop(
 
     // Channel closed: final pass (best effort).
     if buffer_16k.len() >= MIN_DECODE_SAMPLES {
-        if let Ok(text) = run_decode(&mut state, &buffer_16k) {
+        if let Ok(text) = run_decode(&ctx, &buffer_16k) {
             if !text.is_empty() {
                 let _ = app.emit(
                     "transcript-update",
@@ -185,7 +194,7 @@ fn stt_loop(
 
 #[cfg(test)]
 mod tests {
-    use super::{resample_mono_to_16k, TranscriptUpdate};
+    use super::{normalize_peak_f32, resample_mono_to_16k, TranscriptUpdate};
 
     #[test]
     fn resample_identity_16k() {
@@ -199,6 +208,14 @@ mod tests {
         let v: Vec<f32> = (0..48).map(|i| i as f32 / 48.0).collect();
         let out = resample_mono_to_16k(&v, 48_000);
         assert_eq!(out.len(), 16);
+    }
+
+    #[test]
+    fn normalize_peak_boosts_quiet_audio() {
+        let v = vec![0.01f32, -0.01];
+        let n = normalize_peak_f32(&v);
+        assert!((n[0] - 0.5).abs() < 0.05);
+        assert!((n[1] + 0.5).abs() < 0.05);
     }
 
     #[test]
