@@ -61,6 +61,16 @@ Run in order after a clean checkout (with Rust + Node + CMake + MSVC + LLVM as a
 
 Packaged artifacts appear under `src-tauri/target/release/bundle/` (e.g. `.exe` installer / MSI, depending on Tauri bundler settings).
 
+## Phase 2 manual verification (Windows)
+
+Use this gate before calling a Phase 2 build releasable:
+
+1. Trigger fuzzy phrase (typo) and confirm intended command still matches/executes.
+2. Run a multi-action chain (`OpenApp` -> `Wait` -> `OpenUrl`) and confirm strict order.
+3. Run at least one command with `Speak`; confirm audible output or controlled Piper-missing error.
+4. Run a `SubPrompt` command and provide follow-up input; confirm templated follow-up action executes.
+5. Re-run `SubPrompt` and let it timeout (or cancel); confirm safe terminal HUD phase, no crash/deadlock.
+
 ## Recommended IDE Setup
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)

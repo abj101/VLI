@@ -38,6 +38,14 @@ describe("selectCenterContent", () => {
     });
     expect(out).toEqual({ kind: "error", text: "Failed to run chain" });
   });
+
+  it("shows audio error while awaiting follow-up input", () => {
+    const out = selectCenterContent({
+      ...base("awaiting_input"),
+      audioError: "Microphone unavailable",
+    });
+    expect(out).toEqual({ kind: "error", text: "Microphone unavailable" });
+  });
 });
 
 describe("selectPhaseLabel", () => {

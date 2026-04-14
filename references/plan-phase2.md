@@ -198,13 +198,13 @@ flowchart TD
 **Description:** Finalize test coverage and manual checklist for fuzzy/action/sub-prompt behaviors; update docs for setup and known limits.
 
 **Acceptance criteria:**
-- [ ] Rust unit/integration tests cover matcher, DB update, executor variants, sub_prompt orchestration.
-- [ ] Frontend tests cover reducer/UI handling of awaiting_input and action errors.
-- [ ] Phase 2 manual checklist added and reproducible on Windows.
+- [x] Rust unit/integration tests cover matcher, DB update, executor variants, sub_prompt orchestration.
+- [x] Frontend tests cover reducer/UI handling of awaiting_input and action errors.
+- [x] Phase 2 manual checklist added and reproducible on Windows.
 
 **Verification:**
-- [ ] `cd jarvis/src-tauri && cargo test && cargo clippy -- -D warnings`
-- [ ] `cd jarvis && npm run test && npm run build`
+- [x] `cd jarvis/src-tauri && cargo test && cargo clippy -- -D warnings`
+- [x] `cd jarvis && npm run test && npm run build`
 - [ ] Manual checklist pass for 5 core scenarios.
 
 **Dependencies:** Task 7.

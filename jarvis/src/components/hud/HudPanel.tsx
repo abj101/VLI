@@ -136,7 +136,10 @@ type CenterSelectorResult =
 export function selectCenterContent(
   input: CenterSelectorInput,
 ): CenterSelectorResult {
-  if (input.phase === "listening" && input.audioError) {
+  if (
+    (input.phase === "listening" || input.phase === "awaiting_input") &&
+    input.audioError
+  ) {
     return { kind: "error", text: input.audioError };
   }
 

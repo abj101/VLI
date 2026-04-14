@@ -158,3 +158,23 @@ See [plan.md](./plan.md) for full task descriptions. All `npm`/`tauri` commands 
 - Playwright E2E after IPC contract stable
 - Restore `BrainStorm.md` to repo (needed for Phase 3 editor work)
 - `update_command` DB function (needed before Phase 3 editor)
+
+---
+
+## Phase 2 release gate (Task 8)
+
+### Test matrix
+
+- Rust matcher coverage: `jarvis/src-tauri/src/commands/matcher.rs` tests exact/fuzzy/threshold/tie-break/no-match
+- Rust DB update coverage: `jarvis/src-tauri/src/db/mod.rs` tests `update_command` replace + legacy payload compatibility
+- Rust executor coverage: `jarvis/src-tauri/src/commands/executor.rs` tests `RunScript` / `SendKeys` / `Wait` / `Speak` / `SubPrompt` with validation + failure paths
+- Rust sub-prompt orchestration coverage: `jarvis/src-tauri/src/lib.rs` tests follow-up happy path, timeout, cancel, finalize gating
+- Frontend reducer/UI coverage: `jarvis/src/store/hudReducer.test.ts` + `jarvis/src/components/hud/HudPanel.logic.test.ts` cover `awaiting_input`, `action-error`, and audio error rendering
+
+### Phase 2 manual checklist (Windows)
+
+1. [ ] Fuzzy phrase path: trigger with typo phrase (e.g., "open notpad") and verify intended command executes.
+2. [ ] Multi-action chain path: trigger `open github and notepad` and verify ordered behavior (`OpenApp` -> `Wait` -> `OpenUrl`).
+3. [ ] Speak action path: run command including `Speak`; verify audible output (or controlled runtime error if Piper missing).
+4. [ ] Sub-prompt happy path: command enters `awaiting_input`, provide follow-up phrase, verify templated next action executes.
+5. [ ] Sub-prompt timeout/cancel path: do not answer (or cancel), verify safe terminal HUD phase with no crash/deadlock.
