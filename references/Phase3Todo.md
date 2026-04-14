@@ -133,7 +133,7 @@ Before T3-7, confirm all of the following:
 - [x] `cargo clippy -- -D warnings` clean
 - [x] `npm run lint` clean
 - [x] `npm run test` clean
-- [ ] **Human has reviewed and approved** — do not proceed until this is checked
+- [x] **Human has reviewed and approved** — do not proceed until this is checked
 
 ---
 
