@@ -2,10 +2,29 @@ import { NodeList } from "./components/editor/NodeList";
 import { NodeForm } from "./components/editor/NodeForm";
 import { SettingsPanel } from "./components/editor/SettingsPanel";
 import "./EditorRoot.css";
-import { useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
+import { normalizeThemeValue } from "./components/editor/SettingsPanel.logic";
 
 export default function EditorRoot() {
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    void invoke<string | null>("get_setting", { key: "theme" })
+      .then((savedTheme) => {
+        if (!mounted) return;
+        const theme = normalizeThemeValue(savedTheme);
+        document.documentElement.setAttribute("data-theme", theme);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        document.documentElement.setAttribute("data-theme", "dark");
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   return (
     <main className="editor-root">
