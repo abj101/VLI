@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { CommandNodePayload } from "../../types";
-import { getPrimaryTriggerPhrase, withEnabledValue } from "./NodeList.logic";
+import {
+  getPrimaryTriggerPhrase,
+  makeNodeRowId,
+  parseNodeRowId,
+  reorderIdsByArrow,
+  reorderIdsByDrag,
+  withEnabledValue,
+} from "./NodeList.logic";
 
 function makeNode(): CommandNodePayload {
   return {
@@ -31,5 +38,21 @@ describe("NodeList logic helpers", () => {
     expect(next.enabled).toBe(false);
     expect(next.id).toBe(node.id);
     expect(next).not.toBe(node);
+  });
+
+  it("encodes and decodes node row id", () => {
+    expect(makeNodeRowId(42)).toBe("node-42");
+    expect(parseNodeRowId("node-42")).toBe(42);
+    expect(parseNodeRowId("bad-id")).toBe(-1);
+  });
+
+  it("reorders ids for drag operation", () => {
+    expect(reorderIdsByDrag([1, 2, 3], 3, 1)).toEqual([3, 1, 2]);
+    expect(reorderIdsByDrag([1, 2, 3], 2, 2)).toEqual([1, 2, 3]);
+  });
+
+  it("reorders ids for arrow movement", () => {
+    expect(reorderIdsByArrow([1, 2, 3], 2, -1)).toEqual([2, 1, 3]);
+    expect(reorderIdsByArrow([1, 2, 3], 3, 1)).toEqual([1, 2, 3]);
   });
 });

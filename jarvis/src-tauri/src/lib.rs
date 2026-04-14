@@ -44,6 +44,12 @@ struct CommandNodePayload {
     fuzzy_threshold_pct: i64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReorderCommandsPayload {
+    ordered_ids: Vec<i64>,
+}
+
 impl CommandNodePayload {
     fn try_into_new_command_node(&self) -> Result<db::NewCommandNode, String> {
         validate_command_node_payload(self)?;
@@ -945,6 +951,12 @@ fn delete_command(app: AppHandle, id: i64) -> Result<bool, String> {
 }
 
 #[tauri::command]
+fn reorder_commands(app: AppHandle, payload: ReorderCommandsPayload) -> Result<(), String> {
+    let conn = open_db_connection(&app)?;
+    db::reorder_commands(&conn, &payload.ordered_ids).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_setting(app: AppHandle, key: String) -> Result<Option<String>, String> {
     let normalized_key = validate_setting_key(&key)?;
     let conn = open_db_connection(&app)?;
@@ -1126,6 +1138,7 @@ pub fn run() {
             create_command,
             update_command,
             delete_command,
+            reorder_commands,
             get_setting,
             set_setting,
             set_hotkey

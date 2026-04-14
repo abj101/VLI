@@ -57,4 +57,15 @@ describe("editorStore", () => {
     expect(first.enabled).toBe(false);
     expect(second.enabled).toBe(true);
   });
+
+  it("reorderNodes applies provided id order", () => {
+    useEditorStore.setState({
+      nodes: [makeNode(11), makeNode(22), makeNode(33)],
+      selectedId: null,
+    });
+
+    useEditorStore.getState().reorderNodes([33, 11, 22]);
+
+    expect(useEditorStore.getState().nodes.map((node) => node.id)).toEqual([33, 11, 22]);
+  });
 });

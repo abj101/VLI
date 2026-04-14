@@ -7,6 +7,7 @@ pub use models::{Action, CommandNode, NewCommandNode};
 pub use settings::{get_setting, set_setting};
 
 use rusqlite::Connection;
+use std::collections::HashSet;
 use std::path::Path;
 
 #[derive(Debug, thiserror::Error)]
@@ -15,6 +16,8 @@ pub enum DbError {
     Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
     Serde(#[from] serde_json::Error),
+    #[error("{0}")]
+    Validation(String),
 }
 
 /// Open or create DB file, apply schema, seed defaults when table empty.
@@ -39,6 +42,7 @@ pub fn init_db(path: &Path) -> Result<(), DbError> {
         ",
     )?;
     ensure_fuzzy_threshold_column(&conn)?;
+    ensure_sort_order_column(&conn)?;
     reconcile_default_commands(&conn)?;
     Ok(())
 }
@@ -57,6 +61,26 @@ fn ensure_fuzzy_threshold_column(conn: &Connection) -> Result<(), DbError> {
     if !has_column {
         conn.execute(
             "ALTER TABLE command_nodes ADD COLUMN fuzzy_threshold_pct INTEGER NOT NULL DEFAULT 80",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_sort_order_column(conn: &Connection) -> Result<(), DbError> {
+    let mut stmt = conn.prepare("PRAGMA table_info(command_nodes)")?;
+    let mut rows = stmt.query([])?;
+    let mut has_column = false;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == "sort_order" {
+            has_column = true;
+            break;
+        }
+    }
+    if !has_column {
+        conn.execute(
+            "ALTER TABLE command_nodes ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
             [],
         )?;
     }
@@ -207,7 +231,7 @@ pub fn insert_command(conn: &Connection, row: &NewCommandNode) -> Result<i64, Db
 
 pub fn get_all_commands(conn: &Connection) -> Result<Vec<CommandNode>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, created_at FROM command_nodes ORDER BY id ASC",
+        "SELECT id, name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, created_at FROM command_nodes ORDER BY sort_order ASC, id ASC",
     )?;
     let mut rows = stmt.query([])?;
     let mut out = Vec::new();
@@ -258,6 +282,26 @@ pub fn get_command_by_id(conn: &Connection, id: i64) -> Result<Option<CommandNod
 pub fn delete_command(conn: &Connection, id: i64) -> Result<bool, DbError> {
     let n = conn.execute("DELETE FROM command_nodes WHERE id = ?1", [id])?;
     Ok(n > 0)
+}
+
+pub fn reorder_commands(conn: &Connection, ordered_ids: &[i64]) -> Result<(), DbError> {
+    if ordered_ids.is_empty() {
+        return Ok(());
+    }
+    let mut seen = HashSet::with_capacity(ordered_ids.len());
+    for (sort_order, id) in ordered_ids.iter().copied().enumerate() {
+        if !seen.insert(id) {
+            return Err(DbError::Validation(format!("duplicate command id {id} in reorder payload")));
+        }
+        let updated = conn.execute(
+            "UPDATE command_nodes SET sort_order = ?1 WHERE id = ?2",
+            rusqlite::params![sort_order as i64, id],
+        )?;
+        if updated == 0 {
+            return Err(DbError::Validation(format!("command with id {id} was not found")));
+        }
+    }
+    Ok(())
 }
 
 fn row_to_command(row: &rusqlite::Row<'_>) -> Result<CommandNode, DbError> {
@@ -545,5 +589,93 @@ mod settings_tests {
             get_setting(&conn, "theme").expect("get light"),
             Some("light".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod reorder {
+    use super::*;
+    use rusqlite::Connection;
+    use tempfile::tempdir;
+
+    fn open_temp() -> (tempfile::TempDir, Connection) {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("reorder-test.db");
+        init_db(&path).expect("init db");
+        let conn = Connection::open(&path).expect("open db");
+        (dir, conn)
+    }
+
+    fn insert_named(conn: &Connection, name: &str) -> i64 {
+        insert_command(
+            conn,
+            &NewCommandNode {
+                name: name.to_string(),
+                trigger_phrases: vec![format!("trigger {name}")],
+                actions: vec![Action::Wait { ms: 10 }],
+                enabled: true,
+                fuzzy_threshold_pct: 80,
+            },
+        )
+        .expect("insert")
+    }
+
+    #[test]
+    fn sort_order_migration_adds_missing_column() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("legacy.db");
+        let conn = Connection::open(&path).expect("open db");
+        conn.execute_batch(
+            r"
+            CREATE TABLE command_nodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                trigger_phrases TEXT NOT NULL,
+                actions TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                fuzzy_threshold_pct INTEGER NOT NULL DEFAULT 80,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            ",
+        )
+        .expect("create legacy schema");
+        drop(conn);
+
+        init_db(&path).expect("run init db migration");
+        init_db(&path).expect("run init db migration twice");
+
+        let conn = Connection::open(&path).expect("open migrated db");
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(command_nodes)")
+            .expect("prepare table info");
+        let mut rows = stmt.query([]).expect("query table info");
+        let mut has_sort_order = false;
+        while let Some(row) = rows.next().expect("next row") {
+            let column_name: String = row.get(1).expect("column name");
+            if column_name == "sort_order" {
+                has_sort_order = true;
+                break;
+            }
+        }
+
+        assert!(has_sort_order, "sort_order column should exist after migration");
+    }
+
+    #[test]
+    fn reorder_commands_updates_display_order() {
+        let (_dir, conn) = open_temp();
+        let first = insert_named(&conn, "first");
+        let second = insert_named(&conn, "second");
+        let third = insert_named(&conn, "third");
+
+        reorder_commands(&conn, &[third, first, second]).expect("reorder");
+
+        let all = get_all_commands(&conn).expect("list commands");
+        let ids: Vec<i64> = all
+            .iter()
+            .filter(|node| [first, second, third].contains(&node.id))
+            .map(|node| node.id)
+            .collect();
+        assert_eq!(ids, vec![third, first, second]);
     }
 }
