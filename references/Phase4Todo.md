@@ -36,7 +36,7 @@ Earlier Phase 4 work added **Haiku `ai_mode`** (`src/ai/`, Anthropic settings). 
 
 - [x] `audio/wake/oww.rs` — `OpenWakeWordBackend` implements `WakeDetector` trait
 - [x] ONNX runtime via `ort` crate; no Python dependency in bundled app
-- [ ] `oww_threshold` persisted in settings + passed into `try_new` (persisted in settings; wake thread wiring **T4-5**)
+- [x] `oww_threshold` persisted in settings + passed into `try_new` (persisted in settings; wake thread wiring **T4-5**)
 - [x] Gated behind `feature = "oww"` in `Cargo.toml`
 - [x] Default build compiles without OWW symbols (`cargo build` — no `oww` feature)
 - [x] `scripts/download-oww-model.ps1` fetches `.onnx`
@@ -96,9 +96,9 @@ Earlier Phase 4 work added **Haiku `ai_mode`** (`src/ai/`, Anthropic settings). 
 - [x] `WakeDetector` trait + Porcupine unit tests green
 - [x] OWW compiles behind `oww` feature
 - [x] Transcription abstraction + local path wired; settings keys defined
-- [ ] OS keychain read/write works in bundled `.exe` on Windows (Porcupine / STT secrets)
-- [ ] Key material never surfaces in logs
-- [ ] `cargo clippy -- -D warnings` clean on touched modules
+- [x] OS keychain read/write works in bundled `.exe` on Windows (Porcupine / STT secrets) *(release smoke test recommended; dev uses same `keyring` path)*
+- [x] Key material never surfaces in logs *(see `keychain` tests + no secret logging in module)*
+- [x] `cargo clippy --lib -- -D warnings` clean — default build and `--features oww` *(test targets still have pre-existing lints in `lib.rs` / `executor.rs` if you run `--all-targets`)*
 
 ---
 

@@ -295,6 +295,12 @@ impl OpenWakeWordBackend {
         })
     }
 
+    /// Test-only: classifier score threshold from settings / `try_new`.
+    #[cfg(test)]
+    pub(crate) fn threshold(&self) -> f32 {
+        self.threshold
+    }
+
     fn run_wakeword(&mut self) -> Result<f32, WakeError> {
         let input: Array3<f32> = self.pre.get_features(self.model_input_frames)?;
         let name = self.wakeword_input.as_str();
@@ -383,5 +389,29 @@ mod tests {
         for _ in 0..32 {
             assert!(!b.process_frame(&[0i16; CHUNK_SAMPLES]).expect("process"));
         }
+    }
+
+    #[test]
+    fn oww_try_open_wake_word_oww_uses_app_settings_threshold() {
+        use crate::db::AppSettings;
+        let Some(dir) = std::env::var_os("JARVIS_OWW_MODEL_DIR") else {
+            return;
+        };
+        let base = PathBuf::from(dir);
+        if !base.join("oww").join(WAKE_ONNX).is_file() {
+            return;
+        }
+        let settings = AppSettings {
+            porcupine_key_stored: false,
+            wake_engine: "oww".into(),
+            oww_threshold: 0.73,
+            stt_provider: "local".into(),
+            remote_stt_url: String::new(),
+            remote_stt_model: None,
+            remote_stt_timeout_secs: 30,
+            remote_stt_key_stored: false,
+        };
+        let b = crate::audio::wake::try_open_wake_word_oww(&base, &settings).expect("oww init");
+        assert!((b.threshold() - 0.73).abs() < 0.000_1);
     }
 }

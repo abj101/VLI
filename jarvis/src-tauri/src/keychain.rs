@@ -54,3 +54,21 @@ pub fn get_api_key(service: &str) -> Result<Option<String>, String> {
         Err(e) => Err(format!("failed to read key: {e}")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_service_rejected_without_echoing_key_material() {
+        let secret = "unit-test-secret-never-log-this-xyz";
+        let err = save_api_key("not_a_registered_service", secret).expect_err("unknown service");
+        assert!(!err.contains(secret), "error must not echo key: {err}");
+    }
+
+    #[test]
+    fn empty_key_rejected_without_echoing_value() {
+        let err = save_api_key("porcupine", "   ").expect_err("empty key");
+        assert_eq!(err, "API key is empty");
+    }
+}

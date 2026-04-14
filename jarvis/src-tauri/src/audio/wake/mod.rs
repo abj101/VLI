@@ -8,7 +8,7 @@ pub mod oww;
 
 use thiserror::Error;
 
-/// Picovoice service name for the Porcupine access key (same pattern as Anthropic in T4-4).
+/// Picovoice service name for the Porcupine access key (OS keychain).
 pub const KEYRING_SERVICE_PORCUPINE: &str = "jarvis-porcupine";
 /// Credential entry label for the access key string.
 pub const KEYRING_PORCUPINE_ACCESS_KEY: &str = "access_key";
@@ -38,6 +38,19 @@ pub(crate) fn expect_pcm_frame_len(actual: usize, expected: usize) -> Result<(),
     } else {
         Ok(())
     }
+}
+
+/// OpenWakeWord backend using persisted [`crate::db::AppSettings::oww_threshold`].
+///
+/// Call this from the wake orchestrator (T4-5) instead of [`oww::OpenWakeWordBackend::try_new`]
+/// directly so the SQLite value is always applied.
+#[cfg(feature = "oww")]
+#[allow(dead_code)] // Used when wake thread lands (T4-5).
+pub fn try_open_wake_word_oww(
+    resource_dir: &std::path::Path,
+    settings: &crate::db::AppSettings,
+) -> Result<oww::OpenWakeWordBackend, WakeError> {
+    oww::OpenWakeWordBackend::try_new(resource_dir, settings.oww_threshold)
 }
 
 #[cfg(test)]
