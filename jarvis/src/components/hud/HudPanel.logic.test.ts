@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HudPhase } from "../../types";
-import { selectCenterContent, selectPhaseLabel } from "./HudPanel";
+import { selectCenterContent, selectPhaseLabel } from "./HudPanel.logic";
 
 function base(phase: HudPhase) {
   return {

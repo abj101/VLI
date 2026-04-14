@@ -46,7 +46,7 @@
 - [X] **Verify:** Delete node → close/reopen editor → gone
 - [X] **Verify:** Toggle enabled → close/reopen → toggle state persisted
 - [x] **Verify:** `cd jarvis && npm run test` — `editorStore` tests pass
-- [ ] **Verify:** `npm run lint` clean
+- [x] **Verify:** `npm run lint` clean
 
 ---
 
@@ -62,13 +62,13 @@
 - [x] Save: `create_command` (new node) or `update_command` (existing); on success update `editorStore.nodes`, show 2s inline toast
 - [x] Selecting a row in NodeList populates form; "New" clears form
 - [x] Wire `NodeForm` into `EditorRoot.tsx` right panel (two-panel layout)
-- [ ] **Verify:** Create "open calculator" node → save → fire hotkey → Calculator opens (no restart)
-- [ ] **Verify:** Edit trigger phrase → save → new phrase matches immediately
-- [ ] **Verify:** Drag action rows → save → reopen editor → order preserved
-- [ ] **Verify:** `sub_prompt` saves and reloads correctly
+- [X] **Verify:** Create "open calculator" node → save → fire hotkey → Calculator opens (no restart)
+- [X] **Verify:** Edit trigger phrase → save → new phrase matches immediately
+- [X] **Verify:** Drag action rows → save → reopen editor → order preserved
+- [X] **Verify:** `sub_prompt` saves and reloads correctly
 - [x] **Verify:** `cargo test db::` green (action JSON round-trip still intact)
 - [x] **Verify:** `npm run test` — NodeForm validation tests pass
-- [ ] **Verify:** `npm run lint` clean
+- [x] **Verify:** `npm run lint` clean
 
 ---
 
@@ -76,12 +76,12 @@
 
 Before continuing to T3-5 / T3-6, confirm all of the following:
 
-- [ ] Editor window opens from tray; HUD unaffected while editor open
-- [ ] NodeList loads, deletes, toggles nodes from live SQLite
-- [ ] NodeForm creates and edits all 6 action types with inline validation
-- [ ] `update_command` IPC fully tested (`cargo test db::`)
-- [ ] `npm run lint` clean
-- [ ] `cargo clippy -- -D warnings` clean
+- [X] Editor window opens from tray; HUD unaffected while editor open
+- [X] NodeList loads, deletes, toggles nodes from live SQLite
+- [X] NodeForm creates and edits all 6 action types with inline validation
+- [x] `update_command` IPC fully tested (`cargo test db::`)
+- [x] `npm run lint` clean
+- [x] `cargo clippy -- -D warnings` clean
 - [ ] **Human has reviewed and approved** — do not proceed until this is checked
 
 ---
