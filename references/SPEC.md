@@ -5,7 +5,7 @@
 1. **Repository layout (decided):** The Tauri + Vite app lives in **`jarvis/`** at the repo root (not next to `.git` directly). Paths are `jarvis/package.json`, `jarvis/src/`, `jarvis/src-tauri/`. Run npm/cargo dev commands **from `jarvis/`** unless CI wraps them.
 2. **Platforms:** **Windows first** for MVP builds and acceptance; **macOS** is still in scope but may ship **after** Windows is solid. Linux is out of scope unless you add it later.
 3. **Voice stack:** **Porcupine** (wake), **Whisper.cpp** (STT, `tiny.en`), **Piper** (TTS) as in BrainStorm; licensing may swap wake engine to **OpenWakeWord** later without changing the rest of the spec.
-4. **Cloud:** Voice pipeline is **on-device only**; **Anthropic Claude Haiku** is used **only** when a command node has `ai_mode: true` (user supplies API key, never committed).
+4. **Cloud / “AI”:** The product does **not** use an LLM to interpret commands. Matching is **exact/fuzzy** on the final transcript (Phase 1–3). The only ML/remote “AI” surface is **speech-to-text**: users may choose **local** (default), **OS speech APIs**, or a **remote HTTP STT** endpoint; credentials for remote STT use the **OS keychain** (never SQLite or git). No Anthropic/OpenAI-style **command** reasoning layer.
 5. **Auth / accounts:** **Local-first** — no user accounts or cloud command sync in v1.
 6. **Toolchain:** **Node LTS** + **Rust stable** (Tauri 2 requirements as documented at scaffold time).
 
@@ -44,13 +44,13 @@
 | Shell | **Tauri 2** (Rust + system tray, global shortcuts, windows) |
 | UI | **React 18**, **TypeScript**, **Vite** |
 | UI motion / state | **Framer Motion**, **Zustand** |
-| Wake word (later phase) | **Porcupine** (evaluate **OpenWakeWord** if licensing/custom phrase is blocked) |
-| STT | **Whisper.cpp** (`tiny.en`, ~75MB model asset) |
+| Wake word (Phase 4+) | **Porcupine** primary; **OpenWakeWord** optional (feature-gated) |
+| STT | **Local default:** **Whisper.cpp** (`tiny.en`, ~75MB). **Optional:** OS speech APIs, remote HTTP STT (user endpoint + keychain secrets) — see Phase 4 plan |
 | TTS | **Piper** (offline) |
 | Fuzzy match | **rapidfuzz** (Rust side preferred for command matching) |
-| Optional semantic match | **fastembed** + MiniLM-L3 (optional / later) |
-| DB | **SQLite** (Rust, e.g. `sqlx`) |
-| Optional AI follow-up | **Anthropic** `claude-haiku-4-5` — **only** when `ai_mode: true` |
+| Optional semantic match | **fastembed** + MiniLM-L3 (optional / later; separate from command path) |
+| DB | **SQLite** (Rust; `rusqlite` + migrations in app) |
+| Command interpretation | **No LLM** — transcript → matcher → actions only |
 | Bundling | Tauri bundler (`.exe` / `.dmg`), auto-updater in distribution phase |
 
 ---
@@ -176,7 +176,7 @@ export function useHudState(initial: Pick<HudState, "phase">): HudState {
 - Run **format + lint + unit tests** before merge for touched areas.
 - Keep **secrets and API keys** out of git (env / OS keychain / local config).
 - Validate **IPC payloads** on Rust side for commands that touch filesystem or shell.
-- Preserve **on-device** voice processing defaults; cloud only for explicit `ai_mode` + user key.
+- Preserve **on-device** voice processing defaults; **remote STT** (if enabled) is explicit user choice with secrets in the **keychain**, not in the DB or logs.
 
 **Ask first**
 
@@ -195,7 +195,7 @@ export function useHudState(initial: Pick<HudState, "phase">): HudState {
 
 ## Success Criteria (release-ready v1 — spans phases)
 
-- [ ] User can create/edit **command nodes** (JSON or editor, whichever ships first) with triggers + actions + optional **sub_prompt** branches.
+- [ ] User can create/edit **command nodes** (JSON or editor, whichever ships first) with triggers + actions + optional **`sub_prompt` actions** (voice follow-up in the action chain — not an LLM prompt).
 - [ ] **Fuzzy** matching works with **per-node** threshold (default **0.80**).
 - [ ] **HUD** matches BrainStorm: dimensions, waveform circle, stop control, transcription + highlight behavior, minimal chrome.
 - [ ] **Wake word** path OR documented **hotkey-only** mode for users who skip Porcupine.
@@ -206,9 +206,9 @@ export function useHudState(initial: Pick<HudState, "phase">): HudState {
 
 ## Open Questions
 
-1. **Wake word:** Porcupine free tier vs **OpenWakeWord** — decision before Phase 4.
-2. **STT fallback:** Optional cloud STT for weak hardware vs strict offline-only?
-3. **Monetization:** Confirm “free core + paid/BYOK AI” only affects packaging/UX, not core architecture.
+1. **Wake word:** Porcupine vs **OpenWakeWord** tradeoffs (licensing, custom phrase) — partially resolved in Phase 4 (both supported; user-selectable).
+2. **STT providers:** OS STT quality/latency per Windows version; remote STT vendor contract (OpenAI-compatible vs custom HTTP) — see Phase 4 implementation.
+3. **Monetization:** If any, align with **local-first** + optional **BYOK remote STT** (not a bundled command LLM).
 4. **Command sync:** Remains **local-only** until a future spec revision.
 5. **Plugin system:** Deferred; keep **action executor** modular so new action types are additive.
 6. **Repo name vs product name:** Workspace is **VLI**; product is **JARVIS** — confirm app **bundle ID** / window title naming.
@@ -218,5 +218,6 @@ export function useHudState(initial: Pick<HudState, "phase">): HudState {
 ## References
 
 - Vision, UI, and phased roadmap: `BrainStorm.md` (Project Truth Document v0.1).
+- Phase 4 scope (wake word, **STT provider choice**, app index; **no** command LLM): `references/Phase4Plan.md`.
 
 When this spec is **approved**, next gated step is **PLAN** (architecture + sequencing), then **TASKS**, then **IMPLEMENT** — per spec-driven-development workflow.

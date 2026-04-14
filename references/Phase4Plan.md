@@ -1,20 +1,21 @@
-# Implementation Plan: JARVIS Phase 4
+# Implementation Plan: JARVIS Phase 4 (revised)
 
 ## Scope
 
 Phase 4 adds three capabilities that were explicitly deferred in Phase 1–3:
 
 1. **Wake-word engine** — Porcupine (primary) or OpenWakeWord (fallback / custom phrase) replaces the hotkey-only trigger for always-on listening.
-2. **Haiku `ai_mode`** — When a command node has `ai_mode: true`, an Anthropic Claude Haiku call is made using the user-supplied API key for intent extraction / open-ended replies; no hardcoded cloud by default.
+2. **Transcription engine selection** — The **only** “AI” in the product sense is **speech-to-text**: users choose a **transcription backend** — **local on-device** (bundled Whisper.cpp / similar), **OS-provided** (platform speech APIs, e.g. Windows speech recognition), or **remote HTTP API** (user-supplied endpoint + credentials). No separate LLM layer for command interpretation; matching stays fuzzy/exact as in Phase 1–3.
 3. **App auto-detection** — `OpenApp` actions resolve against a live index of installed applications (Windows registry / Start Menu scan) instead of requiring the user to supply a raw executable path.
 
-Phases 1–3 are complete and all checklists have passed. This plan builds on that foundation; no Phase 1–3 contracts are broken.
+Phases 1–3 are complete. This plan **does not** add Anthropic Haiku, `ai_mode` on command nodes, or any secondary “assistant” LLM. Legacy code paths for those features are **removed** under Task T4-6 (see below).
 
 **Resolved decisions carried forward:**
 
-- Wake engine decision: **ship Porcupine path first** (free-tier keyword, `jarvis` keyword); OpenWakeWord is a parallel code path that can be toggled via `tauri.conf.json` / settings. Both paths share the same `WakeDetector` trait.
-- Haiku model string: `claude-haiku-4-5` (as in SPEC). API key stored in OS keychain via `keytar` (Node side) or `keyring` crate (Rust side) — never in SQLite or env committed to git.
-- App index: Windows registry scan (`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall` + Start Menu `.lnk` crawl). macOS Spotlight / `/Applications` scan is deferred until macOS milestone.
+- Wake engine: **ship Porcupine path first** (free-tier keyword); OpenWakeWord toggled via settings / feature flag. Both share `WakeDetector` trait.
+- Transcription: **default = local bundled model** for privacy; OS and remote are opt-in and clearly labeled in Settings.
+- Remote STT: treat as **user BYOK** to a vendor endpoint (OpenAI-compatible or documented HTTP contract); keys in OS keychain, never in SQLite.
+- App index: Windows registry + Start Menu scan first; macOS deferred.
 
 ---
 
@@ -22,21 +23,22 @@ Phases 1–3 are complete and all checklists have passed. This plan builds on th
 
 ```
 Phase 3 entry point:       GlobalHotkey → Orch
-Phase 4 additional path:   WakeDetector → Orch  (runs on its own thread, gated by is_paused)
+Phase 4 additional path:   WakeDetector → Orch  (dedicated thread, gated by is_paused)
 
-New Rust modules:
+Rust modules:
   audio/wake/              trait WakeDetector + PorcupineBackend + OpenWakeWordBackend
-  ai/                      mod ai_mode — calls Anthropic HTTP, returns structured ActionPlan
-  apps/                    mod app_index — scan + cache installed apps, fuzzy resolve name→path
+  audio/transcription/     (or equivalent) trait TranscriptionBackend + LocalWhisper + OsStt + RemoteApi
+  apps/                    app index — scan + cache, fuzzy resolve name→path
 
 New IPC events:
-  wake-detected            { backend: "porcupine"|"oww" }   → HUD transitions to listening
-  ai-thinking              { node_id }                       → HUD shows thinking indicator
-  ai-response              { text, actions: ActionPlan[] }   → HUD shows result
-  app-index-ready          { count: usize }                  → settings UI, optional
+  wake-detected            { backend: "porcupine"|"oww" }   → HUD → listening
+  app-index-ready          { count: usize }                  → settings UI
+  (transcript path unchanged: existing transcript-update / pipeline events — provider swap is internal)
 ```
 
-**Key design rule (unchanged):** all new modules are pure logic. `lib.rs` orchestrates. `ai/` never imports `audio/`; `apps/` never imports `commands/`.
+**Key design rule (unchanged):** pure logic in modules; `lib.rs` orchestrates. Transcription backend does not import `commands/` matcher logic; matcher consumes final transcript string as today.
+
+**Explicitly out of scope for Phase 4:** Haiku / `ai_mode` / `ai-thinking` / `ai-response` / `src/ai/` HTTP client for command reasoning — removed in T4-6.
 
 ---
 
@@ -45,25 +47,24 @@ New IPC events:
 ```
 T4-1: WakeDetector trait + Porcupine backend
   |
-  +---> T4-2: OpenWakeWord backend   (parallel, same trait; can ship after T4-1)
+  +---> T4-2: OpenWakeWord backend   (parallel; same trait)
   |
   +---> T4-5: Wake path integration (lib.rs wires WakeDetector → same Orch pipeline as hotkey)
                 |
                 +---> T4-8: End-to-end wake + pipeline integration
 
-T4-3: Haiku ai_mode — HTTP client + prompt + response parse
+T4-3: Transcription backend abstraction + settings (local + contract for OS + remote)
   |
-  +---> T4-4: API key storage (OS keychain) + Settings IPC
+  +---> T4-4: Settings IPC + UI (wake, Porcupine key, STT provider, remote key/endpoint flags)
   |
-  +---> T4-6: ai_mode executor branch (lib.rs: if node.ai_mode → call ai/, else existing path)
-                |
-                +---> T4-8
+  +---> T4-6: Legacy AI removal (Haiku, ai_mode, ai module, global_ai_mode UI) — after T4-3/T4-4
+                so STT story replaces “extra AI” in UX copy
 
-T4-7: App index (scan + cache + fuzzy resolve)          [independent after Phase 3 T1 types]
+T4-7: App index (scan + cache + fuzzy resolve)          [independent after Phase 3 types]
   |
   +---> T4-8
 
-T4-8: Integration + HUD updates (thinking indicator, wake-detected event)
+T4-8: Integration + HUD (wake badge, no LLM “thinking” phase)
   |
   +---> T4-9: Quality gates + docs
 ```
@@ -74,333 +75,113 @@ T4-8: Integration + HUD updates (thinking indicator, wake-detected event)
 
 ### Task T4-1: `WakeDetector` trait + Porcupine backend [M]
 
-**Description:**
+**Description:** Same as prior Phase 4 plan: trait + `PorcupineBackend`, key from keychain, bundled `.ppn`, graceful fallback to hotkey-only.
 
-Add `jarvis/src-tauri/src/audio/wake/mod.rs` defining a `WakeDetector` trait:
+**Acceptance criteria:** Unchanged from original T4-1 (trait, tests, missing key/model → warning, no panic).
 
-```rust
-pub trait WakeDetector: Send + 'static {
-    /// Feed one chunk of PCM (16kHz, i16, mono). Returns true when wake phrase detected.
-    fn process_frame(&mut self, pcm: &[i16]) -> Result<bool, WakeError>;
-    fn backend_name(&self) -> &'static str;
-}
-```
+**Dependencies:** Phase 3 mic capture.
 
-Implement `PorcupineBackend` in `audio/wake/porcupine.rs` using the `pv_porcupine` crate (or raw FFI to the Porcupine shared library bundled under `src-tauri/resources/`). The backend reads the access key from the OS keychain (same store as Haiku key, different service name). Model file: `jarvis_windows.ppn` (bundled via `tauri.conf.json` `bundle.resources`). Frame length and sample rate from Porcupine's C API.
-
-The `PorcupineBackend` is constructed at app start if `wake_engine = "porcupine"` in the persisted settings row (new `settings` table, single-row — see T4-4). If the key or model file is missing, backend falls back to hotkey-only mode and logs a warning (never panics or blocks startup).
-
-**Acceptance criteria:**
-
-- `WakeDetector` trait compiles with both backends behind `#[cfg]` gates (`feature = "porcupine"`, `feature = "oww"`).
-- `PorcupineBackend::process_frame` returns `Ok(true)` in a unit test where a known-wake PCM fixture is fed in (or a mock struct that satisfies the trait).
-- Missing key/model → app still starts in hotkey-only mode; warning logged.
-- `cargo clippy -- -D warnings` clean on this module.
-
-**Verification:**
-
-- `cargo test audio::wake::` passes.
-- Manual: speak wake word → observe `wake-detected` event in DevTools (after T4-5 wires it).
-
-**Dependencies:** T1 (scaffold), Phase 3 T4a (mic capture already exists — reuse the PCM channel).
-
-**Files:**
-
-- `jarvis/src-tauri/src/audio/wake/mod.rs` (new)
-- `jarvis/src-tauri/src/audio/wake/porcupine.rs` (new)
-- `jarvis/src-tauri/Cargo.toml` (add `pv_porcupine` or raw lib dep)
-- `jarvis/src-tauri/tauri.conf.json` (add `*.ppn`, Porcupine `.dll`/`.dylib` to `bundle.resources`)
-- `jarvis/scripts/download-wake-models.ps1` (new — fetch `.ppn` + lib, never commit binaries)
+**Files:** `audio/wake/*`, `Cargo.toml`, `tauri.conf.json`, download scripts.
 
 ---
 
 ### Task T4-2: OpenWakeWord backend [S–M]
 
-**Description:**
+**Description:** Same as prior plan: `OpenWakeWordBackend` behind `feature = "oww"`, ONNX via `ort`.
 
-Implement `OpenWakeWordBackend` in `audio/wake/oww.rs`. OpenWakeWord runs as a Python subprocess or via its C-API / ONNX runtime (prefer ONNX via `ort` crate to avoid Python dependency in the bundled app). The backend satisfies the same `WakeDetector` trait.
+**Acceptance criteria:** Unchanged (feature isolation, `backend_name()` = `"oww"`).
 
-Use the community `hey_jarvis` or similar ONNX model (check license; document in README). Feed PCM frames from the same mic channel as Porcupine. Threshold configurable via the settings table (`oww_threshold f32`, default `0.5`).
-
-This backend is gated behind `feature = "oww"` and is not enabled in the default Windows MVP build; it is the escape hatch when Porcupine licensing is blocked or a custom wake phrase is needed.
-
-**Acceptance criteria:**
-
-- `OpenWakeWordBackend` compiles under `--features oww`.
-- `WakeDetector` trait satisfied (same test fixture approach as T4-1).
-- Default build (`--no-default-features` or without `oww`) compiles without any OWW code.
-- `backend_name()` returns `"oww"`.
-
-**Verification:**
-
-- `cargo test --features oww audio::wake::oww` passes.
-- Feature-flag isolation: `cargo build` (no flags) does not include OWW symbols.
-
-**Dependencies:** T4-1 (trait definition).
-
-**Files:**
-
-- `jarvis/src-tauri/src/audio/wake/oww.rs` (new)
-- `jarvis/src-tauri/Cargo.toml` (add `ort` crate behind `oww` feature)
-- `jarvis/scripts/download-oww-model.ps1` (new — fetch `.onnx`)
+**Dependencies:** T4-1.
 
 ---
 
-### Task T4-3: Haiku `ai_mode` — HTTP client + prompt contract [M]
+### Task T4-3: Transcription backend selection — abstraction + local path [M]
 
 **Description:**
 
-Add `jarvis/src-tauri/src/ai/mod.rs`. This module is the **only** place in the codebase that calls the Anthropic API. Expose one async function:
+Introduce a **transcription** abstraction used by the listen pipeline (replacing a single hardcoded Whisper entry point as the only option):
 
-```rust
-pub async fn run_ai_mode(
-    node: &CommandNode,
-    transcript: &str,
-    api_key: &str,
-) -> Result<AiResponse, AiError>
-```
+- **Local on-device:** bundled Whisper.cpp (or current stack) — default.
+- **OS-native:** platform speech recognition API (implementation may be Windows-first; stub or feature-gate others).
+- **Remote API:** HTTP STT endpoint with user config (URL, model id if needed, API key in keychain).
 
-Where `AiResponse` contains:
-- `text: String` — the reply shown in HUD
-- `actions: Vec<Action>` — zero or more actions to execute (same `Action` enum from Phase 1 T2)
-
-The function calls `https://api.anthropic.com/v1/messages` with model `claude-haiku-4-5`, `max_tokens: 512`. System prompt (stored as `sub_prompt` on the `CommandNode`, falls back to a default): instructs the model to respond in structured JSON with `{ "text": "...", "actions": [...] }`. Parse response; on parse failure, return `AiResponse { text: raw_reply, actions: vec![] }` (graceful degradation).
-
-Timeout: **10 seconds** hard ceiling; on timeout, surface an `AiError::Timeout` that the executor translates to an `action-status` event with a user-friendly message.
-
-**Never** log or persist the API key or the response payload beyond the current call stack.
+Persist `stt_provider` (and related fields: e.g. remote endpoint id, flags) in the existing settings store. No LLM calls; only audio → text.
 
 **Acceptance criteria:**
 
-- `run_ai_mode` compiles with a mock HTTP client in tests (use `mockito` or `httpmock`).
-- Successful mock response → `AiResponse` parsed correctly.
-- Malformed JSON response → graceful degradation (no panic, `text` contains raw reply).
-- Timeout (mock slow server) → `AiError::Timeout` returned.
-- No API key appears in any log line (`cargo test -- --nocapture` inspected).
+- User-facing enum or string contract for three provider classes documented in code + README.
+- Local path preserves current behavior when selected (tests still pass).
+- OS / remote may ship as stubs returning clear `NotImplemented` or behind `cfg` until implemented — but **settings + types** exist so UI can save choices.
 
-**Verification:**
+**Verification:** `cargo test` for transcription module; manual: switch provider in Settings (once UI lands in T4-4) and verify pipeline uses local when selected.
 
-- `cargo test ai::` with mock server.
-- Manual (after T4-4 wires key): toggle `ai_mode: true` on seed node → speak → see HUD `ai-thinking` + response (after T4-6 wires it).
+**Dependencies:** Phase 3 STT pipeline hooks identified in `lib.rs` / `audio/`.
 
-**Dependencies:** Phase 1 T2 (`Action` enum, `CommandNode`).
-
-**Files:**
-
-- `jarvis/src-tauri/src/ai/mod.rs` (new)
-- `jarvis/src-tauri/Cargo.toml` (add `reqwest` with `rustls`, `tokio`, `mockito` dev-dep)
+**Files (likely):** `audio/transcription/*.rs` (or `audio/stt/*.rs`), `db/settings.rs`, `lib.rs` orchestration.
 
 ---
 
-### Task T4-4: API key storage + Settings IPC + Settings UI [M]
+### Task T4-4: Settings + IPC + Settings UI (revised) [M]
 
 **Description:**
 
-**Rust side:** Add a `settings` table (single row, upsert pattern) to the existing SQLite DB:
+**Rust:** Extend settings for wake engine, Porcupine flags, **STT provider** and remote STT key/endpoint flags (keychain for secrets). **Remove** persistence and commands tied to Anthropic / `global_ai_mode` / `ai_mode` — those belong to T4-6 if still present in code.
 
-```sql
-CREATE TABLE IF NOT EXISTS settings (
-  id INTEGER PRIMARY KEY CHECK (id = 1),
-  wake_engine TEXT NOT NULL DEFAULT 'hotkey',
-  oww_threshold REAL NOT NULL DEFAULT 0.5,
-  porcupine_access_key_stored INTEGER NOT NULL DEFAULT 0,  -- flag only; key in keychain
-  anthropic_key_stored INTEGER NOT NULL DEFAULT 0,         -- flag only; key in keychain
-  ai_mode_global INTEGER NOT NULL DEFAULT 0,
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-```
-
-API keys stored via the `keyring` crate (`service = "jarvis-anthropic"`, `service = "jarvis-porcupine"`). Expose Tauri commands:
-
-- `get_settings() → SettingsPayload`
-- `save_api_key(service: String, key: String) → Result<()>` — writes to OS keychain
-- `delete_api_key(service: String) → Result<()>`
-- `update_settings(patch: SettingsPatch) → Result<()>`
-
-**React side:** Add `src/components/Settings/SettingsPanel.tsx`. Accessible from tray "Settings" menu item (add to tray in T4-5). Shows:
-- Wake engine selector (hotkey / porcupine / oww)
-- API key input for Porcupine (masked, save/clear)
-- API key input for Anthropic (masked, save/clear)
-- Global ai_mode toggle
-- "App Index" status (count from `app-index-ready` event, "Scanning…" / "N apps indexed")
+**React:** Settings panel: wake engine, Porcupine key, **transcription provider** (local / OS / online), remote STT configuration as needed. **Remove** global “AI mode” toggle and Anthropic key fields (cleanup completed in T4-6 or in tandem).
 
 **Acceptance criteria:**
 
-- `save_api_key` writes to OS keychain; value not present in SQLite dump.
-- `get_settings` returns flag `anthropic_key_stored: true` after key saved (does not return key value).
-- `delete_api_key` removes from keychain and flips flag.
-- UI: key input masked; Save/Clear buttons work; wake engine change persists across restart.
-- `cargo test db::settings` passes.
+- No Anthropic-specific settings surface in UI when T4-6 complete.
+- STT choice persists across restart.
+- `cargo test db::settings` passes after schema changes.
 
-**Verification:**
+**Dependencies:** T4-3 types; coordination with T4-6 for deletion of legacy fields.
 
-- `cargo test db::settings` + `cargo test commands::save_api_key`.
-- Manual: open Settings from tray, save Anthropic key, restart app, flag shown as stored.
-
-**Dependencies:** Phase 1 T2 (DB), Phase 1 T8 (tray — add Settings item).
-
-**Files:**
-
-- `jarvis/src-tauri/src/db/settings.rs` (new)
-- `jarvis/src-tauri/src/db/mod.rs` (add settings module)
-- `jarvis/src-tauri/Cargo.toml` (add `keyring`)
-- `jarvis/src-tauri/src/lib.rs` (register new Tauri commands)
-- `jarvis/src/components/Settings/SettingsPanel.tsx` (new)
-- `jarvis/src/store/settingsStore.ts` (new Zustand store)
-- `jarvis/src-tauri/src/tray.rs` (add "Settings" menu item)
-
----
-
-### Checkpoint A — Wake + AI foundations
-
-Before proceeding to T4-5/T4-6:
-
-- [ ] `WakeDetector` trait + Porcupine backend unit tests green.
-- [ ] OWW backend compiles behind feature flag; feature isolation confirmed.
-- [ ] Haiku client unit tests green with mock server.
-- [ ] OS keychain read/write works on Windows; key never surfaces in logs.
-- [ ] Settings table persists across restart; UI shows correct stored-flag state.
-- [ ] `cargo clippy -- -D warnings` clean across all new modules.
+**Files:** `db/settings.rs`, `SettingsPanel.tsx`, `settingsStore.ts`, `lib.rs` commands.
 
 ---
 
 ### Task T4-5: Wake path integration — `lib.rs` orchestrator [M]
 
-**Description:**
+**Description:** Same as original Phase 4 T4-5: wake thread, secondary PCM, `wake-detected` IPC, `is_paused` gate, hotkey unchanged.
 
-Extend `lib.rs` to support a second trigger path alongside the hotkey:
+**Acceptance criteria:** Unchanged from original T4-5.
 
-1. At app start, read `settings.wake_engine`. If `porcupine` or `oww`, construct the appropriate `WakeDetector` impl and spawn a **dedicated wake thread** (`std::thread::spawn`).
-2. The wake thread feeds PCM frames from a **secondary mic channel** (low-level, continuous — separate from the Whisper capture channel which is only active post-trigger). Use a ring buffer / shared channel; keep CPU budget low (Porcupine's frame processing is ~0.1ms/frame).
-3. On `WakeDetector::process_frame` returning `Ok(true)`: send a message on an `mpsc` channel to the main async runtime → same `start_pipeline()` path as the hotkey handler. Emit `wake-detected { backend }` IPC event to React.
-4. Gate: if `is_paused` flag is set, the wake thread discards frames and skips `start_pipeline`.
-5. If wake engine is `hotkey`, no wake thread is started (existing behavior, fully backward compatible).
+**Dependencies:** T4-1 or T4-2, T4-4 (settings read).
 
-**Acceptance criteria:**
-
-- Wake thread spawns only when `wake_engine ≠ "hotkey"`.
-- Hotkey path unchanged; existing E2E checklist still passes.
-- Speak wake word → HUD appears and enters `listening` phase (manual verification with Porcupine key).
-- `is_paused = true` suppresses wake detection.
-- No CPU spike when idle (< 2% additional on reference hardware, measured with Task Manager).
-- `cargo test` still fully green.
-
-**Verification:**
-
-- Manual: configure Porcupine key in Settings → speak "Jarvis" → HUD appears.
-- Manual: tray Pause → speak wake word → HUD does not appear.
-- `cargo test` passes.
-
-**Dependencies:** T4-1 or T4-2 (backend), T4-4 (settings read), Phase 1 T4a (mic capture).
-
-**Files:**
-
-- `jarvis/src-tauri/src/lib.rs` (wake thread spawn, event emit, pipeline gate)
-- `jarvis/src-tauri/src/audio/mod.rs` (secondary PCM channel for wake, low-level)
+**Files:** `lib.rs`, `audio/mod.rs`.
 
 ---
 
-### Task T4-6: `ai_mode` executor branch [S–M]
+### Task T4-6: Legacy AI removal — Haiku, `ai_mode`, and related code [M]
 
 **Description:**
 
-Extend `lib.rs` orchestrator's post-match step: after `Matcher` returns a `MatchResult`, check `node.ai_mode`:
+Remove the **extra** AI stack: Anthropic Haiku client (`src/ai/` or equivalent), `run_ai_mode` / `ai_mode` on `CommandNode`, `global_ai_mode` in settings, executor branches that call HTTP LLM for preview/intent, `sub_prompt` requirements tied to `ai_mode`, Settings UI for Anthropic, and any IPC/HUD “thinking” states that existed only for LLM responses. **Transcription** remains the only ML/remote “AI” surface.
 
-- **`ai_mode: false` (default):** existing executor path (Phase 1 T7) — no change.
-- **`ai_mode: true`:** 
-  1. Retrieve Anthropic key from keychain. If missing → emit `action-status { text: "AI mode requires an Anthropic API key. Add it in Settings." }` → skip to `done`.
-  2. Emit `ai-thinking { node_id }` IPC event → HUD enters thinking state.
-  3. `await run_ai_mode(node, transcript, key)`.
-  4. Emit `ai-response { text, actions }` IPC event.
-  5. Execute returned `actions` through the existing executor (reuse T7 exactly — no duplication).
-  6. Transition HUD to `executing` → `done`.
-
-Add `ai_mode: bool` field to `CommandNode` struct and SQLite `command_nodes` table (migration: `ALTER TABLE command_nodes ADD COLUMN ai_mode INTEGER NOT NULL DEFAULT 0`). Bump schema version.
+Include DB migration if columns (`ai_mode`, etc.) are dropped or deprecated; update seeds and editor forms (`NodeForm.logic.ts`, `types.ts`). Remove or rewrite tests that asserted Haiku/`ai_mode` behavior.
 
 **Acceptance criteria:**
 
-- `ai_mode: false` node: behavior identical to Phase 1–3 (no regression).
-- `ai_mode: true` node, key present: `ai-thinking` event fires; `ai-response` event fires with parsed text; actions execute.
-- `ai_mode: true` node, key missing: user-friendly `action-status` message, no panic.
-- `cargo test commands::` still green.
-- Schema migration runs without data loss (existing seed commands preserved).
+- `rg` / codebase search: no `claude-haiku`, `anthropic` API client for commands, or `ai_mode` executor paths (except brief comments in changelog if needed).
+- `cargo test` and `npm test` green.
+- Editor and HUD copy contain no “AI mode” for LLM; optional mention of **speech recognition** provider only.
 
-**Verification:**
+**Verification:** `cargo clippy -- -D warnings`, `npm run lint`, targeted grep for removed symbols.
 
-- `cargo test` — including DB migration idempotency test.
-- Manual: seed one `ai_mode: true` node via Settings or direct DB edit → speak trigger → verify `ai-thinking` indicator on HUD, response text shown, action executes.
+**Dependencies:** Prefer completing after T4-3/T4-4 so STT settings replace removed panels; can be parallel if merge conflicts managed.
 
-**Dependencies:** T4-3 (ai module), T4-4 (keychain read), Phase 1 T7 (executor reuse).
-
-**Files:**
-
-- `jarvis/src-tauri/src/ai/mod.rs` (already created in T4-3)
-- `jarvis/src-tauri/src/db/models.rs` (add `ai_mode` field)
-- `jarvis/src-tauri/src/lib.rs` (branch in post-match)
-- `jarvis/src-tauri/src/db/mod.rs` (migration)
-- `jarvis/src/store/hudStore.ts` (handle `ai-thinking` + `ai-response` events)
-- `jarvis/src/components/HUD/HudOverlay.tsx` (thinking indicator, response text display)
+**Files (likely):** `ai/mod.rs` (delete), `commands/executor.rs`, `db/models.rs`, `db/mod.rs`, `lib.rs`, `keychain.rs`, `SettingsPanel.tsx`, `NodeForm.logic.ts`, tests.
 
 ---
 
 ### Task T4-7: App index — scan, cache, fuzzy resolve [M]
 
-**Description:**
+**Description:** Same as original Phase 4 T4-7 (Windows scanner, SQLite cache, `resolve_app`, executor integration).
 
-Add `jarvis/src-tauri/src/apps/mod.rs`. Responsible for building and querying a local index of installed applications so `OpenApp` can accept a friendly name (`"Discord"`, `"VS Code"`) rather than requiring a full path.
+**Acceptance criteria:** Unchanged from original T4-7.
 
-**Index build (Windows):**
-
-1. Crawl `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall` and `HKCU\...\Uninstall` — extract `DisplayName` + `DisplayIcon` (or `InstallLocation`).
-2. Crawl `%APPDATA%\Microsoft\Windows\Start Menu` and `%ProgramData%\Microsoft\Windows\Start Menu` for `.lnk` files — resolve targets via Windows Shell API (call via `windows-rs` crate).
-3. Deduplicate by resolved path. Store in an in-memory `HashMap<String, PathBuf>` (app name → exe path).
-4. Persist cache to a `app_index` table in SQLite (columns: `name TEXT`, `exe_path TEXT`, `source TEXT`, `updated_at TEXT`) for fast startup (no full rescan needed every launch — rescan if cache is > 24h old or explicitly triggered).
-
-**Resolve function:**
-
-```rust
-pub fn resolve_app(name: &str, index: &AppIndex) -> Option<PathBuf>
-```
-
-Uses `rapidfuzz` (already in scope from Phase 2) with threshold `0.75`. Returns best match or `None`.
-
-**Executor integration:** In `executor.rs`, `Action::OpenApp { name, path }` — if `path` is empty/None, call `resolve_app(name, index)`. If found, use resolved path; otherwise fall back to `cmd /C start <name>` (existing behavior, keep as last-resort).
-
-**Acceptance criteria:**
-
-- `AppIndex::build_windows()` returns > 0 entries on a standard Windows 11 dev machine.
-- `resolve_app("notepad", &index)` returns the Notepad path without a full path hint.
-- Cache written to SQLite; on cold start, read from cache (no registry scan if < 24h old).
-- `cargo test apps::` passes (mock index for unit tests; integration test with real registry behind `#[cfg(target_os = "windows")]`).
-- `app-index-ready { count }` IPC event emitted after build completes.
-
-**Verification:**
-
-- `cargo test apps::` passes.
-- Manual: on Windows, `resolve_app("discord")` resolves correctly in test binary.
-- Settings panel shows indexed app count.
-
-**Dependencies:** Phase 1 T2 (SQLite), Phase 2 `rapidfuzz` integration.
-
-**Files:**
-
-- `jarvis/src-tauri/src/apps/mod.rs` (new)
-- `jarvis/src-tauri/src/apps/scanner_windows.rs` (new)
-- `jarvis/src-tauri/src/commands/executor.rs` (wire resolve_app)
-- `jarvis/src-tauri/src/db/mod.rs` (add app_index table)
-- `jarvis/src-tauri/Cargo.toml` (add `windows-rs` features for shell / registry)
-
----
-
-### Checkpoint B — Integration-ready
-
-Before T4-8:
-
-- [ ] Wake thread running; `wake-detected` event visible in DevTools.
-- [ ] `ai_mode` branch fires `ai-thinking` + `ai-response` with live Anthropic key.
-- [ ] App index built on startup; `app-index-ready` count > 0 on Windows dev machine.
-- [ ] Schema migration idempotent on existing Phase 3 DB.
-- [ ] All unit tests green. `cargo clippy -- -D warnings` clean.
+**Dependencies:** Phase 2 `rapidfuzz`.
 
 ---
 
@@ -408,46 +189,15 @@ Before T4-8:
 
 **Description:**
 
-Wire remaining loose ends and verify all three Phase 4 features work in a single running app instance:
-
-1. **HUD updates for Phase 4 events:**
-   - `wake-detected`: HUD appears from idle (no hotkey needed), enters `listening` phase, shows backend name as subtle badge.
-   - `ai-thinking`: New HUD sub-phase — show animated ellipsis / spinner inside the transcript area; text "Thinking…".
-   - `ai-response`: Transition to showing AI reply text in transcript area before `executing`.
-2. **Tray updates:** "Settings" opens `SettingsPanel`. Wake engine shown in tray tooltip (e.g. "JARVIS — Porcupine active").
-3. **Startup sequencing in `lib.rs`:**
-   - Init DB (including migration).
-   - Load settings.
-   - Build app index (async, non-blocking — emit `app-index-ready` when done).
-   - Init wake engine (or skip if `hotkey`).
-   - Register global hotkey (always, as fallback).
-4. **Graceful degradation matrix** (all tested manually):
-
-   | Wake engine | Anthropic key | App index | Expected behavior |
-   |-------------|--------------|-----------|-------------------|
-   | hotkey | absent | fresh | Phase 1–3 behavior unchanged |
-   | porcupine | absent | cached | Wake works; `ai_mode` nodes show key-missing message |
-   | porcupine | present | cached | Full Phase 4 path |
-   | hotkey | present | fresh | Hotkey trigger + ai_mode works |
+Wire wake, **transcription provider selection**, and app index. **HUD:** `wake-detected` badge; **no** LLM “Thinking…” phase. Tray tooltip reflects wake engine. Degradation matrix updated: remove rows about Anthropic key for command execution.
 
 **Acceptance criteria:**
 
-- Speak wake word → HUD → speak command → execute: full path end-to-end.
-- `ai_mode: true` node: thinking indicator, AI text, action executes.
-- `OpenApp("Discord")` with empty path field resolves via app index.
-- All Phase 1–3 E2E checklist items still pass (no regression).
-- `cargo test` and `npm run build` clean.
+- Wake → listen → transcript → match → execute works with **local** STT.
+- App index resolves friendly app names.
+- Phase 1–3 E2E regressions pass.
 
-**Verification:** Manual E2E checklist in `todo4.md`.
-
-**Dependencies:** T4-5, T4-6, T4-7.
-
-**Files:**
-
-- `jarvis/src-tauri/src/lib.rs` (startup sequence, event wiring)
-- `jarvis/src/components/HUD/HudOverlay.tsx` (ai-thinking phase, badge)
-- `jarvis/src/store/hudStore.ts` (new events)
-- `jarvis/src-tauri/src/tray.rs` (tooltip, Settings item)
+**Dependencies:** T4-5, T4-6, T4-7, T4-3/4.
 
 ---
 
@@ -455,39 +205,36 @@ Wire remaining loose ends and verify all three Phase 4 features work in a single
 
 **Description:**
 
-- Update `jarvis/README.md`: document Porcupine setup (access key, `.ppn` download script), OWW opt-in build flag, Anthropic BYOK instructions, app index behavior.
-- Add `jarvis/scripts/download-wake-models.ps1` (Porcupine `.ppn` + shared lib) to prereqs section.
-- `cargo fmt --check` clean across all new modules.
-- `cargo clippy -- -D warnings` clean.
-- `npm run lint` clean.
-- `npm run test` (Vitest) — add at minimum one test for `settingsStore` and `hudStore` Phase 4 event handling.
-- `npm run tauri build` produces `.exe` with Phase 4 features.
-- Confirm `*.ppn`, `*.onnx`, `*.bin` model files excluded from git (`.gitignore` check).
+README Phase 4: Porcupine, OWW flag, **STT providers** (local default, OS, online API BYOK), app index — **not** Anthropic BYOK for commands. Scripts listed. Vitest for settings store (STT-related events, not `ai-thinking`).
 
-**Acceptance criteria:**
-
-- All quality gates listed above pass.
-- README has a "Phase 4 features" section with step-by-step setup.
-- Clean-clone → download models → build → install → E2E checklist passes.
+**Acceptance criteria:** `cargo fmt`, `cargo clippy`, `npm run lint`, `npm run test`, `npm run tauri build` pass.
 
 **Dependencies:** T4-8.
 
-**Files:**
-
-- `jarvis/README.md`
-- `jarvis/src/**/*.test.ts` (new Vitest tests for Phase 4 store logic)
-- Minor cleanup anywhere flagged by clippy / eslint.
-
 ---
+
+### Checkpoint A — Wake + STT foundations
+
+- [ ] `WakeDetector` + Porcupine tests green
+- [ ] OWW behind feature flag
+- [ ] Transcription abstraction + local path wired; settings keys present
+- [ ] No new Anthropic dependencies added in this phase (cleanup may still be pending)
+
+### Checkpoint B — Integration-ready
+
+- [ ] Wake thread + `wake-detected` in DevTools
+- [ ] STT provider persists; local path verified manually
+- [ ] Legacy AI removal (T4-6) complete or explicitly scheduled before release
+- [ ] App index count > 0 on Windows dev machine
+- [ ] `cargo clippy -- -D warnings` clean
 
 ### Checkpoint C — Phase 4 complete
 
-- [ ] All three Phase 4 features (wake word, `ai_mode`, app index) pass manual E2E checklist.
-- [ ] No regression on Phase 1–3 checklist items.
-- [ ] Quality gates clean: `cargo fmt`, `cargo clippy`, `npm run lint`, `npm run test`, `npm run tauri build`.
-- [ ] README updated with Phase 4 prereqs and setup.
-- [ ] Porcupine vs OWW decision documented in release notes (which ships by default, how to switch).
-- [ ] Human sign-off before Phase 5 (code signing, auto-updater, macOS DMG).
+- [ ] Wake word E2E works
+- [ ] Transcription provider switch works (at least local + one other path or documented stub)
+- [ ] `OpenApp("Name")` resolves via index where applicable
+- [ ] Phase 1–3 checklist still passes
+- [ ] README + human sign-off
 
 ---
 
@@ -495,25 +242,22 @@ Wire remaining loose ends and verify all three Phase 4 features work in a single
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Porcupine free tier keyword limited to `"jarvis"` (or requires paid for custom) | High if custom wake phrase needed | OWW backend is the escape hatch; both implemented behind trait |
-| `windows-rs` shell/registry API surface complexity for `.lnk` resolution | Medium — scanner may miss apps | Implement multi-source fallback: registry + Start Menu + `%PATH%` scan; document known gaps |
-| Anthropic API latency in `ai_mode` (network dependency) | Medium — HUD hangs | 10s hard timeout + `ai-thinking` indicator; users understand cloud RTT |
-| `keyring` crate Windows Credential Manager behavior in sandboxed builds | Medium — Tauri bundle may restrict credential access | Test in bundled `.exe` early (not just `tauri dev`); document fallback (env var opt-in for CI) |
-| OS keychain unavailable on CI runners (no GUI session) | Low for prod; blocks CI tests | Mock keychain in test builds; `#[cfg(test)]` shim |
-| Schema migration on existing user DBs | Low risk — additive only | Use `ALTER TABLE … ADD COLUMN … DEFAULT` (SQLite safe); test migration idempotency |
+| OS STT differs per Windows/macOS version | Medium | Ship Windows first; document fallbacks; default local |
+| Remote STT latency / privacy | Medium | Clear UI labels; timeout; local default |
+| Removing `ai_mode` breaks existing user DBs | Medium | Migrations with safe defaults; editor hides removed fields |
+| `windows-rs` complexity for app scanner | Medium | Multi-source fallback; document gaps |
 
 ---
 
-## Later phases (out of scope for this plan)
+## Later phases (out of scope)
 
-- **Phase 5:** Code signing, Tauri auto-updater, Windows NSIS installer, macOS DMG + Notarization.
-- **Phase 6:** Cloud command sync (opt-in), multi-device.
-- **Phase 7:** Plugin system, third-party action types.
+- Phase 5: Code signing, auto-updater, installers.
+- Optional semantic match (`fastembed`) — separate decision.
 
 ---
 
 ## References
 
-- `SPEC.md` — Open Questions 1 (wake engine), 3 (monetization / BYOK), 5 (plugin system).
-- `plan.md` (Phase 1) — architecture baseline, IPC contract, module boundaries.
-- `BrainStorm.md` — HUD state machine (Phase 4 adds `ai-thinking` sub-state).
+- `references/SPEC.md` — update Open Questions if cloud/STT wording still mentions Haiku for commands.
+- `plan.md` (Phase 1) — IPC baseline.
+- Prior Phase 4 docs in git history — Haiku/`ai_mode` tasks **superseded** by this revision.
