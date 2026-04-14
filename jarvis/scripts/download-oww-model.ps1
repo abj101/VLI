@@ -10,7 +10,8 @@
 #   - embedding_model.onnx
 #   - hey_jarvis_v0.1.onnx
 #
-# Build with: cargo build --features oww --no-default-features   (or add `oww` alongside default features)
+# Default `cargo build` / `tauri build` include the `oww` feature; use
+# `cargo build --no-default-features` only if you need a minimal binary without ONNX.
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -32,4 +33,4 @@ foreach ($f in $Files) {
     Write-Host "  $f"
     Invoke-WebRequest -Uri $url -OutFile $out
 }
-Write-Host "Done. Set JARVIS_OWW_MODEL_DIR to $Tauri\resources for optional `cargo test --features oww` integration tests."
+Write-Host "Done. Set JARVIS_OWW_MODEL_DIR to $Tauri\resources if you run tests with a custom model dir."
