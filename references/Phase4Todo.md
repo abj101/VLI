@@ -8,7 +8,7 @@
 ## Checkpoint A prerequisites (complete before T4-5/T4-6)
 
 - [x] **T4-1** `WakeDetector` trait + Porcupine backend
-- [ ] **T4-2** OpenWakeWord backend (feature-gated)
+- [x] **T4-2** OpenWakeWord backend (feature-gated)
 - [ ] **T4-3** Haiku `ai_mode` HTTP client
 - [ ] **T4-4** API key storage + Settings IPC + Settings UI
 
@@ -30,14 +30,14 @@
 
 ## T4-2 · OpenWakeWord backend
 
-- [ ] `audio/wake/oww.rs` — `OpenWakeWordBackend` implements `WakeDetector` trait
-- [ ] ONNX runtime via `ort` crate; no Python dependency in bundled app
-- [ ] `oww_threshold` read from settings table (default `0.5`)
-- [ ] Gated behind `feature = "oww"` in `Cargo.toml`
-- [ ] Default build compiles without OWW symbols (`cargo build` — no `oww` feature)
-- [ ] `scripts/download-oww-model.ps1` fetches `.onnx`
-- [ ] `cargo test --features oww audio::wake::oww` passes
-- [ ] `backend_name()` returns `"oww"`
+- [x] `audio/wake/oww.rs` — `OpenWakeWordBackend` implements `WakeDetector` trait
+- [x] ONNX runtime via `ort` crate; no Python dependency in bundled app
+- [ ] `oww_threshold` persisted in settings + passed into `try_new` (constructor accepts `threshold: f32` today; **T4-4**)
+- [x] Gated behind `feature = "oww"` in `Cargo.toml`
+- [x] Default build compiles without OWW symbols (`cargo build` — no `oww` feature)
+- [x] `scripts/download-oww-model.ps1` fetches `.onnx` (v0.5.1 release assets → `resources/oww/`)
+- [x] `cargo test --features oww audio::wake::oww` passes
+- [x] `backend_name()` returns `"oww"`
 
 ---
 
@@ -82,8 +82,8 @@
 
 ## ✅ Checkpoint A
 
-- [ ] `WakeDetector` trait + Porcupine unit tests green
-- [ ] OWW compiles behind `oww` feature; feature isolation confirmed
+- [x] `WakeDetector` trait + Porcupine unit tests green
+- [x] OWW compiles behind `oww` feature; feature isolation confirmed
 - [ ] Haiku client unit tests green (mock server only)
 - [ ] OS keychain read/write works in bundled `.exe` on Windows
 - [ ] Key never surfaces in logs
