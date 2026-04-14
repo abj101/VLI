@@ -1,0 +1,15 @@
+# Node
+node_modules/
+
+# Rust
+target/
+
+# Env / secrets
+.env
+.env.*
+
+# Bundled Whisper weights (fetch locally; see jarvis/scripts in later tasks)
+*.bin
+
+# Tauri / Vite output (also per-package .gitignore under jarvis/)
+dist/
