@@ -126,10 +126,10 @@ Before continuing to T3-5 / T3-6, confirm all of the following:
 
 Before T3-7, confirm all of the following:
 
-- [ ] NodeList: renders, reorders (drag + arrow), toggles, deletes
-- [ ] NodeForm: creates, edits, all 6 action types, sub_prompt, drag-drop action chain
-- [ ] Settings: hotkey, default threshold, theme — all persist across restart
-- [ ] `MIGRATIONS.md` exists and documents the sort_order migration
+- [X] NodeList: renders, reorders (drag + arrow), toggles, deletes
+- [X] NodeForm: creates, edits, all 6 action types, sub_prompt, drag-drop action chain
+- [X] Settings: hotkey, default threshold, theme — all persist across restart
+- [X] `MIGRATIONS.md` exists and documents the sort_order migration
 - [x] `cargo clippy -- -D warnings` clean
 - [x] `npm run lint` clean
 - [x] `npm run test` clean
@@ -148,10 +148,10 @@ Before T3-7, confirm all of the following:
 - [x] If `ai_mode == true` but no key → log warning, skip silently, no panic
 - [x] If `ai_mode == false` → no API call regardless of key presence
 - [x] API key never logged, never emitted over IPC events
-- [ ] **Verify:** Create node in editor → immediately fire hotkey (no restart) → node executes
-- [ ] **Verify:** Delete node in editor → immediately fire hotkey → no match
-- [ ] **Verify:** `ai_mode: true` node + `ANTHROPIC_API_KEY` set → HUD shows AI reply
-- [ ] **Verify:** `ai_mode: true` node + no key → no crash, warning in log only
+- [X] **Verify:** Create node in editor → immediately fire hotkey (no restart) → node executes
+- [X] **Verify:** Delete node in editor → immediately fire hotkey → no match
+- [X] **Verify:** `ai_mode: true` node + `ANTHROPIC_API_KEY` set → HUD shows AI reply
+- [X] **Verify:** `ai_mode: true` node + no key → no crash, warning in log only
 - [x] **Verify:** `cargo test` full suite still green
 
 ---
