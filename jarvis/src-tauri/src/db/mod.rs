@@ -33,7 +33,7 @@ pub fn init_db(path: &Path) -> Result<(), DbError> {
         ",
     )?;
     ensure_fuzzy_threshold_column(&conn)?;
-    maybe_seed(&conn)?;
+    reconcile_default_commands(&conn)?;
     Ok(())
 }
 
@@ -57,36 +57,109 @@ fn ensure_fuzzy_threshold_column(conn: &Connection) -> Result<(), DbError> {
     Ok(())
 }
 
-fn maybe_seed(conn: &Connection) -> Result<(), DbError> {
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM command_nodes", [], |r| r.get(0))?;
-    if count > 0 {
-        return Ok(());
+#[derive(Clone)]
+struct DefaultCommandSpec {
+    trigger_key: &'static str,
+    priority: u8,
+    row: NewCommandNode,
+}
+
+fn default_command_specs() -> Vec<DefaultCommandSpec> {
+    vec![
+        DefaultCommandSpec {
+            trigger_key: "open github and notepad",
+            priority: 100,
+            row: NewCommandNode {
+                name: "Open GitHub and Notepad".into(),
+                trigger_phrases: vec!["open github and notepad".into()],
+                actions: vec![
+                    Action::OpenApp {
+                        name: "notepad".into(),
+                        path: "notepad.exe".into(),
+                    },
+                    Action::Wait { ms: 1000 },
+                    Action::OpenUrl {
+                        url: "https://github.com".into(),
+                    },
+                ],
+                enabled: true,
+                fuzzy_threshold_pct: 80,
+            },
+        },
+        DefaultCommandSpec {
+            trigger_key: "open notepad",
+            priority: 10,
+            row: NewCommandNode {
+                name: "Open Notepad".into(),
+                trigger_phrases: vec!["open notepad".into()],
+                actions: vec![Action::OpenApp {
+                    name: "notepad".into(),
+                    path: "notepad.exe".into(),
+                }],
+                enabled: true,
+                fuzzy_threshold_pct: 80,
+            },
+        },
+        DefaultCommandSpec {
+            trigger_key: "open github",
+            priority: 10,
+            row: NewCommandNode {
+                name: "Open GitHub".into(),
+                trigger_phrases: vec!["open github".into()],
+                actions: vec![Action::OpenUrl {
+                    url: "https://github.com".into(),
+                }],
+                enabled: true,
+                fuzzy_threshold_pct: 80,
+            },
+        },
+    ]
+}
+
+fn reconcile_default_commands(conn: &Connection) -> Result<(), DbError> {
+    let specs = default_command_specs();
+    let all = get_all_commands(conn)?;
+    let mut ensured: Vec<(i64, DefaultCommandSpec)> = Vec::new();
+
+    for spec in specs {
+        let existing_id = all.iter().find_map(|node| {
+            node.trigger_phrases
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(spec.trigger_key))
+                .then_some(node.id)
+        });
+        let id = if let Some(id) = existing_id {
+            let _ = update_command(conn, id, &spec.row)?;
+            id
+        } else {
+            insert_command(conn, &spec.row)?
+        };
+        ensured.push((id, spec));
     }
-    insert_command(
-        conn,
-        &NewCommandNode {
-            name: "Open Notepad".into(),
-            trigger_phrases: vec!["open notepad".into()],
-            actions: vec![Action::OpenApp {
-                name: "notepad".into(),
-                path: "notepad.exe".into(),
-            }],
-            enabled: true,
-            fuzzy_threshold_pct: 80,
-        },
-    )?;
-    insert_command(
-        conn,
-        &NewCommandNode {
-            name: "Open GitHub".into(),
-            trigger_phrases: vec!["open github".into()],
-            actions: vec![Action::OpenUrl {
-                url: "https://github.com".into(),
-            }],
-            enabled: true,
-            fuzzy_threshold_pct: 80,
-        },
-    )?;
+
+    let max_priority = ensured.iter().map(|(_, spec)| spec.priority).max().unwrap_or(0);
+    let refreshed = get_all_commands(conn)?;
+    for (id, spec) in ensured {
+        let Some(current) = refreshed.iter().find(|n| n.id == id) else {
+            continue;
+        };
+        let should_enable = spec.priority == max_priority;
+        if current.enabled == should_enable {
+            continue;
+        }
+        let _ = update_command(
+            conn,
+            id,
+            &NewCommandNode {
+                name: current.name.clone(),
+                trigger_phrases: current.trigger_phrases.clone(),
+                actions: current.actions.clone(),
+                enabled: should_enable,
+                fuzzy_threshold_pct: current.fuzzy_threshold_pct,
+            },
+        )?;
+    }
+
     Ok(())
 }
 
@@ -200,9 +273,10 @@ mod tests {
         init_db(&path).unwrap();
         let conn = Connection::open(&path).unwrap();
         let all = get_all_commands(&conn).unwrap();
-        assert_eq!(all.len(), 2);
+        assert_eq!(all.len(), 3);
         assert!(all.iter().any(|n| {
-            n.trigger_phrases.contains(&"open notepad".to_string())
+            n.trigger_phrases.contains(&"open github and notepad".to_string())
+                && n.enabled
                 && n.actions.iter().any(|a| {
                     matches!(
                         a,
@@ -210,20 +284,20 @@ mod tests {
                             if name == "notepad" && path == "notepad.exe"
                     )
                 })
+                && n.actions
+                    .iter()
+                    .any(|a| matches!(a, Action::Wait { ms } if *ms == 1000))
         }));
         assert!(all.iter().any(|n| {
-            n.trigger_phrases.contains(&"open github".to_string())
-                && n.actions.iter().any(|a| {
-                    matches!(
-                        a,
-                        Action::OpenUrl { url } if url == "https://github.com"
-                    )
-                })
+            n.trigger_phrases.contains(&"open notepad".to_string()) && !n.enabled
+        }));
+        assert!(all.iter().any(|n| {
+            n.trigger_phrases.contains(&"open github".to_string()) && !n.enabled
         }));
 
         init_db(&path).unwrap();
         let conn2 = Connection::open(&path).unwrap();
-        assert_eq!(get_all_commands(&conn2).unwrap().len(), 2);
+        assert_eq!(get_all_commands(&conn2).unwrap().len(), 3);
     }
 
     #[test]
