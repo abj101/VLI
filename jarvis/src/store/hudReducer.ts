@@ -86,7 +86,9 @@ export function reduceHudState(
         ...state,
         transcript: u.text,
         transcriptFinal: u.is_final,
-        match: null,
+        // Only clear match on new partials while still listening; late STT finals after match
+        // would otherwise wipe the HUD before executing/done.
+        match: state.phase === "listening" ? null : state.match,
       };
     }
     case "match-result":

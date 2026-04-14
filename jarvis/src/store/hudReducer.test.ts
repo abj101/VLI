@@ -54,9 +54,10 @@ describe("reduceHudState", () => {
     expect(s.transcriptFinal).toBe(true);
   });
 
-  it("clears match when transcript updates", () => {
+  it("clears match when transcript updates while listening", () => {
     const withMatch = {
       ...initialHudState,
+      phase: "listening" as const,
       transcript: "open notepad",
       match: {
         node_id: "n1",
@@ -70,6 +71,25 @@ describe("reduceHudState", () => {
       is_final: false,
     });
     expect(next.match).toBeNull();
+  });
+
+  it("keeps match when transcript updates after listening (late STT final)", () => {
+    const withMatch = {
+      ...initialHudState,
+      phase: "executing" as const,
+      transcript: "open notepad",
+      match: {
+        node_id: "n1",
+        matched_phrase: "open notepad",
+        span_start: 0,
+        span_end: 12,
+      },
+    };
+    const next = reduceHudState(withMatch, "transcript-update", {
+      text: "open notepad",
+      is_final: true,
+    });
+    expect(next.match).toEqual(withMatch.match);
   });
 
   it("applies match-result", () => {
