@@ -45,7 +45,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [toastText, setToastText] = useState<string | null>(null);
   const [savingHotkey, setSavingHotkey] = useState(false);
 
-  const [wakeEngine, setWakeEngine] = useState("hotkey");
+  const [wakeEngine, setWakeEngine] = useState("oww");
   const [owwThreshold, setOwwThreshold] = useState(0.5);
   const [porcupineKeyStored, setPorcupineKeyStored] = useState(false);
 

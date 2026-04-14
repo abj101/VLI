@@ -39,11 +39,11 @@ fn parse_wake_engine(raw: Option<String>) -> String {
     let s = raw
         .map(|v| v.trim().to_ascii_lowercase())
         .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "hotkey".to_string());
+        .unwrap_or_else(|| "oww".to_string());
     if matches!(s.as_str(), "hotkey" | "porcupine" | "oww") {
         s
     } else {
-        "hotkey".to_string()
+        "oww".to_string()
     }
 }
 
@@ -236,7 +236,7 @@ mod tests {
         let (_dir, conn) = open_temp();
         let s = get_app_settings(&conn).expect("get_app_settings");
         assert!(!s.porcupine_key_stored);
-        assert_eq!(s.wake_engine, "hotkey");
+        assert_eq!(s.wake_engine, "oww");
         assert!((s.oww_threshold - 0.5).abs() < f32::EPSILON);
         assert_eq!(s.stt_provider, "local");
         assert_eq!(s.remote_stt_url, "");
