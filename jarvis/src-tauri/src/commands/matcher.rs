@@ -77,12 +77,7 @@ mod tests {
     use super::*;
     use crate::db::Action;
 
-    fn node(
-        id: i64,
-        name: &str,
-        phrases: Vec<&str>,
-        enabled: bool,
-    ) -> CommandNode {
+    fn node(id: i64, name: &str, phrases: Vec<&str>, enabled: bool) -> CommandNode {
         CommandNode {
             id,
             name: name.into(),
@@ -95,12 +90,7 @@ mod tests {
 
     #[test]
     fn matches_simple_phrase_and_span() {
-        let nodes = vec![node(
-            7,
-            "n",
-            vec!["open notepad"],
-            true,
-        )];
+        let nodes = vec![node(7, "n", vec!["open notepad"], true)];
         let t = "please open notepad now";
         let m = match_command(t, &nodes).expect("match");
         assert_eq!(m.node_id, "7");
@@ -128,12 +118,7 @@ mod tests {
 
     #[test]
     fn first_matching_phrase_in_list_wins() {
-        let n = node(
-            9,
-            "multi",
-            vec!["zzz", "hello world"],
-            true,
-        );
+        let n = node(9, "multi", vec!["zzz", "hello world"], true);
         let t = "say hello world today";
         let m = match_command(t, &[n]).expect("match");
         assert_eq!(m.matched_phrase, "hello world");

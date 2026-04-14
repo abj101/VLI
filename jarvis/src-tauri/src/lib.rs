@@ -31,19 +31,13 @@ fn try_start_listening_audio(app: &AppHandle, slot: &SharedAudioPipeline) {
     match audio::AudioPipeline::start(app) {
         Ok(p) => *g = Some(p),
         Err(msg) => {
-            let _ = app.emit(
-                "audio-error",
-                serde_json::json!({ "message": msg }),
-            );
+            let _ = app.emit("audio-error", serde_json::json!({ "message": msg }));
         }
     }
 }
 
 fn emit_hud_phase(app: &AppHandle, phase: HudPhase) {
-    let _ = app.emit(
-        "hud-phase",
-        serde_json::json!({ "phase": phase.as_str() }),
-    );
+    let _ = app.emit("hud-phase", serde_json::json!({ "phase": phase.as_str() }));
 }
 
 fn load_all_commands(app: &AppHandle) -> Result<Vec<db::CommandNode>, String> {
@@ -85,7 +79,12 @@ fn schedule_no_match_timeout(
     });
 }
 
-fn schedule_auto_dismiss(app: AppHandle, rt: SharedHud, audio: SharedAudioPipeline, expected_session_id: u64) {
+fn schedule_auto_dismiss(
+    app: AppHandle,
+    rt: SharedHud,
+    audio: SharedAudioPipeline,
+    expected_session_id: u64,
+) {
     std::thread::spawn(move || {
         std::thread::sleep(AUTO_DISMISS_AFTER);
         let should_dismiss = rt
@@ -117,8 +116,8 @@ fn process_transcript_update(
     audio: &SharedAudioPipeline,
     payload: &str,
 ) -> Result<(), String> {
-    let update: audio::stt::TranscriptUpdate =
-        serde_json::from_str(payload).map_err(|e| format!("invalid transcript-update payload: {e}"))?;
+    let update: audio::stt::TranscriptUpdate = serde_json::from_str(payload)
+        .map_err(|e| format!("invalid transcript-update payload: {e}"))?;
     let should_process = {
         let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
         should_process_final_transcript(&s, update.is_final)
@@ -163,9 +162,7 @@ fn show_hud_from_hotkey(
         s.phase = HudPhase::Listening;
         s.session_id = s.session_id.wrapping_add(1);
         listening_session_id = Some(s.session_id);
-        window
-            .center()
-            .map_err(|e| e.to_string())?;
+        window.center().map_err(|e| e.to_string())?;
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
     } else {
@@ -220,7 +217,11 @@ fn hud_get_phase(state: State<'_, SharedHud>) -> Result<HudPhase, String> {
 }
 
 #[tauri::command]
-fn hud_set_phase(phase: HudPhase, app: AppHandle, state: State<'_, SharedHud>) -> Result<(), String> {
+fn hud_set_phase(
+    phase: HudPhase,
+    app: AppHandle,
+    state: State<'_, SharedHud>,
+) -> Result<(), String> {
     {
         let mut s = state.lock().map_err(|_| "hud state poisoned".to_string())?;
         s.phase = phase;
@@ -247,14 +248,16 @@ fn hud_dismiss(
     state: State<'_, SharedHud>,
     audio: State<'_, SharedAudioPipeline>,
 ) -> Result<(), String> {
-    dismiss_hud(&app, &*state)?;
-    audio::stop_shared_pipeline(&*audio);
+    dismiss_hud(&app, &state)?;
+    audio::stop_shared_pipeline(&audio);
     Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let hud_state: SharedHud = Arc::new(Mutex::new(HudRuntime::default()));
+    // cpal stream is !Send; SharedAudioPipeline uses unsafe Send/Sync — see audio/mod.rs
+    #[allow(clippy::arc_with_non_send_sync)]
     let audio_pipeline = SharedAudioPipeline(Arc::new(Mutex::new(None)));
     let is_paused = Arc::new(AtomicBool::new(false));
 
@@ -295,10 +298,8 @@ pub fn run() {
                             &transcript_audio,
                             event.payload(),
                         ) {
-                            let _ = transcript_app.emit(
-                                "audio-error",
-                                serde_json::json!({ "message": err }),
-                            );
+                            let _ = transcript_app
+                                .emit("audio-error", serde_json::json!({ "message": err }));
                         }
                     });
 

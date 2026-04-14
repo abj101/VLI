@@ -9,8 +9,9 @@ use tauri::Manager;
 pub const HUD_WINDOW_LABEL: &str = "hud";
 
 /// Mirrors `HudPhase` in `jarvis/src/types.ts` (snake_case strings on the wire).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HudPhase {
+    #[default]
     Idle,
     Listening,
     Matched,
@@ -18,12 +19,6 @@ pub enum HudPhase {
     AwaitingInput,
     Done,
     Stopped,
-}
-
-impl Default for HudPhase {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 impl HudPhase {
@@ -81,10 +76,7 @@ impl<'de> Deserialize<'de> for HudPhase {
 
 /// `true` → window ignores mouse (clicks pass through to desktop).
 pub fn ignore_cursor_for_phase(phase: HudPhase) -> bool {
-    matches!(
-        phase,
-        HudPhase::Idle | HudPhase::Done | HudPhase::Stopped
-    )
+    matches!(phase, HudPhase::Idle | HudPhase::Done | HudPhase::Stopped)
 }
 
 pub fn sync_hud_window(app: &AppHandle, phase: HudPhase) -> Result<(), String> {

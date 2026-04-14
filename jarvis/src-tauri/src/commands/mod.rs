@@ -1,5 +1,5 @@
-mod matcher;
 mod executor;
+mod matcher;
 
-pub use matcher::{match_command, MatchResult};
-pub use executor::{execute_command, ActionStatus, TauriActionRuntime};
+pub use executor::{execute_command, TauriActionRuntime};
+pub use matcher::match_command;

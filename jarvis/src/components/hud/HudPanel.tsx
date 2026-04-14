@@ -63,8 +63,8 @@ function StopHudButton() {
         className="hud-stop-ring"
         animate={
           listening
-            ? { borderColor: ["rgba(255,70,70,0.4)", "rgba(255,70,70,1)", "rgba(255,70,70,0.4)"] }
-            : { borderColor: "rgba(255,70,70,0.35)" }
+            ? { borderColor: ["rgba(255,255,255,0.35)", "rgba(255,255,255,1)", "rgba(255,255,255,0.35)"] }
+            : { borderColor: "rgba(255,255,255,0.35)" }
         }
         transition={
           listening
@@ -103,11 +103,7 @@ function TranscriptBlock() {
   }
 
   if (!transcript) {
-    return (
-      <div className="hud-line hud-line-muted">
-        {phase === "listening" ? "Listening…" : "\u00a0"}
-      </div>
-    );
+    return <div className="hud-line hud-line-muted">{"\u00a0"}</div>;
   }
 
   if (match) {
@@ -196,7 +192,6 @@ function HudBody() {
       </div>
       <div className="hud-bottom-bar">
         <WaveformBars />
-        <p className="hud-hint">Toggle: Ctrl+Shift+J · Esc stops</p>
         <StopHudButton />
       </div>
     </motion.div>

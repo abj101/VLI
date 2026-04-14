@@ -14,13 +14,14 @@ pub fn normalized_amplitude(mono_f32: &[f32]) -> f32 {
     if mono_f32.is_empty() {
         return 0.0;
     }
-    let peak = mono_f32
-        .iter()
-        .fold(0.0f32, |a, &s| a.max(s.abs()));
+    let peak = mono_f32.iter().fold(0.0f32, |a, &s| a.max(s.abs()));
     (peak * 6.0).clamp(0.0, 1.0)
 }
 
-fn mono_mix_interleaved<T: cpal::Sample + cpal::SizedSample>(data: &[T], channels: usize) -> Vec<f32>
+fn mono_mix_interleaved<T: cpal::Sample + cpal::SizedSample>(
+    data: &[T],
+    channels: usize,
+) -> Vec<f32>
 where
     f32: cpal::FromSample<T>,
 {
@@ -63,7 +64,10 @@ impl Drop for CaptureSession {
 /// Opens default input device, streams mono `f32` PCM to `pcm_tx`, emits `amplitude-update`.
 ///
 /// Returns capture handle + nominal sample rate for downstream resampling to 16 kHz.
-pub fn start_capture(app: AppHandle, pcm_tx: Sender<Vec<f32>>) -> Result<(CaptureSession, u32), String> {
+pub fn start_capture(
+    app: AppHandle,
+    pcm_tx: Sender<Vec<f32>>,
+) -> Result<(CaptureSession, u32), String> {
     let host = cpal::default_host();
     let device = match host.default_input_device() {
         Some(d) => d,
@@ -87,8 +91,12 @@ pub fn start_capture(app: AppHandle, pcm_tx: Sender<Vec<f32>>) -> Result<(Captur
     let last_amp_emit = Arc::new(Mutex::new(Instant::now() - AMPLITUDE_EMIT_MIN_INTERVAL));
 
     let stream = match sample_format {
-        SampleFormat::F32 => build_stream::<f32>(&device, &base_cfg, channels, app, pcm_tx, last_amp_emit)?,
-        SampleFormat::I16 => build_stream::<i16>(&device, &base_cfg, channels, app, pcm_tx, last_amp_emit)?,
+        SampleFormat::F32 => {
+            build_stream::<f32>(&device, &base_cfg, channels, app, pcm_tx, last_amp_emit)?
+        }
+        SampleFormat::I16 => {
+            build_stream::<i16>(&device, &base_cfg, channels, app, pcm_tx, last_amp_emit)?
+        }
         other => {
             return Err(format!("unsupported mic sample format `{other:?}`"));
         }
@@ -98,7 +106,12 @@ pub fn start_capture(app: AppHandle, pcm_tx: Sender<Vec<f32>>) -> Result<(Captur
         .play()
         .map_err(|e| format!("failed to start mic stream: {e}"))?;
 
-    Ok((CaptureSession { stream: Some(stream) }, sample_rate))
+    Ok((
+        CaptureSession {
+            stream: Some(stream),
+        },
+        sample_rate,
+    ))
 }
 
 fn build_stream<T>(

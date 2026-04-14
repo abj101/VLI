@@ -84,23 +84,25 @@ pub fn get_all_commands(conn: &Connection) -> Result<Vec<CommandNode>, DbError> 
     let mut rows = stmt.query([])?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
-        out.push(row_to_command(&row)?);
+        out.push(row_to_command(row)?);
     }
     Ok(out)
 }
 
+#[allow(dead_code)] // used in unit tests; reserved for Phase 3 editor
 pub fn get_command_by_id(conn: &Connection, id: i64) -> Result<Option<CommandNode>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT id, name, trigger_phrases, actions, enabled, created_at FROM command_nodes WHERE id = ?1",
     )?;
     let mut rows = stmt.query(rusqlite::params![id])?;
     if let Some(row) = rows.next()? {
-        Ok(Some(row_to_command(&row)?))
+        Ok(Some(row_to_command(row)?))
     } else {
         Ok(None)
     }
 }
 
+#[allow(dead_code)] // used in unit tests; reserved for Phase 3 editor
 pub fn delete_command(conn: &Connection, id: i64) -> Result<bool, DbError> {
     let n = conn.execute("DELETE FROM command_nodes WHERE id = ?1", [id])?;
     Ok(n > 0)

@@ -212,19 +212,11 @@ mod tests {
         }
 
         fn emit_status(&self, text: &str) {
-            self.state
-                .lock()
-                .unwrap()
-                .statuses
-                .push(text.to_string());
+            self.state.lock().unwrap().statuses.push(text.to_string());
         }
 
         fn emit_error(&self, message: &str) {
-            self.state
-                .lock()
-                .unwrap()
-                .errors
-                .push(message.to_string());
+            self.state.lock().unwrap().errors.push(message.to_string());
         }
     }
 

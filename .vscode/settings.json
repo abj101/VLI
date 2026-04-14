@@ -1,0 +1,5 @@
+{
+  "terminal.integrated.env.windows": {
+    "PATH": "${env:ProgramFiles}\\CMake\\bin;${env:ProgramFiles}\\LLVM\\bin;${env:PATH}"
+  }
+}
