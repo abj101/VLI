@@ -1,13 +1,35 @@
 import { NodeList } from "./components/editor/NodeList";
 import { NodeForm } from "./components/editor/NodeForm";
-import { SettingsPanel } from "./components/editor/SettingsPanel";
+import { SettingsPanel } from "./components/Settings/SettingsPanel";
 import "./EditorRoot.css";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { normalizeThemeValue } from "./components/editor/SettingsPanel.logic";
+import { useSettingsStore } from "./store/settingsStore";
 
 export default function EditorRoot() {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const setAppIndexCount = useSettingsStore((s) => s.setAppIndexCount);
+
+  useEffect(() => {
+    let unlistenOpen: (() => void) | undefined;
+    let unlistenIndex: (() => void) | undefined;
+    void listen("open-settings", () => {
+      setSettingsOpen(true);
+    }).then((u) => {
+      unlistenOpen = u;
+    });
+    void listen<{ count: number }>("app-index-ready", (event) => {
+      setAppIndexCount(event.payload.count);
+    }).then((u) => {
+      unlistenIndex = u;
+    });
+    return () => {
+      unlistenOpen?.();
+      unlistenIndex?.();
+    };
+  }, [setAppIndexCount]);
 
   useEffect(() => {
     let mounted = true;

@@ -5,8 +5,8 @@
 use crate::audio::wake::{WakeDetector, WakeError};
 use log::warn;
 use ndarray::{concatenate, s, Array2, Array3, Axis};
-use ort::session::Session;
 use ort::session::builder::SessionBuilder;
+use ort::session::Session;
 use ort::value::TensorRef;
 use std::collections::VecDeque;
 use std::path::Path;
@@ -115,8 +115,9 @@ impl OwwPreprocessor {
                 }
                 let window = mel_window_76(&self.melspectrogram_buffer, ndx)?;
                 let emb = embedding_predict(embedding, &window)?;
-                self.feature_buffer = concatenate(Axis(0), &[self.feature_buffer.view(), emb.view()])
-                    .map_err(|e| WakeError::Process(format!("feature vstack: {e}")))?;
+                self.feature_buffer =
+                    concatenate(Axis(0), &[self.feature_buffer.view(), emb.view()])
+                        .map_err(|e| WakeError::Process(format!("feature vstack: {e}")))?;
             }
             processed_samples = self.accumulated_samples;
             self.accumulated_samples = 0;
@@ -156,14 +157,13 @@ impl OwwPreprocessor {
             .rev()
             .collect();
         let spec = get_melspectrogram(melspec, &buf)?;
-        self.melspectrogram_buffer = concatenate(
-            Axis(0),
-            &[self.melspectrogram_buffer.view(), spec.view()],
-        )
-        .map_err(|e| WakeError::Process(format!("mel vstack: {e}")))?;
+        self.melspectrogram_buffer =
+            concatenate(Axis(0), &[self.melspectrogram_buffer.view(), spec.view()])
+                .map_err(|e| WakeError::Process(format!("mel vstack: {e}")))?;
         if self.melspectrogram_buffer.nrows() > MELSPEC_BUFFER_MAX_ROWS {
             let start = self.melspectrogram_buffer.nrows() - MELSPEC_BUFFER_MAX_ROWS;
-            self.melspectrogram_buffer = self.melspectrogram_buffer.slice(s![start.., ..]).to_owned();
+            self.melspectrogram_buffer =
+                self.melspectrogram_buffer.slice(s![start.., ..]).to_owned();
         }
         Ok(())
     }
@@ -197,15 +197,13 @@ fn mel_window_76(buf: &Array2<f32>, ndx: isize) -> Result<Array2<f32>, WakeError
             end - start
         )));
     }
-    Ok(buf
-        .slice(s![start as usize..end as usize, ..])
-        .to_owned())
+    Ok(buf.slice(s![start as usize..end as usize, ..]).to_owned())
 }
 
 fn get_melspectrogram(session: &mut Session, x: &[i16]) -> Result<Array2<f32>, WakeError> {
     let f: Vec<f32> = x.iter().map(|&s| s as f32).collect();
-    let input =
-        Array2::from_shape_vec((1, x.len()), f).map_err(|e| WakeError::Process(format!("mel: {e}")))?;
+    let input = Array2::from_shape_vec((1, x.len()), f)
+        .map_err(|e| WakeError::Process(format!("mel: {e}")))?;
     let outputs = session
         .run(ort::inputs!["input" => TensorRef::from_array_view(input.view()).map_err(ort_map)?])
         .map_err(ort_map)?;
@@ -224,11 +222,11 @@ fn get_melspectrogram(session: &mut Session, x: &[i16]) -> Result<Array2<f32>, W
     Ok(spec2)
 }
 
-fn embedding_predict(session: &mut Session, window76: &Array2<f32>) -> Result<Array2<f32>, WakeError> {
-    let batch = window76
-        .view()
-        .insert_axis(Axis(0))
-        .insert_axis(Axis(3));
+fn embedding_predict(
+    session: &mut Session,
+    window76: &Array2<f32>,
+) -> Result<Array2<f32>, WakeError> {
+    let batch = window76.view().insert_axis(Axis(0)).insert_axis(Axis(3));
     let outputs = session
         .run(ort::inputs!["input_1" => TensorRef::from_array_view(batch).map_err(ort_map)?])
         .map_err(ort_map)?;
@@ -238,7 +236,9 @@ fn embedding_predict(session: &mut Session, window76: &Array2<f32>) -> Result<Ar
         .map_err(|e| WakeError::Process(format!("embedding extract: {e}")))?;
     let flat = arr.to_owned();
     match flat.ndim() {
-        2 => flat.into_dimensionality().map_err(|e| WakeError::Process(format!("emb: {e}"))),
+        2 => flat
+            .into_dimensionality()
+            .map_err(|e| WakeError::Process(format!("emb: {e}"))),
         3 => {
             let d = flat.into_dimensionality::<ndarray::Ix3>().unwrap();
             Ok(d.index_axis_move(Axis(0), 0))

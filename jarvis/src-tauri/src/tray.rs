@@ -3,6 +3,7 @@
 use crate::audio::{stop_shared_pipeline, SharedAudioPipeline};
 use crate::hud::HudPhase;
 use crate::open_or_create_editor_window;
+use crate::OPEN_SETTINGS_EVENT;
 use log::warn;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -12,13 +13,18 @@ use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri::tray::TrayIconBuilder;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 pub(crate) const OPEN_EDITOR_MENU_ID: &str = "open-editor";
+pub(crate) const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
 pub(crate) const PAUSE_TOGGLE_MENU_ID: &str = "pause-toggle";
 pub(crate) const QUIT_MENU_ID: &str = "quit";
-pub(crate) const TRAY_MENU_ITEM_ORDER: [&str; 3] =
-    [OPEN_EDITOR_MENU_ID, PAUSE_TOGGLE_MENU_ID, QUIT_MENU_ID];
+pub(crate) const TRAY_MENU_ITEM_ORDER: [&str; 4] = [
+    OPEN_EDITOR_MENU_ID,
+    OPEN_SETTINGS_MENU_ID,
+    PAUSE_TOGGLE_MENU_ID,
+    QUIT_MENU_ID,
+];
 
 /// `Listening` shows the HUD capture UI; mic/STT only start when not paused.
 pub fn mic_start_allowed(is_paused: &AtomicBool, phase: HudPhase) -> bool {
@@ -31,12 +37,22 @@ pub fn setup_tray(
     is_paused: Arc<AtomicBool>,
     audio: SharedAudioPipeline,
 ) -> tauri::Result<()> {
-    let [open_editor_id, pause_toggle_id, quit_id] = TRAY_MENU_ITEM_ORDER;
+    let [open_editor_id, open_settings_id, pause_toggle_id, quit_id] = TRAY_MENU_ITEM_ORDER;
     let open_editor_item =
         MenuItem::with_id(app, open_editor_id, "Open Editor", true, None::<&str>)?;
+    let open_settings_item =
+        MenuItem::with_id(app, open_settings_id, "Settings", true, None::<&str>)?;
     let pause_item = MenuItem::with_id(app, pause_toggle_id, "Pause", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, quit_id, "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open_editor_item, &pause_item, &quit_item])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &open_editor_item,
+            &open_settings_item,
+            &pause_item,
+            &quit_item,
+        ],
+    )?;
 
     let pause_item_for_menu = pause_item.clone();
     let is_paused_for_menu = Arc::clone(&is_paused);
@@ -54,6 +70,13 @@ pub fn setup_tray(
             OPEN_EDITOR_MENU_ID => {
                 if let Err(err) = open_or_create_editor_window(app) {
                     warn!("tray open editor failed: {err}");
+                }
+            }
+            OPEN_SETTINGS_MENU_ID => {
+                if let Err(err) = open_or_create_editor_window(app) {
+                    warn!("tray open settings failed: {err}");
+                } else if let Err(err) = app.emit(OPEN_SETTINGS_EVENT, serde_json::json!({})) {
+                    warn!("tray emit open-settings failed: {err}");
                 }
             }
             QUIT_MENU_ID => {
@@ -83,10 +106,10 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     #[test]
-    fn tray_menu_puts_open_editor_above_pause_and_quit() {
+    fn tray_menu_puts_open_editor_settings_pause_quit() {
         assert_eq!(
             TRAY_MENU_ITEM_ORDER,
-            ["open-editor", "pause-toggle", "quit"]
+            ["open-editor", "open-settings", "pause-toggle", "quit"]
         );
     }
 

@@ -1,7 +1,9 @@
+mod ai;
 mod audio;
 mod commands;
 mod db;
 mod hud;
+mod keychain;
 mod tray;
 
 use audio::SharedAudioPipeline;
@@ -23,6 +25,8 @@ const SETTING_KEY_HOTKEY: &str = "hotkey";
 const SETTING_KEY_DEFAULT_THRESHOLD: &str = "default_fuzzy_threshold_pct";
 const DEFAULT_THRESHOLD_PCT: u16 = 80;
 const EDITOR_COMMANDS_CHANGED_EVENT: &str = "editor-commands-changed";
+const APP_INDEX_READY_EVENT: &str = "app-index-ready";
+pub(crate) const OPEN_SETTINGS_EVENT: &str = "open-settings";
 /// After the last speech-related activity, wait this long before treating speech as finished
 /// (starts the 4s auto-dismiss countdown only after this gap).
 const SILENCE_BEFORE_AUTO_DISMISS: Duration = Duration::from_millis(450);
@@ -1091,13 +1095,43 @@ fn set_hotkey(
     Ok(next_hotkey)
 }
 
-/// Returns whether `ANTHROPIC_API_KEY` is set in the process environment (non-empty after trim).
+/// True when `ANTHROPIC_API_KEY` is set in the environment or an Anthropic key exists in the OS keychain.
 /// Never returns or logs the key value.
 #[tauri::command]
 fn anthropic_api_key_configured() -> bool {
     std::env::var("ANTHROPIC_API_KEY")
         .map(|raw| !raw.trim().is_empty())
         .unwrap_or(false)
+        || keychain::anthropic_key_in_keychain()
+}
+
+#[tauri::command]
+fn get_settings(app: AppHandle) -> Result<db::AppSettings, String> {
+    let conn = open_db_connection(&app)?;
+    db::get_app_settings(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_settings(app: AppHandle, patch: db::SettingsPatch) -> Result<db::AppSettings, String> {
+    let conn = open_db_connection(&app)?;
+    db::apply_settings_patch(&conn, &patch).map_err(|e| e.to_string())?;
+    db::get_app_settings(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_api_key(app: AppHandle, service: String, key: String) -> Result<(), String> {
+    let normalized = service.trim().to_ascii_lowercase();
+    keychain::save_api_key(&normalized, &key)?;
+    let conn = open_db_connection(&app)?;
+    db::set_key_stored_flag(&conn, &normalized, true).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_api_key(app: AppHandle, service: String) -> Result<(), String> {
+    let normalized = service.trim().to_ascii_lowercase();
+    keychain::delete_api_key(&normalized)?;
+    let conn = open_db_connection(&app)?;
+    db::set_key_stored_flag(&conn, &normalized, false).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1131,6 +1165,9 @@ pub fn run() {
                 let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                 db::init_db(&dir.join("jarvis.db")).map_err(|e| e.to_string())?;
+                let _ = app
+                    .handle()
+                    .emit(APP_INDEX_READY_EVENT, serde_json::json!({ "count": 0 }));
                 refresh_command_cache(app.handle(), &command_cache_for_setup)?;
                 let conn = open_db_connection(app.handle())?;
                 let configured_hotkey =
@@ -1236,7 +1273,11 @@ pub fn run() {
             get_setting,
             set_setting,
             set_hotkey,
-            anthropic_api_key_configured
+            anthropic_api_key_configured,
+            get_settings,
+            update_settings,
+            save_api_key,
+            delete_api_key
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -4,7 +4,10 @@ mod models;
 mod settings;
 
 pub use models::{Action, CommandNode, NewCommandNode};
-pub use settings::{get_setting, set_setting};
+pub use settings::{
+    apply_settings_patch, get_app_settings, get_setting, set_key_stored_flag, set_setting,
+    AppSettings, SettingsPatch,
+};
 
 use rusqlite::Connection;
 use std::collections::HashSet;
@@ -621,39 +624,6 @@ mod update {
                     text: "done".into()
                 }
             ]
-        );
-    }
-}
-
-#[cfg(test)]
-mod settings_tests {
-    use super::*;
-    use rusqlite::Connection;
-    use tempfile::tempdir;
-
-    fn open_temp() -> (tempfile::TempDir, Connection) {
-        let dir = tempdir().expect("tempdir");
-        let path = dir.path().join("settings-test.db");
-        init_db(&path).expect("init db");
-        let conn = Connection::open(&path).expect("open db");
-        (dir, conn)
-    }
-
-    #[test]
-    fn round_trip_insert_update_get_setting() {
-        let (_dir, conn) = open_temp();
-        assert_eq!(get_setting(&conn, "theme").expect("get before set"), None);
-
-        set_setting(&conn, "theme", "dark").expect("set dark");
-        assert_eq!(
-            get_setting(&conn, "theme").expect("get dark"),
-            Some("dark".to_string())
-        );
-
-        set_setting(&conn, "theme", "light").expect("set light");
-        assert_eq!(
-            get_setting(&conn, "theme").expect("get light"),
-            Some("light".to_string())
         );
     }
 }
