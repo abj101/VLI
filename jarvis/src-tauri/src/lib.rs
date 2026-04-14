@@ -1,3 +1,4 @@
+mod apps;
 mod audio;
 mod commands;
 mod db;
@@ -12,7 +13,7 @@ use log::{debug, info, warn};
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Listener, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, GlobalShortcutExt, ShortcutState};
 
@@ -39,6 +40,59 @@ const ACTION_RUN_CANCELLED_MSG: &str = "Action run cancelled";
 
 type ActionPayload = db::Action;
 type CommandCache = Arc<RwLock<Vec<db::CommandNode>>>;
+/// Cached installed-app entries for `OpenApp` resolution (path optional).
+type AppIndexStore = Arc<RwLock<Vec<apps::AppEntry>>>;
+
+const APP_INDEX_CACHE_MAX_AGE_SECS: u64 = 24 * 60 * 60;
+
+fn now_unix_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn refresh_app_index_on_startup(app: &AppHandle, store: &AppIndexStore) -> Result<(), String> {
+    let conn = open_db_connection(app)?;
+    let entries = db::load_app_index(&conn).map_err(|e| e.to_string())?;
+    let last = db::get_app_index_last_scan_unix(&conn).map_err(|e| e.to_string())?;
+    let now = now_unix_secs();
+    let stale = match last {
+        None => true,
+        Some(t) => now.saturating_sub(t) > APP_INDEX_CACHE_MAX_AGE_SECS as i64,
+    };
+    {
+        let mut g = store
+            .write()
+            .map_err(|_| "app index lock poisoned".to_string())?;
+        *g = entries;
+    }
+    let count = store
+        .read()
+        .map_err(|_| "app index lock poisoned".to_string())?
+        .len();
+    let _ = app.emit(
+        APP_INDEX_READY_EVENT,
+        serde_json::json!({ "count": count }),
+    );
+    if stale || count == 0 {
+        let app_h = app.clone();
+        let st = Arc::clone(store);
+        std::thread::spawn(move || {
+            let scanned = apps::scan_installed_apps();
+            let unix = now_unix_secs();
+            if let Ok(conn) = open_db_connection(&app_h) {
+                let _ = db::replace_app_index(&conn, &scanned, unix);
+            }
+            if let Ok(mut g) = st.write() {
+                *g = scanned;
+            }
+            let n = st.read().map(|g| g.len()).unwrap_or(0);
+            let _ = app_h.emit(APP_INDEX_READY_EVENT, serde_json::json!({ "count": n }));
+        });
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Deserialize)]
 struct CommandNodePayload {
@@ -730,6 +784,13 @@ fn try_match_and_execute(
             s.pending_follow_up_candidate_at = None;
         }
         info!("flow: spawn execute_command for node_id={}", node.id);
+        let app_index_snapshot = {
+            let st = app.state::<AppIndexStore>();
+            let guard = st
+                .read()
+                .map_err(|_| "app index lock poisoned".to_string())?;
+            guard.clone()
+        };
         std::thread::spawn(move || {
             let followup_cancel = cancel_flag.clone();
             let app_for_followup = app_h.clone();
@@ -752,7 +813,7 @@ fn try_match_and_execute(
                     Ok(response)
                 }),
             );
-            commands::execute_command(&node, &runtime);
+            commands::execute_command(&node, &runtime, Some(app_index_snapshot.as_slice()));
             let should_finalize = {
                 let mut s = match rt_h.lock() {
                     Ok(g) => g,
@@ -1351,12 +1412,14 @@ pub fn run() {
     let audio_pipeline = SharedAudioPipeline(Arc::new(Mutex::new(None)));
     let is_paused = Arc::new(AtomicBool::new(false));
     let command_cache: CommandCache = Arc::new(RwLock::new(Vec::new()));
+    let app_index_store: AppIndexStore = Arc::new(RwLock::new(Vec::new()));
 
     tauri::Builder::default()
         .manage(Arc::clone(&hud_state))
         .manage(audio_pipeline.clone())
         .manage(Arc::clone(&is_paused))
         .manage(command_cache.clone())
+        .manage(app_index_store.clone())
         .manage(HotkeyBindingState {
             current: Mutex::new(DEFAULT_HOTKEY.to_string()),
         })
@@ -1368,13 +1431,12 @@ pub fn run() {
             let audio_for_shortcut = audio_pipeline.clone();
             let is_paused_for_shortcut = Arc::clone(&is_paused);
             let command_cache_for_setup = command_cache.clone();
+            let app_index_for_setup = app_index_store.clone();
             move |app| {
                 let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                 db::init_db(&dir.join("jarvis.db")).map_err(|e| e.to_string())?;
-                let _ = app
-                    .handle()
-                    .emit(APP_INDEX_READY_EVENT, serde_json::json!({ "count": 0 }));
+                refresh_app_index_on_startup(app.handle(), &app_index_for_setup)?;
                 refresh_command_cache(app.handle(), &command_cache_for_setup)?;
                 let conn = open_db_connection(app.handle())?;
                 let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;

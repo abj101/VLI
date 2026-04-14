@@ -137,15 +137,15 @@ Earlier Phase 4 work added **Haiku `ai_mode`** (`src/ai/`, Anthropic settings). 
 
 ## T4-7 · App index — scan, cache, fuzzy resolve
 
-- [ ] `apps/mod.rs` + `apps/scanner_windows.rs`
-- [ ] Registry scan: `HKLM` + `HKCU` Uninstall keys → name + exe path
-- [ ] Start Menu `.lnk` crawl via `windows-rs`
-- [ ] Deduplicate by resolved path; in-memory map
-- [ ] `app_index` SQLite table; cold start < 24h uses cache
-- [ ] Stale cache → background rebuild → `app-index-ready`
-- [ ] `resolve_app(name, index)` — `rapidfuzz` threshold `0.75`
-- [ ] `executor.rs`: `OpenApp` empty path → `resolve_app` → `cmd /C start` fallback
-- [ ] `cargo test apps::` passes
+- [x] `apps/mod.rs` + `apps/scanner_windows.rs`
+- [x] Registry scan: `HKLM` + `HKCU` Uninstall keys → name + exe path
+- [x] Start Menu `.lnk` crawl via `windows-rs`
+- [x] Deduplicate by resolved path; in-memory map
+- [x] `app_index` SQLite table; cold start < 24h uses cache
+- [x] Stale cache → background rebuild → `app-index-ready`
+- [x] `resolve_app(name, index)` — `rapidfuzz` threshold `0.75`
+- [x] `executor.rs`: `OpenApp` empty path → `resolve_app` → `cmd /C start` fallback
+- [x] `cargo test apps::` passes
 
 ---
 

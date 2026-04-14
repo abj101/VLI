@@ -1,8 +1,10 @@
 //! SQLite command storage (`command_nodes`).
 
+mod app_index;
 mod models;
 mod settings;
 
+pub use app_index::{get_app_index_last_scan_unix, load_app_index, replace_app_index};
 pub use models::{Action, CommandNode, NewCommandNode};
 pub use settings::{
     apply_settings_patch, get_app_settings, get_setting, set_key_stored_flag, set_setting,
@@ -46,6 +48,7 @@ pub fn init_db(path: &Path) -> Result<(), DbError> {
     )?;
     ensure_fuzzy_threshold_column(&conn)?;
     ensure_sort_order_column(&conn)?;
+    app_index::ensure_app_index_schema(&conn)?;
     drop_legacy_ai_command_columns(&conn)?;
     reconcile_default_commands(&conn)?;
     Ok(())

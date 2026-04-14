@@ -1,4 +1,5 @@
 use crate::{
+    apps::AppEntry,
     audio::tts,
     db::{Action, CommandNode},
 };
@@ -176,18 +177,26 @@ impl ActionRuntime for TauriActionRuntime<'_> {
     }
 }
 
-pub fn execute_command(node: &CommandNode, runtime: &impl ActionRuntime) {
+pub fn execute_command(
+    node: &CommandNode,
+    runtime: &impl ActionRuntime,
+    app_index: Option<&[AppEntry]>,
+) {
     debug!(
         "executor: execute_command node_id={} name={:?} actions={}",
         node.id,
         node.name,
         node.actions.len()
     );
-    execute_actions(&node.actions, runtime);
+    execute_actions(&node.actions, runtime, app_index);
     debug!("executor: execute_command finished node_id={}", node.id);
 }
 
-fn execute_actions(actions: &[Action], runtime: &impl ActionRuntime) {
+fn execute_actions(
+    actions: &[Action],
+    runtime: &impl ActionRuntime,
+    app_index: Option<&[AppEntry]>,
+) {
     let mut follow_up_response: Option<String> = None;
     for action in actions {
         if runtime.is_cancelled() {
@@ -195,7 +204,7 @@ fn execute_actions(actions: &[Action], runtime: &impl ActionRuntime) {
             return;
         }
         let resolved = resolve_action_templates(action, follow_up_response.as_deref());
-        match execute_one_action(&resolved, runtime) {
+        match execute_one_action(&resolved, runtime, app_index) {
             Ok(text) => runtime.emit_status(&text),
             Err(err) => {
                 if err == ACTION_CANCELLED_MSG {
@@ -234,11 +243,32 @@ fn execute_actions(actions: &[Action], runtime: &impl ActionRuntime) {
     }
 }
 
-fn execute_one_action(action: &Action, runtime: &impl ActionRuntime) -> Result<String, String> {
+fn execute_one_action(
+    action: &Action,
+    runtime: &impl ActionRuntime,
+    app_index: Option<&[AppEntry]>,
+) -> Result<String, String> {
     match action {
         Action::OpenApp { name, path } => {
-            validate_open_app_path(path)?;
-            runtime.open_app(path)?;
+            let trimmed = path.trim();
+            if trimmed.is_empty() {
+                let n = name.trim();
+                if n.is_empty() {
+                    return Err("OpenApp path cannot be empty".to_string());
+                }
+                if let Some(entries) = app_index {
+                    if let Some(hit) = crate::apps::resolve_app(n, entries) {
+                        validate_open_app_path(&hit.exe_path)?;
+                        runtime.open_app(&hit.exe_path)?;
+                        return Ok(format!("Opening {name}..."));
+                    }
+                }
+                validate_open_app_start_fallback(n)?;
+                runtime.open_app(n)?;
+                return Ok(format!("Opening {name}..."));
+            }
+            validate_open_app_path(trimmed)?;
+            runtime.open_app(trimmed)?;
             Ok(format!("Opening {name}..."))
         }
         Action::OpenUrl { url } => {
@@ -305,6 +335,15 @@ fn validate_open_app_path(path: &str) -> Result<(), String> {
     if trimmed.chars().any(is_shell_metachar) {
         return Err(format!(
             "OpenApp path contains forbidden shell metacharacters: `{trimmed}`"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_open_app_start_fallback(name: &str) -> Result<(), String> {
+    if name.chars().any(is_shell_metachar) {
+        return Err(format!(
+            "OpenApp name contains forbidden shell metacharacters: `{name}`"
         ));
     }
     Ok(())
@@ -412,6 +451,7 @@ fn is_shell_metachar(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::apps::AppEntry;
     use std::sync::{Arc, Mutex};
 
     fn node_with_actions(actions: Vec<Action>) -> CommandNode {
@@ -601,6 +641,35 @@ mod tests {
     }
 
     #[test]
+    fn open_app_empty_path_resolves_from_index() {
+        let runtime = MockRuntime::default();
+        let index = vec![AppEntry {
+            display_name: "Calculator".into(),
+            exe_path: "calc.exe".into(),
+        }];
+        let node = node_with_actions(vec![Action::OpenApp {
+            name: "calc".into(),
+            path: "".into(),
+        }]);
+        execute_command(&node, &runtime, Some(&index));
+        let s = runtime.snapshot();
+        assert_eq!(s.app_calls, vec!["calc.exe".to_string()]);
+        assert!(s.errors.is_empty());
+    }
+
+    #[test]
+    fn open_app_empty_path_falls_back_to_name_when_unresolved() {
+        let runtime = MockRuntime::default();
+        let node = node_with_actions(vec![Action::OpenApp {
+            name: "notepad".into(),
+            path: "   ".into(),
+        }]);
+        execute_command(&node, &runtime, Some(&[]));
+        let s = runtime.snapshot();
+        assert_eq!(s.app_calls, vec!["notepad".to_string()]);
+    }
+
+    #[test]
     fn rejects_shell_metacharacters_in_open_app_path() {
         let runtime = MockRuntime::default();
         let node = node_with_actions(vec![Action::OpenApp {
@@ -608,7 +677,7 @@ mod tests {
             path: "calc.exe & whoami".into(),
         }]);
 
-        execute_command(&node, &runtime);
+        execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert!(s.app_calls.is_empty());
         assert_eq!(s.statuses.len(), 1);
@@ -623,7 +692,7 @@ mod tests {
             url: "file:///etc/passwd".into(),
         }]);
 
-        execute_command(&node, &runtime);
+        execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert!(s.url_calls.is_empty());
         assert_eq!(s.statuses.len(), 1);
@@ -644,7 +713,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime);
+        execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert_eq!(s.app_calls, vec!["notepad.exe".to_string()]);
         assert_eq!(s.url_calls, vec!["https://github.com".to_string()]);
@@ -665,7 +734,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime);
+        execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.statuses,
@@ -694,7 +763,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime);
+        execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.script_calls,
@@ -714,7 +783,7 @@ mod tests {
             args: vec![],
         }]);
 
-        execute_command(&node, &runtime);
+        execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert!(s.script_calls.is_empty());
         assert_eq!(s.errors.len(), 1);
@@ -728,7 +797,7 @@ mod tests {
             keys: "CTRL+ALT+DEL;shutdown".into(),
         }]);
 
-        execute_command(&node, &runtime);
+        execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert!(s.key_calls.is_empty());
         assert_eq!(s.errors.len(), 1);
@@ -746,7 +815,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime);
+        execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert_eq!(s.wait_calls, vec![10]);
         assert_eq!(
@@ -772,7 +841,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime);
+        execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert!(s.errors.is_empty());
         assert_eq!(s.speak_calls, vec!["task complete".to_string()]);
@@ -788,7 +857,7 @@ mod tests {
         let runtime = MockRuntime::default();
         let node = node_with_actions(vec![Action::Speak { text: "   ".into() }]);
 
-        execute_command(&node, &runtime);
+        execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert!(s.speak_calls.is_empty());
         assert_eq!(s.errors.len(), 1);
@@ -807,7 +876,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime);
+        execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert!(s.url_calls.is_empty());
         assert!(s.speak_calls.is_empty());
@@ -827,7 +896,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime);
+        execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.follow_up_prompts,
@@ -845,7 +914,7 @@ mod tests {
             prompt: "Which page should I open?".into(),
         }]);
 
-        execute_command(&node, &runtime);
+        execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert!(s.statuses.iter().any(|status| status == "follow up"));
         assert!(s.errors.is_empty());
@@ -863,7 +932,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime);
+        execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert_eq!(s.follow_up_prompts, vec!["Need input".to_string()]);
         assert!(s.url_calls.is_empty());
