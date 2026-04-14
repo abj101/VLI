@@ -2,6 +2,8 @@
 
 use crate::audio::{stop_shared_pipeline, SharedAudioPipeline};
 use crate::hud::HudPhase;
+use crate::open_or_create_editor_window;
+use log::warn;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -11,6 +13,12 @@ use tauri::menu::{Menu, MenuItem};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri::tray::TrayIconBuilder;
 use tauri::AppHandle;
+
+pub(crate) const OPEN_EDITOR_MENU_ID: &str = "open-editor";
+pub(crate) const PAUSE_TOGGLE_MENU_ID: &str = "pause-toggle";
+pub(crate) const QUIT_MENU_ID: &str = "quit";
+pub(crate) const TRAY_MENU_ITEM_ORDER: [&str; 3] =
+    [OPEN_EDITOR_MENU_ID, PAUSE_TOGGLE_MENU_ID, QUIT_MENU_ID];
 
 /// `Listening` shows the HUD capture UI; mic/STT only start when not paused.
 pub fn mic_start_allowed(is_paused: &AtomicBool, phase: HudPhase) -> bool {
@@ -23,9 +31,12 @@ pub fn setup_tray(
     is_paused: Arc<AtomicBool>,
     audio: SharedAudioPipeline,
 ) -> tauri::Result<()> {
-    let pause_item = MenuItem::with_id(app, "pause-toggle", "Pause", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&pause_item, &quit_item])?;
+    let [open_editor_id, pause_toggle_id, quit_id] = TRAY_MENU_ITEM_ORDER;
+    let open_editor_item =
+        MenuItem::with_id(app, open_editor_id, "Open Editor", true, None::<&str>)?;
+    let pause_item = MenuItem::with_id(app, pause_toggle_id, "Pause", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, quit_id, "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open_editor_item, &pause_item, &quit_item])?;
 
     let pause_item_for_menu = pause_item.clone();
     let is_paused_for_menu = Arc::clone(&is_paused);
@@ -40,10 +51,15 @@ pub fn setup_tray(
         .icon(icon)
         .menu(&menu)
         .on_menu_event(move |app, event| match event.id.as_ref() {
-            "quit" => {
+            OPEN_EDITOR_MENU_ID => {
+                if let Err(err) = open_or_create_editor_window(app) {
+                    warn!("tray open editor failed: {err}");
+                }
+            }
+            QUIT_MENU_ID => {
                 app.exit(0);
             }
-            "pause-toggle" => {
+            PAUSE_TOGGLE_MENU_ID => {
                 let old = is_paused_for_menu.load(Ordering::SeqCst);
                 let now_paused = !old;
                 is_paused_for_menu.store(now_paused, Ordering::SeqCst);
@@ -62,9 +78,14 @@ pub fn setup_tray(
 
 #[cfg(test)]
 mod tests {
-    use super::mic_start_allowed;
+    use super::{mic_start_allowed, TRAY_MENU_ITEM_ORDER};
     use crate::hud::HudPhase;
     use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn tray_menu_puts_open_editor_above_pause_and_quit() {
+        assert_eq!(TRAY_MENU_ITEM_ORDER, ["open-editor", "pause-toggle", "quit"]);
+    }
 
     #[test]
     fn mic_allowed_when_listening_and_not_paused() {

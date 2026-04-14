@@ -26,6 +26,20 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "shadow": false
+      },
+      {
+        "label": "editor",
+        "title": "JARVIS Editor",
+        "url": "editor.html",
+        "width": 900,
+        "height": 600,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "visible": false,
+        "center": true,
+        "decorations": true,
+        "skipTaskbar": false
       }
     ],
     "security": {

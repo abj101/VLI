@@ -11,11 +11,12 @@ use log::{debug, info, warn};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Listener, Manager, State};
+use tauri::{AppHandle, Emitter, Listener, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
 
 const AUTO_DISMISS_AFTER: Duration = Duration::from_secs(4);
 const NO_MATCH_TIMEOUT: Duration = Duration::from_secs(5);
+const EDITOR_WINDOW_LABEL: &str = "editor";
 /// After the last speech-related activity, wait this long before treating speech as finished
 /// (starts the 4s auto-dismiss countdown only after this gap).
 const SILENCE_BEFORE_AUTO_DISMISS: Duration = Duration::from_millis(450);
@@ -89,6 +90,36 @@ fn load_all_commands(app: &AppHandle) -> Result<Vec<db::CommandNode>, String> {
     let db_path = dir.join("jarvis.db");
     let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
     db::get_all_commands(&conn).map_err(|e| e.to_string())
+}
+
+fn should_focus_existing_editor_window(window_exists: bool) -> bool {
+    window_exists
+}
+
+pub(crate) fn open_or_create_editor_window(app: &AppHandle) -> Result<(), String> {
+    if should_focus_existing_editor_window(app.get_webview_window(EDITOR_WINDOW_LABEL).is_some()) {
+        if let Some(window) = app.get_webview_window(EDITOR_WINDOW_LABEL) {
+            window.show().map_err(|e| e.to_string())?;
+            window.set_focus().map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+
+    let window = WebviewWindowBuilder::new(
+        app,
+        EDITOR_WINDOW_LABEL,
+        WebviewUrl::App("editor.html".into()),
+    )
+    .title("JARVIS Editor")
+    .decorations(true)
+    .resizable(true)
+    .center()
+    .min_inner_size(900.0, 600.0)
+    .build()
+    .map_err(|e| e.to_string())?;
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Live STT emits partial `transcript-update` (`is_final: false`). Matching is gated on a short
@@ -751,6 +782,11 @@ fn hud_dismiss(
     Ok(())
 }
 
+#[tauri::command]
+fn open_editor(app: AppHandle) -> Result<(), String> {
+    open_or_create_editor_window(&app)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -850,7 +886,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             hud_get_phase,
             hud_set_phase,
-            hud_dismiss
+            hud_dismiss,
+            open_editor
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -860,6 +897,12 @@ pub fn run() {
 mod tests {
     use super::*;
     use std::sync::atomic::Ordering;
+
+    #[test]
+    fn open_editor_focuses_existing_window_instead_of_duplicate() {
+        assert!(should_focus_existing_editor_window(true));
+        assert!(!should_focus_existing_editor_window(false));
+    }
 
     #[test]
     fn command_match_requires_listening_visible() {
