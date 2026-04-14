@@ -6,6 +6,7 @@ import type {
   HudPhase,
   MatchResult,
   TranscriptUpdate,
+  WakeDetectedPayload,
 } from "../types";
 import { useHudStore } from "./hudStore";
 
@@ -47,6 +48,11 @@ export async function subscribeHudIpc(): Promise<() => void> {
     useHudStore.getState().applyIpc("transcript-update", e.payload);
   });
   unsubs.push(uTr);
+
+  const uWake = await listen<WakeDetectedPayload>("wake-detected", (e) => {
+    ipcLog("wake-detected", e.payload);
+  });
+  unsubs.push(uWake);
 
   const uMatch = await listen<MatchResult>("match-result", (e) => {
     ipcLog("match-result", e.payload);

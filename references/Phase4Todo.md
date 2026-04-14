@@ -104,16 +104,16 @@ Earlier Phase 4 work added **Haiku `ai_mode`** (`src/ai/`, Anthropic settings). 
 
 ## T4-5 · Wake path integration (`lib.rs` orchestrator)
 
-- [ ] On startup, read `settings.wake_engine`
-- [ ] If `porcupine` or `oww`: spawn dedicated wake thread
-- [ ] Wake thread feeds PCM from secondary mic channel (ring buffer / channel)
-- [ ] `Ok(true)` from `process_frame` → main runtime → `start_pipeline()`
-- [ ] `wake-detected { backend }` IPC to React
-- [ ] `is_paused = true` → wake thread discards frames, skips pipeline
-- [ ] `wake_engine = "hotkey"` → no wake thread (backward compatible)
-- [ ] Hotkey path unchanged — Phase 1–3 E2E still pass
+- [x] On startup, read `settings.wake_engine`
+- [x] If `porcupine` or `oww`: spawn dedicated wake thread
+- [x] Wake thread feeds PCM from secondary mic channel (ring buffer / channel) — dedicated `start_capture` → `mpsc` → resample → `process_frame` (`audio/wake/thread.rs`)
+- [x] `Ok(true)` from `process_frame` → main runtime → `try_start_listening_audio` / `AudioPipeline::start`
+- [x] `wake-detected { backend }` IPC to React (`hudIpc` subscribe + `WakeDetectedPayload`)
+- [x] `is_paused = true` → wake thread discards frames, skips pipeline
+- [x] `wake_engine = "hotkey"` → no wake thread (backward compatible)
+- [x] Hotkey path unchanged — Phase 1–3 E2E still pass
 - [ ] CPU overhead < 2% idle (Task Manager spot check)
-- [ ] `cargo test` fully green
+- [x] `cargo test` fully green
 
 ---
 
@@ -151,7 +151,7 @@ Earlier Phase 4 work added **Haiku `ai_mode`** (`src/ai/`, Anthropic settings). 
 
 ## ✅ Checkpoint B
 
-- [ ] Wake thread; `wake-detected` in DevTools
+- [x] Wake thread; `wake-detected` in DevTools
 - [ ] STT provider saved and applied (local verified)
 - [ ] T4-6 complete before release candidate
 - [ ] App index built; count > 0 on Windows dev box

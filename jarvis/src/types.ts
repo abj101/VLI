@@ -63,6 +63,11 @@ export interface ActionErrorPayload {
   message: string;
 }
 
+/** Wake word hit from Rust (`audio/wake/thread.rs`); DevTools / HUD badge (Phase 4). */
+export interface WakeDetectedPayload {
+  backend: string;
+}
+
 /** Compile-time smoke: literals must satisfy exported shapes. */
 const _ipcContract: {
   phase: HudPhase;
@@ -72,6 +77,7 @@ const _ipcContract: {
   amplitude: AmplitudeUpdate;
   audioError: AudioErrorPayload;
   actionError: ActionErrorPayload;
+  wakeDetected: WakeDetectedPayload;
 } = {
   phase: "idle",
   transcript: { text: "", is_final: false },
@@ -85,5 +91,6 @@ const _ipcContract: {
   amplitude: { amplitude: 0.35 },
   audioError: { message: "Whisper model missing" },
   actionError: { message: "launch failed" },
+  wakeDetected: { backend: "porcupine" },
 };
 void _ipcContract;

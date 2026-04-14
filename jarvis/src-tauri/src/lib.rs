@@ -957,6 +957,11 @@ fn make_wake_callback(
     })
 }
 
+/// Porcupine / OWW use a dedicated wake thread; `hotkey` does not.
+pub(crate) fn wake_engine_uses_dedicated_thread(wake_engine: &str) -> bool {
+    matches!(wake_engine, "porcupine" | "oww")
+}
+
 fn try_start_wake_supervisor(
     app: &AppHandle,
     resource_dir: std::path::PathBuf,
@@ -965,10 +970,7 @@ fn try_start_wake_supervisor(
     audio: &SharedAudioPipeline,
     is_paused: &Arc<AtomicBool>,
 ) -> Result<Option<audio::wake::thread::WakeSupervisor>, String> {
-    if !matches!(
-        settings.wake_engine.as_str(),
-        "porcupine" | "oww"
-    ) {
+    if !wake_engine_uses_dedicated_thread(settings.wake_engine.as_str()) {
         return Ok(None);
     }
     let cb = make_wake_callback(
@@ -1532,6 +1534,13 @@ mod tests {
             remote_stt_timeout_secs: 30,
             remote_stt_key_stored: false,
         }
+    }
+
+    #[test]
+    fn wake_engine_uses_dedicated_thread_only_for_porcupine_and_oww() {
+        assert!(!wake_engine_uses_dedicated_thread("hotkey"));
+        assert!(wake_engine_uses_dedicated_thread("porcupine"));
+        assert!(wake_engine_uses_dedicated_thread("oww"));
     }
 
     #[test]
