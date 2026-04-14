@@ -40,10 +40,7 @@ pub fn resolve_app<'a>(query: &str, entries: &'a [AppEntry]) -> Option<&'a AppEn
 }
 
 fn score_entry(query_lower: &str, e: &AppEntry) -> f64 {
-    let name = fuzz::ratio(
-        query_lower.chars(),
-        e.display_name.to_lowercase().chars(),
-    );
+    let name = fuzz::ratio(query_lower.chars(), e.display_name.to_lowercase().chars());
     let stem = Path::new(&e.exe_path)
         .file_stem()
         .and_then(|s| s.to_str())

@@ -45,7 +45,11 @@ pub fn get_app_index_last_scan_unix(conn: &Connection) -> Result<Option<i64>, Db
     }
 }
 
-pub fn replace_app_index(conn: &Connection, entries: &[AppEntry], scan_unix: i64) -> Result<(), DbError> {
+pub fn replace_app_index(
+    conn: &Connection,
+    entries: &[AppEntry],
+    scan_unix: i64,
+) -> Result<(), DbError> {
     conn.execute_batch("BEGIN IMMEDIATE;")?;
     conn.execute("DELETE FROM app_index", [])?;
     for e in entries {

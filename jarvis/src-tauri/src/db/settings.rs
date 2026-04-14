@@ -112,13 +112,11 @@ pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
             .map(|v| v.trim().to_string())
             .unwrap_or_default(),
         remote_stt_model: normalize_optional_trimmed(get_setting(conn, SETTING_REMOTE_STT_MODEL)?),
-        remote_stt_timeout_secs: parse_remote_stt_timeout_secs(
-            get_setting(conn, SETTING_REMOTE_STT_TIMEOUT_SECS)?,
-        ),
-        remote_stt_key_stored: bool_from_setting(get_setting(
+        remote_stt_timeout_secs: parse_remote_stt_timeout_secs(get_setting(
             conn,
-            SETTING_REMOTE_STT_KEY_STORED,
+            SETTING_REMOTE_STT_TIMEOUT_SECS,
         )?),
+        remote_stt_key_stored: bool_from_setting(get_setting(conn, SETTING_REMOTE_STT_KEY_STORED)?),
     })
 }
 
@@ -127,8 +125,8 @@ fn validate_remote_stt_url(url: &str) -> Result<(), DbError> {
     if t.is_empty() {
         return Ok(());
     }
-    let parsed =
-        url::Url::parse(t).map_err(|e| DbError::Validation(format!("invalid remote_stt_url: {e}")))?;
+    let parsed = url::Url::parse(t)
+        .map_err(|e| DbError::Validation(format!("invalid remote_stt_url: {e}")))?;
     match parsed.scheme() {
         "http" | "https" => Ok(()),
         other => Err(DbError::Validation(format!(
@@ -182,11 +180,7 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
                 "remote_stt_timeout_secs must be between 1 and 300".into(),
             ));
         }
-        set_setting(
-            conn,
-            SETTING_REMOTE_STT_TIMEOUT_SECS,
-            &format!("{secs}"),
-        )?;
+        set_setting(conn, SETTING_REMOTE_STT_TIMEOUT_SECS, &format!("{secs}"))?;
     }
     Ok(())
 }

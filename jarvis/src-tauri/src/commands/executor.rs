@@ -938,5 +938,4 @@ mod tests {
         assert!(s.url_calls.is_empty());
         assert_eq!(s.errors, vec!["Follow-up timed out".to_string()]);
     }
-
 }

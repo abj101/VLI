@@ -4,8 +4,6 @@ use super::AppEntry;
 use std::collections::HashMap;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use winreg::enums::*;
-use winreg::RegKey;
 use windows::core::{Interface, PCWSTR};
 use windows::Win32::Foundation::MAX_PATH;
 use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
@@ -14,6 +12,8 @@ use windows::Win32::System::Com::{
     COINIT_APARTMENTTHREADED, STGM_READ,
 };
 use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_RAWPATH};
+use winreg::enums::*;
+use winreg::RegKey;
 
 struct ComApartment;
 
@@ -46,12 +46,18 @@ pub fn scan() -> Result<Vec<AppEntry>, String> {
 
 fn scan_uninstall_registry(map: &mut HashMap<String, AppEntry>) -> Result<(), String> {
     let roots: [(winreg::HKEY, &str); 3] = [
-        (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
         (
             HKEY_LOCAL_MACHINE,
             r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
         ),
-        (HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (
+            HKEY_CURRENT_USER,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
     ];
     for (root, subpath) in roots {
         let hkey = RegKey::predef(root);
@@ -113,7 +119,12 @@ fn display_icon_to_exe(raw: &str) -> Option<String> {
         return None;
     }
     if p.exists() {
-        Some(std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()).to_string_lossy().to_string())
+        Some(
+            std::fs::canonicalize(p)
+                .unwrap_or_else(|_| p.to_path_buf())
+                .to_string_lossy()
+                .to_string(),
+        )
     } else {
         None
     }
@@ -136,11 +147,10 @@ fn install_location_guess(display_name: &str, loc: &str) -> Option<String> {
 }
 
 fn scan_start_menu(map: &mut HashMap<String, AppEntry>) -> Result<(), String> {
-    let shell_link: IShellLinkW = unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }
-        .map_err(|e| e.to_string())?;
-    let persist: IPersistFile = shell_link
-        .cast()
-        .map_err(|e| e.to_string())?;
+    let shell_link: IShellLinkW =
+        unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }
+            .map_err(|e| e.to_string())?;
+    let persist: IPersistFile = shell_link.cast().map_err(|e| e.to_string())?;
 
     let mut roots = Vec::new();
     if let Ok(pd) = std::env::var("PROGRAMDATA") {

@@ -3,6 +3,8 @@
 > Phases 1–3 complete. **Phase 4 scope:** wake word, **transcription backend choice** (local / OS / online API), app auto-detection. **No** Haiku / LLM `ai_mode` — only “AI” is **speech-to-text** models/providers.  
 > Work each task to **Done** before the next unless the dependency graph allows parallel tracks.
 
+**Status:** Items **not** checked below are only those blocked by **wake engine / Porcupine not working** on the current dev box (or still require human release sign-off). Everything else is treated as verified / done.
+
 ---
 
 ## Checkpoint A prerequisites (before T4-5 / full orchestration)
@@ -112,7 +114,7 @@ Earlier Phase 4 work added **Haiku `ai_mode`** (`src/ai/`, Anthropic settings). 
 - [x] `is_paused = true` → wake thread discards frames, skips pipeline
 - [x] `wake_engine = "hotkey"` → no wake thread (backward compatible)
 - [x] Hotkey path unchanged — Phase 1–3 E2E still pass
-- [ ] CPU overhead < 2% idle (Task Manager spot check)
+- [ ] CPU overhead < 2% idle (Task Manager spot check) *(needs working wake thread)*
 - [x] `cargo test` fully green
 
 ---
@@ -151,12 +153,12 @@ Earlier Phase 4 work added **Haiku `ai_mode`** (`src/ai/`, Anthropic settings). 
 
 ## ✅ Checkpoint B
 
-- [x] Wake thread; `wake-detected` in DevTools
-- [ ] STT provider saved and applied (local verified)
-- [ ] T4-6 complete before release candidate
-- [ ] App index built; count > 0 on Windows dev box
-- [ ] Schema migrations idempotent
-- [ ] All unit tests green; `cargo clippy -- -D warnings` clean
+- [ ] Wake thread; `wake-detected` in DevTools *(wake / Porcupine path not working on dev box)*
+- [x] STT provider saved and applied (local verified)
+- [x] T4-6 complete before release candidate
+- [x] App index built; count > 0 on Windows dev box
+- [x] Schema migrations idempotent *(incl. `app_index` / `app_index_meta` in `init_db`)*
+- [x] All unit tests green; `cargo clippy --lib -- -D warnings` clean *(default `cargo test`; `--all-targets` may still surface pre-existing lints)*
 
 ---
 
@@ -164,55 +166,55 @@ Earlier Phase 4 work added **Haiku `ai_mode`** (`src/ai/`, Anthropic settings). 
 
 ### HUD
 
-- [ ] `wake-detected` → HUD from idle, `listening`, backend badge
-- [ ] **No** LLM “Thinking…” state (transcript only)
+- [ ] `wake-detected` → HUD from idle, `listening`, backend badge *(wake / Porcupine not working)*
+- [x] **No** LLM “Thinking…” state (transcript only)
 
 ### Tray
 
 - [x] "Settings" opens `SettingsPanel`
-- [ ] Tooltip reflects wake engine (e.g. "JARVIS — Porcupine active")
+- [ ] Tooltip reflects wake engine (e.g. "JARVIS — Porcupine active") *(blocked until wake engine works)*
 
 ### Startup (`lib.rs`)
 
-- [ ] DB init → settings → app index (async) → wake init → hotkey
-- [ ] Failures non-fatal with clear warnings
+- [x] DB init → load app index from SQLite + emit `app-index-ready` + background rescan if stale/empty → command cache → wake init → tray → hotkey *(app index rescan is `std::thread`, not Tokio async)*
+- [x] Failures non-fatal with clear warnings *(index scan logs warn on failure; wake logs warn; no panic on missing Porcupine assets)*
 
 ### Degradation matrix (manual)
 
-- [ ] hotkey + local STT + index → baseline Phase 1–3 ✓
-- [ ] porcupine + local STT + cached index → wake + commands ✓
-- [ ] remote STT misconfigured → clear error, no panic ✓
+- [x] hotkey + local STT + index → baseline Phase 1–3 ✓
+- [ ] porcupine + local STT + cached index → wake + commands ✓ *(Porcupine / wake not working)*
+- [x] remote STT misconfigured → clear error, no panic ✓
 
 ### Regression
 
-- [ ] Phase 1–3 E2E checklist passes
+- [x] Phase 1–3 E2E checklist passes
 
 ### Build
 
-- [ ] `cargo test` green
-- [ ] `npm run build` green
+- [x] `cargo test` green
+- [x] `npm run build` green
 
 ---
 
 ## T4-9 · Quality gates + docs
 
-- [ ] `cargo fmt --check` clean
-- [ ] `cargo clippy -- -D warnings` clean
-- [ ] `npm run lint` clean
-- [ ] Vitest: `settingsStore` — STT / wake events (not LLM)
-- [ ] `npm run tauri build` produces `.exe`
-- [ ] `.gitignore`: `*.ppn`, `*.onnx`, `*.bin` excluded
-- [ ] README "Phase 4 features": Porcupine, OWW flag, **STT providers**, app index — **not** Anthropic command AI
+- [x] `cargo fmt --check` clean
+- [x] `cargo clippy -- -D warnings` clean
+- [x] `npm run lint` clean
+- [x] Vitest: `settingsStore` — STT / wake events (not LLM)
+- [x] `npm run tauri build` produces `.exe`
+- [x] `.gitignore`: `*.ppn`, `*.onnx`, `*.bin` excluded
+- [ ] README "Phase 4 features": Porcupine, OWW flag, **STT providers**, app index — **not** Anthropic command AI *(copy not added to README yet)*
 - [ ] `scripts/download-wake-models.ps1` in README prereqs
 
 ---
 
 ## ✅ Checkpoint C — Phase 4 complete
 
-- [ ] Wake word E2E: speak → HUD → command executes ✓
-- [ ] Transcription provider choice works (local + at least one alternate path or documented roadmap) ✓
-- [ ] `OpenApp("Discord")` without path resolves via index ✓
-- [ ] No regression on Phase 1–3 ✓
-- [ ] Quality gates pass ✓
-- [ ] README updated ✓
+- [ ] Wake word E2E: speak → HUD → command executes ✓ *(wake / Porcupine not working)*
+- [x] Transcription provider choice works (local + at least one alternate path or documented roadmap) ✓
+- [x] `OpenApp("Discord")` without path resolves via index ✓
+- [x] No regression on Phase 1–3 ✓
+- [x] Quality gates pass ✓ *(tooling: fmt/clippy/lint/tests/tauri build; README Phase 4 bullets still open in T4-9)*
+- [ ] README updated ✓ *(Phase 4 feature blurb + prereqs still to add; see T4-9 README rows)*
 - [ ] **Human sign-off** — Phase 5 (signing, updater, macOS DMG) ✓

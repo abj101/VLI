@@ -60,10 +60,7 @@ fn parse_transcript_from_response(body: &str) -> Result<String, String> {
     Err("remote STT: response missing text/transcript".into())
 }
 
-fn post_transcription(
-    params: &RemoteSttParams,
-    pcm_16k: &[f32],
-) -> Result<String, String> {
+fn post_transcription(params: &RemoteSttParams, pcm_16k: &[f32]) -> Result<String, String> {
     if pcm_16k.len() < MIN_DECODE_SAMPLES {
         return Ok(String::new());
     }
@@ -117,13 +114,7 @@ pub fn spawn_remote_stt_thread(
 ) -> JoinHandle<()> {
     let app_err = app.clone();
     std::thread::spawn(move || {
-        if let Err(e) = remote_stt_loop(
-            app,
-            params,
-            pcm_rx,
-            input_sample_rate,
-            hud_session_id,
-        ) {
+        if let Err(e) = remote_stt_loop(app, params, pcm_rx, input_sample_rate, hud_session_id) {
             let _ = app_err.emit("audio-error", serde_json::json!({ "message": e }));
         }
     })

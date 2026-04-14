@@ -71,10 +71,7 @@ fn refresh_app_index_on_startup(app: &AppHandle, store: &AppIndexStore) -> Resul
         .read()
         .map_err(|_| "app index lock poisoned".to_string())?
         .len();
-    let _ = app.emit(
-        APP_INDEX_READY_EVENT,
-        serde_json::json!({ "count": count }),
-    );
+    let _ = app.emit(APP_INDEX_READY_EVENT, serde_json::json!({ "count": count }));
     if stale || count == 0 {
         let app_h = app.clone();
         let st = Arc::clone(store);
@@ -261,7 +258,9 @@ fn load_stt_pipeline_choice(app: &AppHandle) -> audio::SttPipelineChoice {
                 endpoint: settings.remote_stt_url.clone(),
                 model: settings.remote_stt_model.clone(),
                 bearer_token: key,
-                timeout: audio::RemoteSttParams::sanitized_timeout(settings.remote_stt_timeout_secs),
+                timeout: audio::RemoteSttParams::sanitized_timeout(
+                    settings.remote_stt_timeout_secs,
+                ),
             };
             audio::SttPipelineChoice::Remote(params)
         }

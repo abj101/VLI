@@ -57,15 +57,7 @@ pub(crate) fn spawn_wake_thread(
     let join = std::thread::Builder::new()
         .name("jarvis-wake".into())
         .spawn(move || {
-            wake_thread_main(
-                app,
-                detector,
-                fixed,
-                label,
-                stop_thread,
-                is_paused,
-                on_wake,
-            );
+            wake_thread_main(app, detector, fixed, label, stop_thread, is_paused, on_wake);
         })
         .map_err(|e| e.to_string())?;
 

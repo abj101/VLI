@@ -51,11 +51,7 @@ impl AudioPipeline {
         let (capture, sample_rate) = capture::start_capture(app.clone(), pcm_tx)?;
 
         let stt = match choice {
-            SttPipelineChoice::Os => Some(spawn_os_stt_thread(
-                app.clone(),
-                pcm_rx,
-                hud_session_id,
-            )),
+            SttPipelineChoice::Os => Some(spawn_os_stt_thread(app.clone(), pcm_rx, hud_session_id)),
             SttPipelineChoice::Remote(params) => {
                 if params.endpoint.trim().is_empty() {
                     let _ = app.emit(
