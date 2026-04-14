@@ -44,6 +44,10 @@ struct CommandNodePayload {
     actions: Vec<ActionPayload>,
     enabled: bool,
     fuzzy_threshold_pct: i64,
+    #[serde(default)]
+    ai_mode: bool,
+    #[serde(default)]
+    sub_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -69,6 +73,12 @@ impl CommandNodePayload {
             actions: self.actions.clone(),
             enabled: self.enabled,
             fuzzy_threshold_pct: self.fuzzy_threshold_pct as u16,
+            ai_mode: self.ai_mode,
+            sub_prompt: self
+                .sub_prompt
+                .as_ref()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
         })
     }
 }
@@ -86,6 +96,15 @@ fn validate_command_node_payload(payload: &CommandNodePayload) -> Result<(), Str
     }
     if !(0..=100).contains(&payload.fuzzy_threshold_pct) {
         return Err("fuzzy threshold must be between 0 and 100".to_string());
+    }
+    if payload.ai_mode
+        && payload
+            .sub_prompt
+            .as_ref()
+            .map(|value| value.trim().is_empty())
+            .unwrap_or(true)
+    {
+        return Err("sub_prompt is required when ai_mode is enabled".to_string());
     }
     Ok(())
 }
@@ -1374,6 +1393,8 @@ mod tests {
             }],
             enabled: true,
             fuzzy_threshold_pct: 80,
+            ai_mode: false,
+            sub_prompt: None,
         };
         assert!(validate_command_node_payload(&payload).is_err());
     }
@@ -1388,6 +1409,8 @@ mod tests {
             }],
             enabled: true,
             fuzzy_threshold_pct: 80,
+            ai_mode: false,
+            sub_prompt: None,
         };
         assert!(validate_command_node_payload(&payload).is_err());
     }
@@ -1402,6 +1425,8 @@ mod tests {
             }],
             enabled: true,
             fuzzy_threshold_pct: 101,
+            ai_mode: false,
+            sub_prompt: None,
         };
         assert!(validate_command_node_payload(&payload).is_err());
     }
@@ -1419,6 +1444,8 @@ mod tests {
             ],
             enabled: false,
             fuzzy_threshold_pct: 90,
+            ai_mode: true,
+            sub_prompt: Some("Summarize".into()),
         };
         let node = payload.try_into_new_command_node().expect("valid payload");
         assert_eq!(node.name, "Open App");
@@ -1428,6 +1455,8 @@ mod tests {
         );
         assert_eq!(node.enabled, false);
         assert_eq!(node.fuzzy_threshold_pct, 90);
+        assert!(node.ai_mode);
+        assert_eq!(node.sub_prompt, Some("Summarize".to_string()));
         assert_eq!(
             node.actions,
             vec![
@@ -1460,6 +1489,8 @@ mod tests {
                 actions: vec![Action::Wait { ms: 25 }],
                 enabled: true,
                 fuzzy_threshold_pct: 80,
+                ai_mode: false,
+                sub_prompt: None,
             },
         )
         .expect("insert");

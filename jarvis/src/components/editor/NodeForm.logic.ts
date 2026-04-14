@@ -60,6 +60,7 @@ export function modelFromNode(node: CommandNodePayload | null): FormModel {
   if (!node) {
     return emptyFormModel();
   }
+  const normalizedSubPrompt = node.sub_prompt?.trim() ?? "";
   const subPromptIndex = node.actions.findIndex((action) => "sub_prompt" in action);
   if (subPromptIndex === -1) {
     return {
@@ -69,7 +70,7 @@ export function modelFromNode(node: CommandNodePayload | null): FormModel {
       threshold: clampThreshold(node.fuzzy_threshold_pct / 100),
       enabled: node.enabled,
       actions: [...node.actions],
-      subPromptText: "",
+      subPromptText: normalizedSubPrompt,
       subPromptActions: [],
     };
   }
@@ -89,8 +90,9 @@ export function modelFromNode(node: CommandNodePayload | null): FormModel {
 
 export function toCommandPayload(model: FormModel): Omit<CommandNodePayload, "id" | "created_at"> {
   const mergedActions = [...model.actions];
+  const normalizedSubPrompt = model.subPromptText.trim();
   if (model.subPromptText.trim().length > 0 || model.subPromptActions.length > 0) {
-    mergedActions.push({ sub_prompt: { prompt: model.subPromptText.trim() } });
+    mergedActions.push({ sub_prompt: { prompt: normalizedSubPrompt } });
     mergedActions.push(...model.subPromptActions);
   }
   return {
@@ -99,6 +101,8 @@ export function toCommandPayload(model: FormModel): Omit<CommandNodePayload, "id
     actions: mergedActions,
     enabled: model.enabled,
     fuzzy_threshold_pct: Math.round(clampThreshold(model.threshold) * 100),
+    ai_mode: normalizedSubPrompt.length > 0,
+    sub_prompt: normalizedSubPrompt.length > 0 ? normalizedSubPrompt : null,
   };
 }
 

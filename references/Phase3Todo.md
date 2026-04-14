@@ -143,16 +143,16 @@ Before T3-7, confirm all of the following:
 - [x] Matcher reads from cache (read lock) instead of querying DB per transcript segment
 - [x] Each editor IPC write (create, update, delete, reorder) refreshes cache after DB write (write lock)
 - [x] Invalidate `editorStore` / trigger refresh in React after save (so NodeList stays in sync)
-- [ ] Implement `ai_mode` branch in `executor.rs`: after actions run, if `node.ai_mode == true` AND `ANTHROPIC_API_KEY` env var is set → call `claude-haiku-4-5` with `sub_prompt` text → emit result as `transcript-update { text: <response>, is_final: true }`
-- [ ] **Confirm `reqwest` or Anthropic crate addition before adding dep**
-- [ ] If `ai_mode == true` but no key → log warning, skip silently, no panic
-- [ ] If `ai_mode == false` → no API call regardless of key presence
-- [ ] API key never logged, never emitted over IPC events
+- [x] Implement `ai_mode` branch in `executor.rs`: after actions run, if `node.ai_mode == true` AND `ANTHROPIC_API_KEY` env var is set → call `claude-haiku-4-5` with `sub_prompt` text → emit result as `transcript-update { text: <response>, is_final: true }`
+- [x] **Confirm `reqwest` or Anthropic crate addition before adding dep**
+- [x] If `ai_mode == true` but no key → log warning, skip silently, no panic
+- [x] If `ai_mode == false` → no API call regardless of key presence
+- [x] API key never logged, never emitted over IPC events
 - [ ] **Verify:** Create node in editor → immediately fire hotkey (no restart) → node executes
 - [ ] **Verify:** Delete node in editor → immediately fire hotkey → no match
 - [ ] **Verify:** `ai_mode: true` node + `ANTHROPIC_API_KEY` set → HUD shows AI reply
 - [ ] **Verify:** `ai_mode: true` node + no key → no crash, warning in log only
-- [ ] **Verify:** `cargo test` full suite still green
+- [x] **Verify:** `cargo test` full suite still green
 
 ---
 

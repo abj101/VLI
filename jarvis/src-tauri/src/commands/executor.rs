@@ -2,8 +2,10 @@ use crate::{
     audio::tts,
     db::{Action, CommandNode},
 };
-use log::debug;
+use log::{debug, warn};
+use reqwest::blocking::Client;
 use serde::Serialize;
+use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::process::Command;
@@ -14,7 +16,10 @@ use tauri_plugin_opener::OpenerExt;
 
 pub const ACTION_STATUS_EVENT: &str = "action-status";
 pub const ACTION_ERROR_EVENT: &str = "action-error";
+pub const TRANSCRIPT_UPDATE_EVENT: &str = "transcript-update";
 const ACTION_CANCELLED_MSG: &str = "Action run cancelled";
+const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_MODEL: &str = "claude-haiku-4-5";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ActionStatus {
@@ -32,6 +37,8 @@ pub trait ActionRuntime {
     fn is_cancelled(&self) -> bool;
     fn emit_status(&self, text: &str);
     fn emit_error(&self, message: &str);
+    fn run_ai_mode_prompt(&self, prompt: &str) -> Result<Option<String>, String>;
+    fn emit_transcript_update(&self, text: &str);
 }
 
 pub struct TauriActionRuntime<'a> {
@@ -174,6 +181,56 @@ impl ActionRuntime for TauriActionRuntime<'_> {
             serde_json::json!({ "message": message }),
         );
     }
+
+    fn run_ai_mode_prompt(&self, prompt: &str) -> Result<Option<String>, String> {
+        let api_key = match std::env::var("ANTHROPIC_API_KEY") {
+            Ok(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
+            _ => {
+                warn!("ai_mode enabled but ANTHROPIC_API_KEY is missing; skipping");
+                return Ok(None);
+            }
+        };
+        let payload = serde_json::json!({
+            "model": ANTHROPIC_MODEL,
+            "max_tokens": 256,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        });
+        let response = Client::new()
+            .post(ANTHROPIC_API_URL)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&payload)
+            .send()
+            .map_err(|e| format!("ai preview request failed: {e}"))?;
+        let response = response
+            .error_for_status()
+            .map_err(|e| format!("ai preview request failed: {e}"))?;
+        let value: Value = response
+            .json()
+            .map_err(|e| format!("ai preview response parse failed: {e}"))?;
+        let text = value
+            .get("content")
+            .and_then(|items| items.as_array())
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("text"))
+            .and_then(|text| text.as_str())
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty());
+        Ok(text)
+    }
+
+    fn emit_transcript_update(&self, text: &str) {
+        let _ = self.app.emit(
+            TRANSCRIPT_UPDATE_EVENT,
+            serde_json::json!({ "text": text, "is_final": true }),
+        );
+    }
 }
 
 pub fn execute_command(node: &CommandNode, runtime: &impl ActionRuntime) {
@@ -184,7 +241,31 @@ pub fn execute_command(node: &CommandNode, runtime: &impl ActionRuntime) {
         node.actions.len()
     );
     execute_actions(&node.actions, runtime);
+    run_ai_mode_preview(node, runtime);
     debug!("executor: execute_command finished node_id={}", node.id);
+}
+
+fn run_ai_mode_preview(node: &CommandNode, runtime: &impl ActionRuntime) {
+    if !node.ai_mode || runtime.is_cancelled() {
+        return;
+    }
+    let Some(prompt) = node
+        .sub_prompt
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    else {
+        runtime.emit_status("AI preview skipped: missing sub_prompt");
+        return;
+    };
+    match runtime.run_ai_mode_prompt(prompt) {
+        Ok(Some(response_text)) => runtime.emit_transcript_update(&response_text),
+        Ok(None) => {}
+        Err(err) => {
+            runtime.emit_status(&format!("AI preview failed: {err}"));
+            runtime.emit_error(&err);
+        }
+    }
 }
 
 fn execute_actions(actions: &[Action], runtime: &impl ActionRuntime) {
@@ -422,6 +503,8 @@ mod tests {
             actions,
             enabled: true,
             fuzzy_threshold_pct: 80,
+            ai_mode: false,
+            sub_prompt: None,
             created_at: "now".into(),
         }
     }
@@ -445,6 +528,10 @@ mod tests {
         follow_up_prompts: Vec<String>,
         fail_follow_up_prompt: Option<String>,
         cancelled: bool,
+        ai_prompts: Vec<String>,
+        ai_result: Option<String>,
+        ai_error: Option<String>,
+        transcript_updates: Vec<String>,
     }
 
     #[derive(Clone, Default, Debug)]
@@ -498,6 +585,14 @@ mod tests {
                 state: Arc::new(Mutex::new(s)),
             }
         }
+
+        fn with_ai_result(result: &str) -> Self {
+            let mut s = MockState::default();
+            s.ai_result = Some(result.to_string());
+            Self {
+                state: Arc::new(Mutex::new(s)),
+            }
+        }
     }
 
     impl Clone for MockState {
@@ -520,6 +615,10 @@ mod tests {
                 follow_up_prompts: self.follow_up_prompts.clone(),
                 fail_follow_up_prompt: self.fail_follow_up_prompt.clone(),
                 cancelled: self.cancelled,
+                ai_prompts: self.ai_prompts.clone(),
+                ai_result: self.ai_result.clone(),
+                ai_error: self.ai_error.clone(),
+                transcript_updates: self.transcript_updates.clone(),
             }
         }
     }
@@ -597,6 +696,23 @@ mod tests {
 
         fn emit_error(&self, message: &str) {
             self.state.lock().unwrap().errors.push(message.to_string());
+        }
+
+        fn run_ai_mode_prompt(&self, prompt: &str) -> Result<Option<String>, String> {
+            let mut s = self.state.lock().unwrap();
+            s.ai_prompts.push(prompt.to_string());
+            if let Some(err) = s.ai_error.clone() {
+                return Err(err);
+            }
+            Ok(s.ai_result.clone())
+        }
+
+        fn emit_transcript_update(&self, text: &str) {
+            self.state
+                .lock()
+                .unwrap()
+                .transcript_updates
+                .push(text.to_string());
         }
     }
 
@@ -853,5 +969,46 @@ mod tests {
         assert_eq!(s.follow_up_prompts, vec!["Need input".to_string()]);
         assert!(s.url_calls.is_empty());
         assert_eq!(s.errors, vec!["Follow-up timed out".to_string()]);
+    }
+
+    #[test]
+    fn ai_mode_disabled_does_not_call_preview_api() {
+        let runtime = MockRuntime::with_ai_result("preview text");
+        let mut node = node_with_actions(vec![Action::Speak {
+            text: "done".into(),
+        }]);
+        node.ai_mode = false;
+        node.sub_prompt = Some("Summarize this".into());
+
+        execute_command(&node, &runtime);
+        let s = runtime.snapshot();
+        assert!(s.ai_prompts.is_empty());
+        assert!(s.transcript_updates.is_empty());
+    }
+
+    #[test]
+    fn ai_mode_enabled_emits_transcript_update_from_api_response() {
+        let runtime = MockRuntime::with_ai_result("ai reply");
+        let mut node = node_with_actions(vec![]);
+        node.ai_mode = true;
+        node.sub_prompt = Some("Summarize this".into());
+
+        execute_command(&node, &runtime);
+        let s = runtime.snapshot();
+        assert_eq!(s.ai_prompts, vec!["Summarize this".to_string()]);
+        assert_eq!(s.transcript_updates, vec!["ai reply".to_string()]);
+    }
+
+    #[test]
+    fn ai_mode_enabled_skips_emit_when_api_returns_none() {
+        let runtime = MockRuntime::default();
+        let mut node = node_with_actions(vec![]);
+        node.ai_mode = true;
+        node.sub_prompt = Some("Summarize this".into());
+
+        execute_command(&node, &runtime);
+        let s = runtime.snapshot();
+        assert_eq!(s.ai_prompts, vec!["Summarize this".to_string()]);
+        assert!(s.transcript_updates.is_empty());
     }
 }

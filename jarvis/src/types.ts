@@ -45,6 +45,8 @@ export interface CommandNodePayload {
   actions: ActionPayload[];
   enabled: boolean;
   fuzzy_threshold_pct: number;
+  ai_mode?: boolean;
+  sub_prompt?: string | null;
   created_at: string;
 }
 
