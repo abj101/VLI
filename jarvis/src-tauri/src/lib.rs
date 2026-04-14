@@ -422,6 +422,12 @@ fn prepare_hud_close_session(s: &mut HudRuntime) {
     cancel_active_run_in_state(s);
 }
 
+/// After a run the HUD often stays **visible** on [`HudPhase::Done`] until auto-dismiss. Hotkey and
+/// wake should start a new listen in that state instead of closing the window or ignoring the wake.
+fn reopen_listening_when_visible(phase: HudPhase) -> bool {
+    matches!(phase, HudPhase::Done | HudPhase::Idle)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FollowUpAbortReason {
     Cancelled,
@@ -940,6 +946,12 @@ fn show_hud_from_hotkey(
         window.center().map_err(|e| e.to_string())?;
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
+    } else if reopen_listening_when_visible(s.phase) {
+        let sid = prepare_hud_listening_session(&mut s);
+        listening_session_id = Some(sid);
+        window.center().map_err(|e| e.to_string())?;
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
     } else {
         prepare_hud_close_session(&mut s);
         window.hide().map_err(|e| e.to_string())?;
@@ -964,7 +976,8 @@ fn show_hud_from_hotkey(
     Ok(())
 }
 
-/// Wake word: open HUD + listening when hidden; never toggles closed (unlike hotkey).
+/// Wake word: open HUD + listening when hidden, or when visible on a passive overlay (`Done` /
+/// `Idle`). Ignores duplicate fires while actively listening / executing / awaiting follow-up.
 fn wake_request_hud(
     app: &AppHandle,
     rt: &SharedHud,
@@ -972,7 +985,7 @@ fn wake_request_hud(
     is_paused: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
-    if s.visible {
+    if s.visible && !reopen_listening_when_visible(s.phase) {
         return Ok(());
     }
     let window = app
@@ -1657,6 +1670,17 @@ mod tests {
         rt.phase = HudPhase::Listening;
         rt.visible = false;
         assert!(!should_attempt_command_match(&rt));
+    }
+
+    #[test]
+    fn reopen_listening_when_visible_only_for_passive_overlay_phases() {
+        assert!(reopen_listening_when_visible(HudPhase::Done));
+        assert!(reopen_listening_when_visible(HudPhase::Idle));
+        assert!(!reopen_listening_when_visible(HudPhase::Listening));
+        assert!(!reopen_listening_when_visible(HudPhase::Matched));
+        assert!(!reopen_listening_when_visible(HudPhase::Executing));
+        assert!(!reopen_listening_when_visible(HudPhase::AwaitingInput));
+        assert!(!reopen_listening_when_visible(HudPhase::Stopped));
     }
 
     #[test]
