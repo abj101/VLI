@@ -23,16 +23,36 @@ pub struct TranscriptUpdate {
     pub is_final: bool,
 }
 
-pub fn resolve_whisper_model_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().resource_dir().map_err(|e| e.to_string())?;
-    let path = dir.join(WHISPER_MODEL_FILE);
-    if !path.is_file() {
-        return Err(format!(
-            "Whisper model missing at `{}` (run `scripts/download-model.ps1` from the jarvis folder)",
-            path.display()
-        ));
+/// Tauri `resource_dir()` may not match `src-tauri/resources/` during `tauri dev`; keep a crate-relative fallback.
+fn whisper_model_candidates(app: &AppHandle) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(dir) = app.path().resource_dir() {
+        out.push(dir.join(WHISPER_MODEL_FILE));
     }
-    Ok(path)
+    out.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join(WHISPER_MODEL_FILE),
+    );
+    out
+}
+
+pub fn resolve_whisper_model_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let candidates = whisper_model_candidates(app);
+    for path in &candidates {
+        if path.is_file() {
+            return Ok(path.clone());
+        }
+    }
+    let tried = candidates
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "Whisper model `{}` not found (tried: {}). Run `scripts/download-model.ps1` from the jarvis folder.",
+        WHISPER_MODEL_FILE, tried
+    ))
 }
 
 /// Linear resample mono `f32` to 16 kHz (Whisper input).
@@ -194,6 +214,8 @@ fn stt_loop(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::{normalize_peak_f32, resample_mono_to_16k, TranscriptUpdate};
 
     #[test]
@@ -227,5 +249,13 @@ mod tests {
         let j = serde_json::to_value(&u).expect("serialize");
         assert_eq!(j["text"], "hello");
         assert_eq!(j["is_final"], true);
+    }
+
+    #[test]
+    fn manifest_dir_resources_points_at_bundled_filename() {
+        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join(super::WHISPER_MODEL_FILE);
+        assert!(p.ends_with(super::WHISPER_MODEL_FILE));
     }
 }

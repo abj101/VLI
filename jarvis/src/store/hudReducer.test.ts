@@ -28,6 +28,7 @@ describe("reduceHudState", () => {
       },
       actionText: "Opening…",
       amplitude: 0.8,
+      audioError: "mic failed",
     };
     const next = reduceHudState(dirty, "hud-phase", { phase: "listening" });
     expect(next.transcript).toBe("");
@@ -35,6 +36,7 @@ describe("reduceHudState", () => {
     expect(next.match).toBeNull();
     expect(next.actionText).toBeNull();
     expect(next.amplitude).toBe(0);
+    expect(next.audioError).toBeNull();
   });
 
   it("applies transcript-update text and is_final", () => {
@@ -101,6 +103,13 @@ describe("reduceHudState", () => {
       amplitude: -2,
     });
     expect(s.amplitude).toBe(0);
+  });
+
+  it("applies audio-error message", () => {
+    const s = reduceHudState(initialHudState, "audio-error", {
+      message: "Whisper model missing",
+    });
+    expect(s.audioError).toBe("Whisper model missing");
   });
 });
 

@@ -1,5 +1,11 @@
 import { listen } from "@tauri-apps/api/event";
-import type { ActionStatus, HudPhase, MatchResult, TranscriptUpdate } from "../types";
+import type {
+  ActionStatus,
+  AudioErrorPayload,
+  HudPhase,
+  MatchResult,
+  TranscriptUpdate,
+} from "../types";
 import { useHudStore } from "./hudStore";
 
 const HUD_PHASES = [
@@ -47,6 +53,11 @@ export async function subscribeHudIpc(): Promise<() => void> {
     useHudStore.getState().applyIpc("amplitude-update", e.payload);
   });
   unsubs.push(uAmp);
+
+  const uAudErr = await listen<AudioErrorPayload>("audio-error", (e) => {
+    useHudStore.getState().applyIpc("audio-error", e.payload);
+  });
+  unsubs.push(uAudErr);
 
   return () => {
     for (const u of unsubs) {

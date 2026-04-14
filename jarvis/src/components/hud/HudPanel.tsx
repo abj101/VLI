@@ -82,6 +82,7 @@ function TranscriptBlock() {
   const transcript = useHudStore((s) => s.transcript);
   const match = useHudStore((s) => s.match);
   const actionText = useHudStore((s) => s.actionText);
+  const audioError = useHudStore((s) => s.audioError);
 
   const showAction =
     (phase === "executing" || phase === "awaiting_input") &&
@@ -99,6 +100,14 @@ function TranscriptBlock() {
       >
         {actionText}
       </motion.div>
+    );
+  }
+
+  if (phase === "listening" && audioError) {
+    return (
+      <div className="hud-line hud-line-error" role="alert">
+        {audioError}
+      </div>
     );
   }
 

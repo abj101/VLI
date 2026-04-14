@@ -7,6 +7,7 @@ import {
 } from "./hudReducer";
 import type {
   ActionStatus,
+  AudioErrorPayload,
   HudPhase,
   MatchResult,
   TranscriptUpdate,
@@ -20,6 +21,7 @@ function pickHudState(s: HudStore): HudState {
     match: s.match,
     actionText: s.actionText,
     amplitude: s.amplitude,
+    audioError: s.audioError,
   };
 }
 
@@ -31,7 +33,8 @@ export type HudStore = HudState & {
       | TranscriptUpdate
       | MatchResult
       | ActionStatus
-      | { amplitude: number },
+      | { amplitude: number }
+      | AudioErrorPayload,
   ) => void;
 };
 

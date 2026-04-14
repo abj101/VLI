@@ -1,5 +1,6 @@
 import type {
   ActionStatus,
+  AudioErrorPayload,
   HudPhase,
   MatchResult,
   TranscriptUpdate,
@@ -10,7 +11,8 @@ export type HudWireTopic =
   | "transcript-update"
   | "match-result"
   | "action-status"
-  | "amplitude-update";
+  | "amplitude-update"
+  | "audio-error";
 
 export type HudState = {
   phase: HudPhase;
@@ -19,6 +21,7 @@ export type HudState = {
   match: MatchResult | null;
   actionText: string | null;
   amplitude: number;
+  audioError: string | null;
 };
 
 export const initialHudState: HudState = {
@@ -28,6 +31,7 @@ export const initialHudState: HudState = {
   match: null,
   actionText: null,
   amplitude: 0,
+  audioError: null,
 };
 
 function clampSpan(textLen: number, spanStart: number, spanEnd: number) {
@@ -59,7 +63,8 @@ export function reduceHudState(
     | TranscriptUpdate
     | MatchResult
     | ActionStatus
-    | { amplitude: number },
+    | { amplitude: number }
+    | AudioErrorPayload,
 ): HudState {
   switch (topic) {
     case "hud-phase": {
@@ -71,6 +76,7 @@ export function reduceHudState(
         next.match = null;
         next.actionText = null;
         next.amplitude = 0;
+        next.audioError = null;
       }
       return next;
     }
@@ -91,6 +97,10 @@ export function reduceHudState(
       const amp = (payload as { amplitude: number }).amplitude;
       const n = Number.isFinite(amp) ? amp : 0;
       return { ...state, amplitude: Math.max(0, Math.min(1, n)) };
+    }
+    case "audio-error": {
+      const { message } = payload as AudioErrorPayload;
+      return { ...state, audioError: message };
     }
     default:
       return state;
