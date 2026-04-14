@@ -42,3 +42,8 @@ impl Drop for AudioPipeline {
 }
 
 pub type SharedAudioPipeline = Arc<Mutex<Option<AudioPipeline>>>;
+
+/// Clears any live pipeline (stops capture and joins STT).
+pub fn stop_shared_pipeline(slot: &SharedAudioPipeline) {
+    *slot.lock().unwrap() = None;
+}

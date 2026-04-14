@@ -2,9 +2,11 @@ mod audio;
 mod commands;
 mod db;
 mod hud;
+mod tray;
 
 use audio::SharedAudioPipeline;
 use hud::{sync_hud_window, HudPhase, HUD_WINDOW_LABEL};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
@@ -16,10 +18,6 @@ struct HudRuntime {
 }
 
 type SharedHud = Arc<Mutex<HudRuntime>>;
-
-fn stop_listening_audio(slot: &SharedAudioPipeline) {
-    *slot.lock().unwrap() = None;
-}
 
 fn try_start_listening_audio(app: &AppHandle, slot: &SharedAudioPipeline) {
     let mut g = slot.lock().unwrap();
@@ -46,6 +44,7 @@ fn show_hud_from_hotkey(
     app: &AppHandle,
     rt: &SharedHud,
     audio: &SharedAudioPipeline,
+    is_paused: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
     let window = app
@@ -72,10 +71,10 @@ fn show_hud_from_hotkey(
     sync_hud_window(app, phase)?;
     emit_hud_phase(app, phase);
 
-    if phase == HudPhase::Listening {
+    if tray::mic_start_allowed(is_paused, phase) {
         try_start_listening_audio(app, audio);
     } else {
-        stop_listening_audio(audio);
+        audio::stop_shared_pipeline(audio);
     }
 
     Ok(())
@@ -127,7 +126,7 @@ fn hud_dismiss(
     audio: State<'_, SharedAudioPipeline>,
 ) -> Result<(), String> {
     dismiss_hud(&app, &*state)?;
-    stop_listening_audio(&*audio);
+    audio::stop_shared_pipeline(&*audio);
     Ok(())
 }
 
@@ -135,19 +134,32 @@ fn hud_dismiss(
 pub fn run() {
     let hud_state: SharedHud = Arc::new(Mutex::new(HudRuntime::default()));
     let audio_pipeline: SharedAudioPipeline = Arc::new(Mutex::new(None));
+    let is_paused = Arc::new(AtomicBool::new(false));
 
     tauri::Builder::default()
         .manage(Arc::clone(&hud_state))
         .manage(Arc::clone(&audio_pipeline))
+        .manage(Arc::clone(&is_paused))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .setup({
             let hud_state = Arc::clone(&hud_state);
             let audio_for_shortcut = Arc::clone(&audio_pipeline);
+            let is_paused_for_shortcut = Arc::clone(&is_paused);
             move |app| {
                 let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                 db::init_db(&dir.join("jarvis.db")).map_err(|e| e.to_string())?;
+
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                {
+                    tray::setup_tray(
+                        app.handle(),
+                        Arc::clone(&is_paused_for_shortcut),
+                        Arc::clone(&audio_for_shortcut),
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
 
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 {
@@ -159,11 +171,18 @@ pub fn run() {
                                 .with_handler({
                                     let hud_state = Arc::clone(&hud_state);
                                     let audio_for_shortcut = Arc::clone(&audio_for_shortcut);
+                                    let is_paused_for_shortcut =
+                                        Arc::clone(&is_paused_for_shortcut);
                                     move |app, _shortcut, event| {
                                         if event.state != ShortcutState::Pressed {
                                             return;
                                         }
-                                        let _ = show_hud_from_hotkey(app, &hud_state, &audio_for_shortcut);
+                                        let _ = show_hud_from_hotkey(
+                                            app,
+                                            &hud_state,
+                                            &audio_for_shortcut,
+                                            &is_paused_for_shortcut,
+                                        );
                                     }
                                 })
                                 .build(),

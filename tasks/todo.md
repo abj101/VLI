@@ -98,7 +98,7 @@ See [plan.md](./plan.md) for full task descriptions. All `npm`/`tauri` commands 
 - Add `shell:allow-open` to `capabilities/default.json`
 - **Verify:** `cargo test commands::executor`; manual Notepad + GitHub URL
 
-### Task 8 — System tray
+### Task 8 — System tray ✅ (2026-04-13)
 
 - Tray icon + menu: Pause/Resume (label toggles), Quit
 - `Arc<AtomicBool>` `is_paused` shared with `lib.rs` pipeline
