@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef } from "react";
 import { useHudStore } from "../../store/hudStore";
+import type { MatchResult } from "../../types";
 import type { HudPhase } from "../../types";
 
 const LISTENING_PHASES: HudPhase[] = [
@@ -116,24 +117,80 @@ function RecognizedPhrase() {
   );
 }
 
+type CenterSelectorInput = {
+  phase: HudPhase;
+  transcript: string;
+  match: MatchResult | null;
+  actionText: string | null;
+  audioError: string | null;
+};
+
+type CenterSelectorResult =
+  | { kind: "error"; text: string }
+  | { kind: "match" }
+  | { kind: "action"; text: string }
+  | { kind: "transcript"; text: string }
+  | { kind: "placeholder" };
+
+export function selectCenterContent(
+  input: CenterSelectorInput,
+): CenterSelectorResult {
+  if (input.phase === "listening" && input.audioError) {
+    return { kind: "error", text: input.audioError };
+  }
+
+  if (input.match) {
+    return { kind: "match" };
+  }
+
+  if (
+    input.actionText &&
+    (input.phase === "matched" ||
+      input.phase === "executing" ||
+      input.phase === "awaiting_input" ||
+      input.phase === "done")
+  ) {
+    return { kind: "action", text: input.actionText };
+  }
+
+  const transcript = input.transcript.trim();
+  if (transcript.length > 0) {
+    return { kind: "transcript", text: input.transcript };
+  }
+
+  return { kind: "placeholder" };
+}
+
 function CenterContent() {
   const phase = useHudStore((s) => s.phase);
+  const transcript = useHudStore((s) => s.transcript);
   const match = useHudStore((s) => s.match);
+  const actionText = useHudStore((s) => s.actionText);
   const audioError = useHudStore((s) => s.audioError);
+  const selected = selectCenterContent({
+    phase,
+    transcript,
+    match,
+    actionText,
+    audioError,
+  });
 
-  if (phase === "listening" && audioError) {
-    return (
-      <div className="hud-line hud-line-error" role="alert">
-        {audioError}
-      </div>
-    );
+  switch (selected.kind) {
+    case "error":
+      return (
+        <div className="hud-line hud-line-error" role="alert">
+          {selected.text}
+        </div>
+      );
+    case "match":
+      return <RecognizedPhrase />;
+    case "action":
+      return <div className="hud-line hud-line-action">{selected.text}</div>;
+    case "transcript":
+      return <div className="hud-line hud-line-transcript">{selected.text}</div>;
+    default:
+      return <div className="hud-center-placeholder" aria-hidden />;
   }
-
-  if (match) {
-    return <RecognizedPhrase />;
-  }
-
-  return <div className="hud-center-placeholder" aria-hidden />;
 }
 
 function HudShell() {

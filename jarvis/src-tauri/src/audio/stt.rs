@@ -17,6 +17,10 @@ const MAX_BUFFER_SAMPLES: usize = TARGET_RATE as usize * 4;
 const INFER_EVERY: Duration = Duration::from_millis(750);
 /// Need some audio before first decode.
 const MIN_DECODE_SAMPLES: usize = TARGET_RATE as usize / 4;
+/// Treat chunks below this peak as silence and eventually reset rolling transcript context.
+const SILENCE_PEAK_THRESHOLD: f32 = 0.01;
+/// Clear stale decode context after this much continuous silence.
+const SILENCE_RESET_AFTER: Duration = Duration::from_millis(900);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptUpdate {
@@ -142,6 +146,39 @@ fn push_ring(buffer: &mut Vec<f32>, chunk: &[f32]) {
     }
 }
 
+#[derive(Debug, Default)]
+struct SilenceResetTracker {
+    silent_samples: usize,
+}
+
+impl SilenceResetTracker {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn push_and_should_reset(&mut self, chunk_16k: &[f32]) -> bool {
+        if chunk_16k.is_empty() {
+            return false;
+        }
+        let peak = chunk_16k
+            .iter()
+            .fold(0.0f32, |acc, &s| if s.abs() > acc { s.abs() } else { acc });
+        if peak <= SILENCE_PEAK_THRESHOLD {
+            self.silent_samples = self.silent_samples.saturating_add(chunk_16k.len());
+        } else {
+            self.silent_samples = 0;
+        }
+
+        let reset_after_samples =
+            ((TARGET_RATE as f64) * SILENCE_RESET_AFTER.as_secs_f64()).round() as usize;
+        if self.silent_samples >= reset_after_samples {
+            self.silent_samples = 0;
+            return true;
+        }
+        false
+    }
+}
+
 pub fn spawn_stt_thread(
     app: AppHandle,
     ctx: WhisperContext,
@@ -167,9 +204,16 @@ fn stt_loop(
     let mut buffer_16k: Vec<f32> = Vec::new();
     let mut last_decode = Instant::now() - INFER_EVERY;
     let mut last_text = String::new();
+    let mut silence_reset = SilenceResetTracker::new();
 
     while let Ok(chunk) = pcm_rx.recv() {
         let chunk_16k = resample_mono_to_16k(&chunk, input_sample_rate);
+        if silence_reset.push_and_should_reset(&chunk_16k) {
+            debug!("stt: silence gap reached; reset rolling decode context");
+            buffer_16k.clear();
+            last_text.clear();
+            continue;
+        }
         push_ring(&mut buffer_16k, &chunk_16k);
 
         if last_decode.elapsed() < INFER_EVERY {
@@ -234,7 +278,10 @@ fn stt_loop(
 mod tests {
     use std::path::PathBuf;
 
-    use super::{normalize_peak_f32, resample_mono_to_16k, TranscriptUpdate};
+    use super::{
+        normalize_peak_f32, resample_mono_to_16k, SilenceResetTracker, TranscriptUpdate,
+        TARGET_RATE,
+    };
 
     #[test]
     fn resample_identity_16k() {
@@ -277,5 +324,24 @@ mod tests {
             .join("resources")
             .join(super::WHISPER_MODEL_FILE);
         assert!(p.ends_with(super::WHISPER_MODEL_FILE));
+    }
+
+    #[test]
+    fn silence_tracker_resets_after_long_silence() {
+        let mut t = SilenceResetTracker::new();
+        let silence = vec![0.0f32; (TARGET_RATE as usize) / 2];
+        assert!(!t.push_and_should_reset(&silence));
+        assert!(t.push_and_should_reset(&silence));
+    }
+
+    #[test]
+    fn silence_tracker_clears_after_loud_chunk() {
+        let mut t = SilenceResetTracker::new();
+        let silence = vec![0.0f32; (TARGET_RATE as usize) / 2];
+        let loud = vec![0.5f32; (TARGET_RATE as usize) / 20];
+        assert!(!t.push_and_should_reset(&silence));
+        assert!(!t.push_and_should_reset(&loud));
+        assert!(!t.push_and_should_reset(&silence));
+        assert!(t.push_and_should_reset(&silence));
     }
 }
