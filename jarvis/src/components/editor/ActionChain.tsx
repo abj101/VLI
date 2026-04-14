@@ -13,6 +13,11 @@ import { CSS } from "@dnd-kit/utilities";
 import { useMemo } from "react";
 import type { ActionPayload } from "../../types";
 import { ActionCard } from "./ActionCard";
+import {
+  makeRowId,
+  moveByArrow,
+  reorderActionsFromDrag,
+} from "./ActionChain.logic";
 import { defaultActionForKind } from "./NodeForm.logic";
 
 type ActionChainProps = {
@@ -43,26 +48,14 @@ export function ActionChain({ title, actions, onChange, errorByIndex }: ActionCh
     onChange(actions.filter((_, idx) => idx !== index));
   };
 
-  const moveByArrow = (index: number, direction: -1 | 1) => {
-    const nextIndex = index + direction;
-    if (nextIndex < 0 || nextIndex >= actions.length) return;
-    const nextActions = [...actions];
-    const [removed] = nextActions.splice(index, 1);
-    nextActions.splice(nextIndex, 0, removed);
-    onChange(nextActions);
+  const moveRowByArrow = (index: number, direction: -1 | 1) => {
+    onChange(moveByArrow(actions, index, direction));
   };
 
   const onDragEnd = (event: DragEndEvent) => {
     if (!event.over) return;
-    const oldIndex = parseRowId(String(event.active.id));
-    const newIndex = parseRowId(String(event.over.id));
-    if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) {
-      return;
-    }
-    const nextActions = [...actions];
-    const [removed] = nextActions.splice(oldIndex, 1);
-    nextActions.splice(newIndex, 0, removed);
-    onChange(nextActions);
+    const next = reorderActionsFromDrag(actions, String(event.active.id), String(event.over.id));
+    if (next) onChange(next);
   };
 
   return (
@@ -90,8 +83,8 @@ export function ActionChain({ title, actions, onChange, errorByIndex }: ActionCh
                 nextActions[item.index] = nextAction;
                 onChange(nextActions);
               }}
-              onMoveUp={() => moveByArrow(item.index, -1)}
-              onMoveDown={() => moveByArrow(item.index, 1)}
+              onMoveUp={() => moveRowByArrow(item.index, -1)}
+              onMoveDown={() => moveRowByArrow(item.index, 1)}
               errorText={errorByIndex?.[item.index]}
             />
           ))}
@@ -148,11 +141,3 @@ function ActionRow({
   );
 }
 
-function makeRowId(index: number): string {
-  return `row-${index}`;
-}
-
-function parseRowId(id: string): number {
-  const value = Number(id.replace("row-", ""));
-  return Number.isInteger(value) ? value : -1;
-}

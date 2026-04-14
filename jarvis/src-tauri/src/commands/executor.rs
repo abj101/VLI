@@ -6,9 +6,9 @@ use log::{debug, warn};
 use reqwest::blocking::Client;
 use serde::Serialize;
 use serde_json::Value;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::process::Command;
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -812,7 +812,10 @@ mod tests {
 
         execute_command(&node, &runtime);
         let s = runtime.snapshot();
-        assert_eq!(s.script_calls, vec![("echo".to_string(), vec!["hello".to_string()])]);
+        assert_eq!(
+            s.script_calls,
+            vec![("echo".to_string(), vec!["hello".to_string()])]
+        );
         assert_eq!(s.wait_calls, vec![250]);
         assert_eq!(s.key_calls, vec!["CTRL+SHIFT+N".to_string()]);
         assert_eq!(s.url_calls, vec!["https://example.com".to_string()]);
@@ -862,8 +865,14 @@ mod tests {
         execute_command(&node, &runtime);
         let s = runtime.snapshot();
         assert_eq!(s.wait_calls, vec![10]);
-        assert_eq!(s.script_calls, vec![("echo".to_string(), vec!["done".to_string()])]);
-        assert!(s.statuses.iter().any(|status| status.contains("Waiting 10ms")));
+        assert_eq!(
+            s.script_calls,
+            vec![("echo".to_string(), vec!["done".to_string()])]
+        );
+        assert!(s
+            .statuses
+            .iter()
+            .any(|status| status.contains("Waiting 10ms")));
         assert!(s.errors.is_empty());
     }
 
@@ -883,7 +892,10 @@ mod tests {
         let s = runtime.snapshot();
         assert!(s.errors.is_empty());
         assert_eq!(s.speak_calls, vec!["task complete".to_string()]);
-        assert!(s.statuses.iter().any(|status| status.contains("Spoke: task complete")));
+        assert!(s
+            .statuses
+            .iter()
+            .any(|status| status.contains("Spoke: task complete")));
         assert_eq!(s.url_calls, vec!["https://example.com".to_string()]);
     }
 
@@ -933,7 +945,10 @@ mod tests {
 
         execute_command(&node, &runtime);
         let s = runtime.snapshot();
-        assert_eq!(s.follow_up_prompts, vec!["Which page should I open?".to_string()]);
+        assert_eq!(
+            s.follow_up_prompts,
+            vec!["Which page should I open?".to_string()]
+        );
         assert_eq!(s.speak_calls, vec!["Which page should I open?".to_string()]);
         assert_eq!(s.url_calls, vec!["https://example.com/docs".to_string()]);
         assert!(s.errors.is_empty());

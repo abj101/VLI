@@ -98,7 +98,10 @@ fn normalize_peak_f32(samples: &[f32]) -> Vec<f32> {
         return samples.to_vec();
     }
     let scale = (0.5_f32 / peak).min(128.0_f32);
-    samples.iter().map(|s| (s * scale).clamp(-1.0, 1.0)).collect()
+    samples
+        .iter()
+        .map(|s| (s * scale).clamp(-1.0, 1.0))
+        .collect()
 }
 
 /// One-shot decode: fresh [`whisper_rs::WhisperState`] per call so sliding-window passes do not

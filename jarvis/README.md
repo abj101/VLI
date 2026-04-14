@@ -61,6 +61,29 @@ Run in order after a clean checkout (with Rust + Node + CMake + MSVC + LLVM as a
 
 Packaged artifacts appear under `src-tauri/target/release/bundle/` (e.g. `.exe` installer / MSI, depending on Tauri bundler settings).
 
+## Phase 3 — Command editor (Windows)
+
+The **React command editor** is a second window (not the HUD). Open it from the **system tray**: **Open Editor** (above Pause/Resume). If the editor is already open, choosing **Open Editor** again **focuses** the existing window instead of opening a duplicate.
+
+### What you can do
+
+- **Left panel:** list of command nodes from SQLite — select a row to edit, toggle enabled, delete (with confirmation), reorder rows (drag handle or ↑/↓), or use **+** for a new command.
+- **Right panel:** edit name, trigger phrases (tags), fuzzy threshold, action chain (all action types + optional sub-prompt chain), then **Save** / **Cancel**.
+- **Header (gear):** **Settings** — global hotkey (persisted; re-registered live), default fuzzy threshold for nodes without an override, theme (`dark` / `light` / `system`) stored in the `settings` table.
+
+### Keyboard and shortcuts
+
+- **HUD (overlay):** global hotkey (default **Ctrl+Shift+J**, configurable in Settings) starts listening; **Esc** stops (same as the on-screen stop control). Shortcut hint under the stop button is **9px** mono per design spec.
+- **Editor window:** standard **Tab** / **Shift+Tab** focus order; form fields and buttons have no separate global chord beyond OS defaults. After changing the hotkey in Settings, the new combo applies immediately after a successful save.
+
+### Migrations
+
+SQLite schema changes are **additive** migrations run at startup (e.g. `sort_order` on `command_nodes`). See **`src-tauri/MIGRATIONS.md`** for the log and idempotency notes. Copy existing user DBs forward without destructive resets for Phase 3 changes.
+
+### Tests and coverage
+
+From **`jarvis/`**: `npm run test` runs Vitest. Coverage thresholds (**≥70%** lines on `editorStore`, `NodeForm.logic`, `ActionChain.logic`) are enforced when you run `npm run test:coverage`.
+
 ## Phase 2 manual verification (Windows)
 
 Use this gate before calling a Phase 2 build releasable:

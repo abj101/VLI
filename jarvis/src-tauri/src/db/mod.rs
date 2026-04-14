@@ -221,7 +221,11 @@ fn reconcile_default_commands(conn: &Connection) -> Result<(), DbError> {
         ensured.push((id, spec));
     }
 
-    let max_priority = ensured.iter().map(|(_, spec)| spec.priority).max().unwrap_or(0);
+    let max_priority = ensured
+        .iter()
+        .map(|(_, spec)| spec.priority)
+        .max()
+        .unwrap_or(0);
     let refreshed = get_all_commands(conn)?;
     for (id, spec) in ensured {
         let Some(current) = refreshed.iter().find(|n| n.id == id) else {
@@ -255,7 +259,11 @@ pub fn insert_command(conn: &Connection, row: &NewCommandNode) -> Result<i64, Db
     let enabled = i32::from(row.enabled);
     let fuzzy_threshold_pct = i64::from(row.fuzzy_threshold_pct.min(100));
     let ai_mode = i32::from(row.ai_mode);
-    let sub_prompt = row.sub_prompt.as_deref().map(str::trim).filter(|v| !v.is_empty());
+    let sub_prompt = row
+        .sub_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
     conn.execute(
         "INSERT INTO command_nodes (name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, ai_mode, sub_prompt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![
@@ -284,11 +292,7 @@ pub fn get_all_commands(conn: &Connection) -> Result<Vec<CommandNode>, DbError> 
 }
 
 #[allow(dead_code)] // reserved for Phase 2+ editor flows
-pub fn update_command(
-    conn: &Connection,
-    id: i64,
-    row: &NewCommandNode,
-) -> Result<bool, DbError> {
+pub fn update_command(conn: &Connection, id: i64, row: &NewCommandNode) -> Result<bool, DbError> {
     let trigger_phrases = serde_json::to_string(&row.trigger_phrases)?;
     let actions = serde_json::to_string(&row.actions)?;
     let enabled = i32::from(row.enabled);
@@ -335,14 +339,18 @@ pub fn reorder_commands(conn: &Connection, ordered_ids: &[i64]) -> Result<(), Db
     let mut seen = HashSet::with_capacity(ordered_ids.len());
     for (sort_order, id) in ordered_ids.iter().copied().enumerate() {
         if !seen.insert(id) {
-            return Err(DbError::Validation(format!("duplicate command id {id} in reorder payload")));
+            return Err(DbError::Validation(format!(
+                "duplicate command id {id} in reorder payload"
+            )));
         }
         let updated = conn.execute(
             "UPDATE command_nodes SET sort_order = ?1 WHERE id = ?2",
             rusqlite::params![sort_order as i64, id],
         )?;
         if updated == 0 {
-            return Err(DbError::Validation(format!("command with id {id} was not found")));
+            return Err(DbError::Validation(format!(
+                "command with id {id} was not found"
+            )));
         }
     }
     Ok(())
@@ -363,7 +371,9 @@ fn row_to_command(row: &rusqlite::Row<'_>) -> Result<CommandNode, DbError> {
         enabled: enabled_i != 0,
         fuzzy_threshold_pct: fuzzy_threshold_pct.clamp(0, 100) as u16,
         ai_mode: ai_mode_i != 0,
-        sub_prompt: sub_prompt.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()),
+        sub_prompt: sub_prompt
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty()),
         created_at: row.get(8)?,
     })
 }
@@ -391,7 +401,8 @@ mod tests {
         let all = get_all_commands(&conn).unwrap();
         assert_eq!(all.len(), 4);
         assert!(all.iter().any(|n| {
-            n.trigger_phrases.contains(&"open github and notepad".to_string())
+            n.trigger_phrases
+                .contains(&"open github and notepad".to_string())
                 && n.enabled
                 && n.actions.iter().any(|a| {
                     matches!(
@@ -404,23 +415,23 @@ mod tests {
                     .iter()
                     .any(|a| matches!(a, Action::Wait { ms } if *ms == 1000))
         }));
-        assert!(all.iter().any(|n| {
-            n.trigger_phrases.contains(&"open notepad".to_string()) && !n.enabled
-        }));
-        assert!(all.iter().any(|n| {
-            n.trigger_phrases.contains(&"open github".to_string()) && !n.enabled
-        }));
+        assert!(all
+            .iter()
+            .any(|n| { n.trigger_phrases.contains(&"open notepad".to_string()) && !n.enabled }));
+        assert!(all
+            .iter()
+            .any(|n| { n.trigger_phrases.contains(&"open github".to_string()) && !n.enabled }));
         assert!(all.iter().any(|n| {
             n.trigger_phrases.contains(&"subprompt test".to_string())
                 && !n.enabled
                 && n.actions
                     == vec![
                         Action::SubPrompt {
-                            prompt: "What should I search on GitHub?".into()
+                            prompt: "What should I search on GitHub?".into(),
                         },
                         Action::OpenUrl {
-                            url: "https://github.com/search?q={{follow_up}}".into()
-                        }
+                            url: "https://github.com/search?q={{follow_up}}".into(),
+                        },
                     ]
         }));
 
@@ -631,10 +642,7 @@ mod settings_tests {
     #[test]
     fn round_trip_insert_update_get_setting() {
         let (_dir, conn) = open_temp();
-        assert_eq!(
-            get_setting(&conn, "theme").expect("get before set"),
-            None
-        );
+        assert_eq!(get_setting(&conn, "theme").expect("get before set"), None);
 
         set_setting(&conn, "theme", "dark").expect("set dark");
         assert_eq!(
@@ -719,7 +727,10 @@ mod reorder {
             }
         }
 
-        assert!(has_sort_order, "sort_order column should exist after migration");
+        assert!(
+            has_sort_order,
+            "sort_order column should exist after migration"
+        );
     }
 
     #[test]
@@ -798,6 +809,9 @@ mod reorder {
                 break;
             }
         }
-        assert!(has_sort_order, "sort_order column should exist after migration");
+        assert!(
+            has_sort_order,
+            "sort_order column should exist after migration"
+        );
     }
 }

@@ -158,16 +158,16 @@ Before T3-7, confirm all of the following:
 
 ## Task 3-8: Quality Gates + README + BrainStorm Restore
 
-- [ ] **Restore `BrainStorm.md`** at repo root from git history or original spec session
-- [ ] Confirm `BrainStorm.md` contains Phase 4 editor spec content (wake-word, AI mode UX)
-- [ ] Add Phase 3 section to `jarvis/README.md`: opening editor, editor keyboard shortcuts, settings location, migration note
-- [ ] Add Vitest coverage threshold config: **70%+** line coverage on `editorStore`, NodeForm validation, ActionChain logic
-- [ ] `cd jarvis && npm run lint` — clean
-- [ ] `cd jarvis && npm run test` — green, coverage ≥70% on editor modules
-- [ ] `cd jarvis/src-tauri && cargo fmt --check` — clean
-- [ ] `cd jarvis/src-tauri && cargo clippy -- -D warnings` — clean
-- [ ] `cd jarvis && npm run tauri build` — produces `.exe`
-- [ ] Install `.exe` on clean Windows machine (no dev tools) → open editor from tray → create command → trigger via hotkey → executes
+- [x] **Restore `BrainStorm.md`** at repo root — no prior git blob; recreated from `references/plan.md` Task 6 (HUD) + Phase 3/4 notes
+- [x] Confirm `BrainStorm.md` contains Phase 4 preview (wake-word, `ai_mode` UX, `open_app` auto-detect)
+- [x] Add Phase 3 section to `jarvis/README.md`: opening editor, editor keyboard shortcuts, settings location, migration note
+- [x] Add Vitest coverage threshold config: **70%+** line coverage on `editorStore`, NodeForm validation, ActionChain logic (`npm run test:coverage`)
+- [x] `cd jarvis && npm run lint` — clean
+- [x] `cd jarvis && npm run test` — green, coverage ≥70% on editor modules
+- [x] `cd jarvis/src-tauri && cargo fmt --check` — clean (`cargo fmt` applied repo-wide under `src-tauri`)
+- [x] `cd jarvis/src-tauri && cargo clippy -- -D warnings` — clean
+- [x] `cd jarvis && npm run tauri build` — produces `.exe` / MSI / NSIS bundle
+- [ ] Install `.exe` on clean Windows machine (no dev tools) → open editor from tray → create command → trigger via hotkey → executes *(human smoke on target machine)*
 
 ---
 

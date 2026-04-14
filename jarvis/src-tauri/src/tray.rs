@@ -84,7 +84,10 @@ mod tests {
 
     #[test]
     fn tray_menu_puts_open_editor_above_pause_and_quit() {
-        assert_eq!(TRAY_MENU_ITEM_ORDER, ["open-editor", "pause-toggle", "quit"]);
+        assert_eq!(
+            TRAY_MENU_ITEM_ORDER,
+            ["open-editor", "pause-toggle", "quit"]
+        );
     }
 
     #[test]

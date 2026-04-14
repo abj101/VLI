@@ -25,8 +25,12 @@ pub fn speak_with_piper(app: &AppHandle, text: &str) -> Result<(), String> {
     }
 
     let cfg = resolve_piper_config(app)?;
-    std::fs::create_dir_all(&cfg.cache_dir)
-        .map_err(|e| format!("failed to create TTS cache dir `{}`: {e}", cfg.cache_dir.display()))?;
+    std::fs::create_dir_all(&cfg.cache_dir).map_err(|e| {
+        format!(
+            "failed to create TTS cache dir `{}`: {e}",
+            cfg.cache_dir.display()
+        )
+    })?;
 
     let wav_path = cfg
         .cache_dir
@@ -90,11 +94,7 @@ fn piper_model_candidates(app: &AppHandle) -> Vec<PathBuf> {
     push_env_candidate(&mut out, "JARVIS_PIPER_MODEL");
     push_env_candidate(&mut out, "PIPER_MODEL");
     if let Ok(resource_dir) = app.path().resource_dir() {
-        out.push(
-            resource_dir
-                .join("piper")
-                .join(DEFAULT_PIPER_MODEL_FILE),
-        );
+        out.push(resource_dir.join("piper").join(DEFAULT_PIPER_MODEL_FILE));
     }
     out.push(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -150,10 +150,7 @@ fn synthesize_to_wav(cfg: &PiperConfig, text: &str, output_wav: &Path) -> Result
         .spawn()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                format!(
-                    "Piper runtime not found at `{}`",
-                    cfg.binary_path.display()
-                )
+                format!("Piper runtime not found at `{}`", cfg.binary_path.display())
             } else {
                 format!(
                     "failed to start Piper runtime `{}`: {e}",
@@ -219,7 +216,10 @@ fn play_wav_blocking(wav_path: &Path) -> Result<(), String> {
                 output.status
             ))
         } else {
-            Err(format!("failed to play Speak audio file `{}`: {stderr}", wav_path.display()))
+            Err(format!(
+                "failed to play Speak audio file `{}`: {stderr}",
+                wav_path.display()
+            ))
         }
     }
 }

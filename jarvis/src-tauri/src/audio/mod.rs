@@ -19,9 +19,7 @@ use whisper_rs::{WhisperContext, WhisperContextParameters};
 
 /// Consumes PCM when STT is unavailable so the capture thread keeps running and amplitude events fire.
 fn spawn_pcm_drain(pcm_rx: Receiver<Vec<f32>>) -> JoinHandle<()> {
-    std::thread::spawn(move || {
-        while pcm_rx.recv().is_ok() {}
-    })
+    std::thread::spawn(move || while pcm_rx.recv().is_ok() {})
 }
 
 /// Owns live mic stream + STT worker; dropping stops capture and closes the PCM channel.
@@ -122,6 +120,8 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         tx.send(vec![0.5f32]).unwrap();
         drop(tx);
-        spawn_pcm_drain(rx).join().expect("drain thread should exit");
+        spawn_pcm_drain(rx)
+            .join()
+            .expect("drain thread should exit");
     }
 }

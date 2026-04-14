@@ -239,7 +239,10 @@ fn refresh_command_cache_from_rows(
     Ok(())
 }
 
-fn refresh_command_cache(app: &AppHandle, cache: &CommandCache) -> Result<Vec<db::CommandNode>, String> {
+fn refresh_command_cache(
+    app: &AppHandle,
+    cache: &CommandCache,
+) -> Result<Vec<db::CommandNode>, String> {
     let rows = load_all_commands(app)?;
     refresh_command_cache_from_rows(cache, rows.clone())?;
     Ok(rows)
@@ -480,11 +483,7 @@ fn schedule_auto_dismiss(
 ) {
     const TICK: Duration = Duration::from_millis(50);
     std::thread::spawn(move || {
-        if let Some(last) = rt
-            .lock()
-            .ok()
-            .and_then(|s| s.last_speech_activity)
-        {
+        if let Some(last) = rt.lock().ok().and_then(|s| s.last_speech_activity) {
             let silence_end = last + SILENCE_BEFORE_AUTO_DISMISS;
             while Instant::now() < silence_end {
                 std::thread::sleep(TICK);
@@ -562,10 +561,7 @@ fn await_follow_up_input(
     }
     sync_hud_window(app, HudPhase::AwaitingInput)?;
     emit_hud_phase(app, HudPhase::AwaitingInput);
-    let _ = app.emit(
-        "action-status",
-        serde_json::json!({ "text": "follow up" }),
-    );
+    let _ = app.emit("action-status", serde_json::json!({ "text": "follow up" }));
     try_start_listening_audio(app, audio, expected_session_id);
 
     let deadline = Instant::now() + FOLLOW_UP_TIMEOUT;
@@ -715,8 +711,11 @@ fn try_match_and_execute(
                     Ok(g) => g,
                     Err(_) => return,
                 };
-                let allowed =
-                    should_finalize_execution(&s, executing_session_id, cancel_flag.load(Ordering::Relaxed));
+                let allowed = should_finalize_execution(
+                    &s,
+                    executing_session_id,
+                    cancel_flag.load(Ordering::Relaxed),
+                );
                 if allowed {
                     s.active_run_cancel = None;
                     s.active_run_session_id = None;
@@ -801,7 +800,13 @@ fn process_transcript_update(
                 "flow: defer match until silence window session={} rev={}",
                 session_id, revision
             );
-            spawn_deferred_partial_match(app.clone(), Arc::clone(rt), audio.clone(), session_id, revision);
+            spawn_deferred_partial_match(
+                app.clone(),
+                Arc::clone(rt),
+                audio.clone(),
+                session_id,
+                revision,
+            );
         } else {
             debug!("flow: defer match until silence window");
         }
@@ -1044,8 +1049,7 @@ fn get_setting(app: AppHandle, key: String) -> Result<Option<String>, String> {
 fn set_setting(app: AppHandle, key: String, value: String) -> Result<(), String> {
     let normalized_key = validate_setting_key(&key)?;
     let conn = open_db_connection(&app)?;
-    db::set_setting(&conn, &normalized_key, value.trim())
-        .map_err(|e| e.to_string())
+    db::set_setting(&conn, &normalized_key, value.trim()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1129,16 +1133,15 @@ pub fn run() {
                 db::init_db(&dir.join("jarvis.db")).map_err(|e| e.to_string())?;
                 refresh_command_cache(app.handle(), &command_cache_for_setup)?;
                 let conn = open_db_connection(app.handle())?;
-                let configured_hotkey = match db::get_setting(&conn, SETTING_KEY_HOTKEY)
-                    .map_err(|e| e.to_string())?
-                {
-                    Some(value) if !value.trim().is_empty() => value.trim().to_string(),
-                    _ => {
-                        db::set_setting(&conn, SETTING_KEY_HOTKEY, DEFAULT_HOTKEY)
-                            .map_err(|e| e.to_string())?;
-                        DEFAULT_HOTKEY.to_string()
-                    }
-                };
+                let configured_hotkey =
+                    match db::get_setting(&conn, SETTING_KEY_HOTKEY).map_err(|e| e.to_string())? {
+                        Some(value) if !value.trim().is_empty() => value.trim().to_string(),
+                        _ => {
+                            db::set_setting(&conn, SETTING_KEY_HOTKEY, DEFAULT_HOTKEY)
+                                .map_err(|e| e.to_string())?;
+                            DEFAULT_HOTKEY.to_string()
+                        }
+                    };
                 {
                     let hotkey_state = app.state::<HotkeyBindingState>();
                     let mut current = hotkey_state
@@ -1177,7 +1180,8 @@ pub fn run() {
 
                     let amp_hud = Arc::clone(&hud_state);
                     app.listen("amplitude-update", move |event| {
-                        let Ok(v) = serde_json::from_str::<serde_json::Value>(event.payload()) else {
+                        let Ok(v) = serde_json::from_str::<serde_json::Value>(event.payload())
+                        else {
                             return;
                         };
                         let Some(a) = v.get("amplitude").and_then(|x| x.as_f64()) else {
