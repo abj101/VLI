@@ -78,7 +78,7 @@ See [plan.md](./plan.md) for full task descriptions. All `npm`/`tauri` commands 
 - `src/commands/matcher.rs`: case-insensitive substring match on all trigger phrases, return `Option<MatchResult>` with node + span `(start, end)`
 - **Verify:** `cargo test commands::matcher` (match, no-match, multi-phrase, case, span indices)
 
-### Task 6 — HUD UI
+### Task 6 — HUD UI ✅ (2026-04-13)
 
 - `src/store/hudStore.ts`: Zustand store, subscribes to Tauri events typed against `src/types.ts`
 - Transcription component: 22px centered, word-by-word stream; on match: highlight span, scale 1.0→1.05 + translateY −4px / 200ms, surrounding text fade / 300ms

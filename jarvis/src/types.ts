@@ -25,12 +25,18 @@ export interface ActionStatus {
   text: string;
 }
 
+/** Mic level 0..1 from `amplitude-update` (Task 4a). */
+export interface AmplitudeUpdate {
+  amplitude: number;
+}
+
 /** Compile-time smoke: literals must satisfy exported shapes. */
 const _ipcContract: {
   phase: HudPhase;
   transcript: TranscriptUpdate;
   match: MatchResult;
   action: ActionStatus;
+  amplitude: AmplitudeUpdate;
 } = {
   phase: "idle",
   transcript: { text: "", is_final: false },
@@ -41,5 +47,6 @@ const _ipcContract: {
     span_end: 12,
   },
   action: { text: "Opening Notepad…" },
+  amplitude: { amplitude: 0.35 },
 };
 void _ipcContract;
