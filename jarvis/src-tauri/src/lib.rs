@@ -7,6 +7,7 @@ mod tray;
 use audio::SharedAudioPipeline;
 use commands::TauriActionRuntime;
 use hud::{sync_hud_window, HudPhase, HUD_WINDOW_LABEL};
+use log::{debug, info, warn};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -31,6 +32,16 @@ struct HudRuntime {
 }
 
 type SharedHud = Arc<Mutex<HudRuntime>>;
+
+fn preview_chars(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    let head: String = s.chars().take(max).collect();
+    if n > max {
+        format!("{head}…")
+    } else {
+        head
+    }
+}
 
 fn try_start_listening_audio(app: &AppHandle, slot: &SharedAudioPipeline) {
     let old = {
@@ -175,6 +186,7 @@ fn schedule_auto_dismiss(
 }
 
 fn set_phase(app: &AppHandle, rt: &SharedHud, phase: HudPhase) -> Result<u64, String> {
+    debug!("flow: set_phase -> {}", phase.as_str());
     let session_id = {
         let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
         s.phase = phase;
@@ -185,6 +197,17 @@ fn set_phase(app: &AppHandle, rt: &SharedHud, phase: HudPhase) -> Result<u64, St
     Ok(session_id)
 }
 
+/// # Transcription → recognition → action
+///
+/// 1. **STT** (`audio/stt.rs`): while the mic runs, emits `transcript-update` with partial text
+///    (`is_final: false`). After capture stops, may emit one final (`is_final: true`).
+/// 2. **Orchestrator** (this function): if HUD is `listening` and text is non-empty, run substring
+///    match against SQLite command nodes (`commands::matcher`).
+/// 3. On match: emit `match-result` to the HUD → phases **matched** → **executing** →
+///    [`audio::stop_shared_pipeline`] (releases mutex before drop) → spawn [`commands::execute_command`]
+///    (`OpenApp` / `OpenUrl`) → phase **done** → [`schedule_auto_dismiss`].
+/// 4. **React** (`subscribeHudIpc`): applies events to Zustand; transcript + span highlight from
+///    `match-result`; status line from `action-status`.
 fn process_transcript_update(
     app: &AppHandle,
     rt: &SharedHud,
@@ -193,6 +216,12 @@ fn process_transcript_update(
 ) -> Result<(), String> {
     let update: audio::stt::TranscriptUpdate = serde_json::from_str(payload)
         .map_err(|e| format!("invalid transcript-update payload: {e}"))?;
+    debug!(
+        "flow: transcript-update is_final={} len={} preview={:?}",
+        update.is_final,
+        update.text.chars().count(),
+        preview_chars(&update.text, 72)
+    );
     touch_speech_on_transcript(rt, &update.text);
 
     let can_match = {
@@ -200,38 +229,58 @@ fn process_transcript_update(
         should_attempt_command_match(&s)
     };
     if !can_match {
+        debug!("flow: skip (not listening or not visible)");
         return Ok(());
     }
     if update.text.trim().is_empty() {
+        debug!("flow: skip (empty transcript)");
         return Ok(());
     }
 
     let nodes = load_all_commands(app)?;
     let matched = match commands::match_command(&update.text, &nodes) {
         Some(m) => m,
-        None => return Ok(()),
+        None => {
+            debug!("flow: no trigger phrase matched");
+            return Ok(());
+        }
     };
 
     {
         let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
         if s.phase != HudPhase::Listening || !s.visible {
+            debug!("flow: skip match (phase changed before commit)");
             return Ok(());
         }
     }
+    info!(
+        "flow: MATCH node_id={} phrase={:?} span={}..{}",
+        matched.node_id, matched.matched_phrase, matched.span_start, matched.span_end
+    );
     let _ = app.emit("match-result", &matched);
     let _ = set_phase(app, rt, HudPhase::Matched)?;
 
+    debug!("flow: stopping mic pipeline");
     audio::stop_shared_pipeline(audio);
+    debug!("flow: mic stopped; phase executing");
     let _ = set_phase(app, rt, HudPhase::Executing)?;
     if let Some(node) = nodes.iter().find(|n| n.id.to_string() == matched.node_id) {
         let node = node.clone();
         let app_h = app.clone();
+        info!("flow: spawn execute_command for node_id={}", node.id);
         std::thread::spawn(move || {
             commands::execute_command(&node, &TauriActionRuntime::new(&app_h));
         });
+    } else {
+        warn!(
+            "flow: matched node_id={} but no row in loaded nodes (count={})",
+            matched.node_id,
+            nodes.len()
+        );
     }
 
     let done_session_id = set_phase(app, rt, HudPhase::Done)?;
+    debug!("flow: scheduled auto-dismiss session_id={done_session_id}");
     schedule_auto_dismiss(app.clone(), Arc::clone(rt), audio.clone(), done_session_id);
     Ok(())
 }
@@ -348,6 +397,9 @@ fn hud_dismiss(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .try_init();
+
     let hud_state: SharedHud = Arc::new(Mutex::new(HudRuntime::default()));
     // cpal stream is !Send; SharedAudioPipeline uses unsafe Send/Sync — see audio/mod.rs
     #[allow(clippy::arc_with_non_send_sync)]

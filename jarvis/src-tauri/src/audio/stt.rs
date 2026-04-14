@@ -1,5 +1,6 @@
 //! Whisper inference thread: PCM → 16 kHz → rolling buffer → `transcript-update` (Task 4b).
 
+use log::debug;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
@@ -184,6 +185,11 @@ fn stt_loop(
 
         if text != last_text {
             last_text = text.clone();
+            debug!(
+                "stt: emit transcript-update partial chars={} preview={:?}",
+                text.chars().count(),
+                text.chars().take(48).collect::<String>()
+            );
             let _ = app.emit(
                 "transcript-update",
                 TranscriptUpdate {
@@ -198,6 +204,11 @@ fn stt_loop(
     if buffer_16k.len() >= MIN_DECODE_SAMPLES {
         if let Ok(text) = run_decode(&ctx, &buffer_16k) {
             if !text.is_empty() {
+                debug!(
+                    "stt: emit transcript-update final chars={} preview={:?}",
+                    text.chars().count(),
+                    text.chars().take(48).collect::<String>()
+                );
                 let _ = app.emit(
                     "transcript-update",
                     TranscriptUpdate {

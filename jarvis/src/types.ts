@@ -35,6 +35,11 @@ export interface AudioErrorPayload {
   message: string;
 }
 
+/** Action failure from `action-error` (validation or launch). */
+export interface ActionErrorPayload {
+  message: string;
+}
+
 /** Compile-time smoke: literals must satisfy exported shapes. */
 const _ipcContract: {
   phase: HudPhase;
@@ -43,6 +48,7 @@ const _ipcContract: {
   action: ActionStatus;
   amplitude: AmplitudeUpdate;
   audioError: AudioErrorPayload;
+  actionError: ActionErrorPayload;
 } = {
   phase: "idle",
   transcript: { text: "", is_final: false },
@@ -55,5 +61,6 @@ const _ipcContract: {
   action: { text: "Opening Notepad…" },
   amplitude: { amplitude: 0.35 },
   audioError: { message: "Whisper model missing" },
+  actionError: { message: "launch failed" },
 };
 void _ipcContract;

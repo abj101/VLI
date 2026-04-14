@@ -1,4 +1,5 @@
 use crate::db::{Action, CommandNode};
+use log::debug;
 use serde::Serialize;
 use std::process::Command;
 use tauri::{AppHandle, Emitter};
@@ -31,6 +32,7 @@ impl<'a> TauriActionRuntime<'a> {
 
 impl ActionRuntime for TauriActionRuntime<'_> {
     fn open_app(&self, path: &str) -> Result<(), String> {
+        debug!("executor: open_app path={path:?}");
         let status = Command::new("cmd")
             .arg("/C")
             .arg("start")
@@ -48,6 +50,7 @@ impl ActionRuntime for TauriActionRuntime<'_> {
     }
 
     fn open_url(&self, url: &str) -> Result<(), String> {
+        debug!("executor: open_url url={url:?}");
         self.app
             .opener()
             .open_url(url, None::<&str>)
@@ -72,7 +75,14 @@ impl ActionRuntime for TauriActionRuntime<'_> {
 }
 
 pub fn execute_command(node: &CommandNode, runtime: &impl ActionRuntime) {
+    debug!(
+        "executor: execute_command node_id={} name={:?} actions={}",
+        node.id,
+        node.name,
+        node.actions.len()
+    );
     execute_actions(&node.actions, runtime);
+    debug!("executor: execute_command finished node_id={}", node.id);
 }
 
 fn execute_actions(actions: &[Action], runtime: &impl ActionRuntime) {

@@ -3,6 +3,8 @@
 pub mod capture;
 pub mod stt;
 
+use log::debug;
+
 use std::ops::Deref;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
@@ -61,7 +63,10 @@ impl Drop for AudioPipeline {
     fn drop(&mut self) {
         self.capture.stop();
         if let Some(h) = self.stt.take() {
-            let _ = h.join();
+            // Do not join: Whisper's final decode in `stt_loop` can take seconds and would block
+            // whatever thread runs this Drop (often the Tauri event path). Detach and let the STT
+            // thread finish in the background.
+            std::mem::forget(h);
         }
     }
 }
@@ -92,11 +97,13 @@ impl Deref for SharedAudioPipeline {
 /// `AudioPipeline` is not `Send` (cpal), so we cannot move it to another thread; we `take()` then
 /// `drop` on this thread after releasing the mutex.
 pub fn stop_shared_pipeline(slot: &SharedAudioPipeline) {
+    debug!("audio: stop_shared_pipeline (take pipeline, drop outside mutex)");
     let old = {
         let mut g = slot.lock().unwrap();
         g.take()
     };
     drop(old);
+    debug!("audio: stop_shared_pipeline complete");
 }
 
 #[cfg(test)]
