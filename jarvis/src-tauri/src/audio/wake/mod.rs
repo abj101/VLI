@@ -6,7 +6,49 @@ pub mod porcupine;
 #[cfg(feature = "oww")]
 pub mod oww;
 
+use std::path::{Path, PathBuf};
 use thiserror::Error;
+use tauri::{AppHandle, Manager};
+
+/// ONNX wake classifier filename under `resource_root/oww/` (keep aligned with `oww.rs`).
+const OWW_MARKER_ONNX: &str = "hey_jarvis_v0.1.onnx";
+/// Bundled Porcupine keyword file under `resource_root/porcupine/`.
+const PORCUPINE_MARKER_PPN: &str = "porcupine_windows.ppn";
+
+/// Pick `resource_root` containing `oww/` and/or `porcupine/` trees.
+///
+/// In `tauri dev`, [`AppHandle::path().resource_dir`] often resolves next to the exe
+/// (`target/debug/`) where wake assets are not copied; when markers are missing there,
+/// **debug** builds fall back to `src-tauri/resources`. **Release** builds use the Tauri
+/// path even if empty so errors refer to the install layout, not the build machine.
+fn wake_resource_root_from_candidates(
+    tauri_dir: Option<&Path>,
+    manifest_resources: &Path,
+) -> PathBuf {
+    if let Some(dir) = tauri_dir {
+        let has_wake_assets = dir.join("oww").join(OWW_MARKER_ONNX).is_file()
+            || dir.join("porcupine").join(PORCUPINE_MARKER_PPN).is_file();
+        if has_wake_assets {
+            return dir.to_path_buf();
+        }
+    }
+    if cfg!(debug_assertions) {
+        manifest_resources.to_path_buf()
+    } else {
+        tauri_dir
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| manifest_resources.to_path_buf())
+    }
+}
+
+/// Root directory passed to [`build_wake_detector`] (`porcupine/` + `oww/` live underneath).
+pub(crate) fn resolve_wake_resource_root(app: &AppHandle) -> PathBuf {
+    let manifest_res = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+    wake_resource_root_from_candidates(
+        app.path().resource_dir().ok().as_deref(),
+        &manifest_res,
+    )
+}
 
 /// Picovoice service name for the Porcupine access key (OS keychain).
 pub const KEYRING_SERVICE_PORCUPINE: &str = "jarvis-porcupine";
@@ -100,6 +142,7 @@ pub fn try_open_wake_word_oww(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     struct MockWakeDetector {
         frame_len: usize,
@@ -158,6 +201,29 @@ mod tests {
     fn mock_wake_detector_rejects_wrong_length() {
         let mut d = MockWakeDetector::new(4, 0);
         assert!(d.process_frame(&[0i16; 3]).is_err());
+    }
+
+    #[test]
+    fn wake_resource_root_prefers_tauri_dir_when_oww_marker_present() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let oww_dir = tmp.path().join("oww");
+        std::fs::create_dir_all(&oww_dir).expect("mkdir");
+        std::fs::write(oww_dir.join(OWW_MARKER_ONNX), b"x").expect("write");
+        let manifest = PathBuf::from("/nonexistent/manifest/resources");
+        let picked = wake_resource_root_from_candidates(Some(tmp.path()), &manifest);
+        assert_eq!(picked, tmp.path());
+    }
+
+    #[test]
+    fn wake_resource_root_falls_back_to_manifest_in_debug_when_tauri_dir_empty() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest = tmp.path().join("resources");
+        let picked = wake_resource_root_from_candidates(Some(tmp.path()), &manifest);
+        if cfg!(debug_assertions) {
+            assert_eq!(picked, manifest);
+        } else {
+            assert_eq!(picked, tmp.path());
+        }
     }
 
     #[test]

@@ -1321,7 +1321,7 @@ fn update_settings(
     db::apply_settings_patch(&conn, &patch).map_err(|e| e.to_string())?;
     let settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
     if settings_patch_triggers_wake_reload(&patch, &settings) {
-        let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+        let resource_dir = crate::audio::wake::resolve_wake_resource_root(&app);
         wake_reload_from_settings(
             &app,
             wake_slot.inner(),
@@ -1353,7 +1353,7 @@ fn save_api_key(
         let conn = open_db_connection(&app)?;
         let settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
         if settings.wake_engine == "porcupine" {
-            let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+            let resource_dir = crate::audio::wake::resolve_wake_resource_root(&app);
             wake_reload_from_settings(
                 &app,
                 wake_slot.inner(),
@@ -1385,7 +1385,7 @@ fn delete_api_key(
         let conn = open_db_connection(&app)?;
         let settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
         if settings.wake_engine == "porcupine" {
-            let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+            let resource_dir = crate::audio::wake::resolve_wake_resource_root(&app);
             wake_reload_from_settings(
                 &app,
                 wake_slot.inner(),
@@ -1438,7 +1438,7 @@ pub fn run() {
                 refresh_app_index_on_startup(app.handle(), &app_index_for_setup)?;
                 refresh_command_cache(app.handle(), &command_cache_for_setup)?;
                 let conn = open_db_connection(app.handle())?;
-                let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+                let resource_dir = crate::audio::wake::resolve_wake_resource_root(app.handle());
                 let app_settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
                 let wake_slot = app.state::<WakeSupervisorState>();
                 let app_h = app.handle().clone();
