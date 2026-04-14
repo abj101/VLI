@@ -1087,6 +1087,15 @@ fn set_hotkey(
     Ok(next_hotkey)
 }
 
+/// Returns whether `ANTHROPIC_API_KEY` is set in the process environment (non-empty after trim).
+/// Never returns or logs the key value.
+#[tauri::command]
+fn anthropic_api_key_configured() -> bool {
+    std::env::var("ANTHROPIC_API_KEY")
+        .map(|raw| !raw.trim().is_empty())
+        .unwrap_or(false)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -1222,7 +1231,8 @@ pub fn run() {
             reorder_commands,
             get_setting,
             set_setting,
-            set_hotkey
+            set_hotkey,
+            anthropic_api_key_configured
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

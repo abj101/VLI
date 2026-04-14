@@ -27,15 +27,17 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [hotkeyError, setHotkeyError] = useState<string | null>(null);
   const [toastText, setToastText] = useState<string | null>(null);
   const [savingHotkey, setSavingHotkey] = useState(false);
+  const [anthropicKeyConfigured, setAnthropicKeyConfigured] = useState<boolean | null>(null);
 
   useEffect(() => {
     let mounted = true;
     const load = async () => {
       try {
-        const [savedHotkey, savedThreshold, savedTheme] = await Promise.all([
+        const [savedHotkey, savedThreshold, savedTheme, aiKeyOk] = await Promise.all([
           invoke<string | null>("get_setting", { key: HOTKEY_KEY }),
           invoke<string | null>("get_setting", { key: DEFAULT_THRESHOLD_KEY }),
           invoke<string | null>("get_setting", { key: THEME_KEY }),
+          invoke<boolean>("anthropic_api_key_configured"),
         ]);
         if (!mounted) return;
         if (savedHotkey && savedHotkey.trim().length > 0) {
@@ -48,9 +50,11 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         const normalizedTheme = normalizeThemeValue(savedTheme);
         setTheme(normalizedTheme);
         applyTheme(normalizedTheme);
+        setAnthropicKeyConfigured(aiKeyOk);
       } catch (err) {
         if (!mounted) return;
         setToastText(`Failed to load settings: ${String(err)}`);
+        setAnthropicKeyConfigured(false);
       } finally {
         if (mounted) {
           setLoading(false);
@@ -82,6 +86,15 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       await invoke("set_setting", { key: THEME_KEY, value: nextTheme });
     } catch (err) {
       setToastText(`Failed to save theme: ${String(err)}`);
+    }
+  };
+
+  const refreshAnthropicStatus = async () => {
+    try {
+      const ok = await invoke<boolean>("anthropic_api_key_configured");
+      setAnthropicKeyConfigured(ok);
+    } catch {
+      setAnthropicKeyConfigured(false);
     }
   };
 
@@ -168,6 +181,25 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 <option value="light">Light</option>
               </select>
             </label>
+          </section>
+
+          <section className="editor-settings-section">
+            <h3>AI mode</h3>
+            <p className="editor-settings-help">
+              Commands with a sub-prompt can run an AI preview after their action chain (model{" "}
+              <code className="editor-settings-code">claude-haiku-4-5</code>). Set the key in your
+              environment before starting the app.
+            </p>
+            <p className="editor-settings-help" role="status">
+              {anthropicKeyConfigured === null
+                ? "Checking API key…"
+                : anthropicKeyConfigured
+                  ? "Anthropic API key: configured (not shown here)."
+                  : "Anthropic API key: not set — set ANTHROPIC_API_KEY in the environment."}
+            </p>
+            <button type="button" className="editor-settings-secondary-btn" onClick={() => void refreshAnthropicStatus()}>
+              Refresh status
+            </button>
           </section>
         </div>
       )}

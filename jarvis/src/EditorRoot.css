@@ -453,3 +453,31 @@ html[data-theme="light"] {
 .editor-settings-loading {
   margin: 0;
 }
+
+.editor-settings-help {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #9ca3af;
+}
+
+.editor-settings-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 11px;
+}
+
+.editor-settings-secondary-btn {
+  align-self: flex-start;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid #374359;
+  background: #1b2433;
+  color: #e5e7eb;
+  cursor: pointer;
+}
+
+.editor-settings-secondary-btn:hover {
+  background: #243044;
+}
