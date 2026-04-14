@@ -73,7 +73,7 @@ See [plan.md](./plan.md) for full task descriptions. All `npm`/`tauri` commands 
 
 ---
 
-### Task 5 — Exact matcher
+### Task 5 — Exact matcher ✅ (2026-04-13)
 
 - `src/commands/matcher.rs`: case-insensitive substring match on all trigger phrases, return `Option<MatchResult>` with node + span `(start, end)`
 - **Verify:** `cargo test commands::matcher` (match, no-match, multi-phrase, case, span indices)
