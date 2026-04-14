@@ -23,6 +23,9 @@ const SILENCE_BEFORE_AUTO_DISMISS: Duration = Duration::from_millis(450);
 const SILENCE_BEFORE_MATCH: Duration = Duration::from_millis(550);
 /// Amplitude above this (0..1) counts as speech for activity / silence detection.
 const SPEECH_AMPLITUDE_THRESHOLD: f64 = 0.02;
+const FOLLOW_UP_TIMEOUT: Duration = Duration::from_secs(8);
+const FOLLOW_UP_TIMEOUT_MSG: &str = "Follow-up input timed out";
+const ACTION_RUN_CANCELLED_MSG: &str = "Action run cancelled";
 
 #[derive(Debug, Default)]
 struct HudRuntime {
@@ -39,6 +42,8 @@ struct HudRuntime {
     active_run_cancel: Option<Arc<AtomicBool>>,
     /// Session id that owns `active_run_cancel`.
     active_run_session_id: Option<u64>,
+    /// Final transcript captured while waiting in `AwaitingInput`.
+    pending_follow_up_response: Option<String>,
 }
 
 type SharedHud = Arc<Mutex<HudRuntime>>;
@@ -109,6 +114,7 @@ fn update_pending_transcript(rt: &SharedHud, text: &str) -> Option<(u64, u64)> {
     }
     s.pending_transcript = trimmed.to_string();
     s.transcript_revision = s.transcript_revision.wrapping_add(1);
+        s.pending_follow_up_response = None;
     Some((s.session_id, s.transcript_revision))
 }
 
@@ -117,6 +123,58 @@ fn cancel_active_run_in_state(s: &mut HudRuntime) {
         cancel.store(true, Ordering::Relaxed);
     }
     s.active_run_session_id = None;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FollowUpAbortReason {
+    Cancelled,
+    TimedOut,
+}
+
+fn take_follow_up_response(rt: &mut HudRuntime, expected_session_id: u64) -> Option<String> {
+    if rt.visible && rt.phase == HudPhase::AwaitingInput && rt.session_id == expected_session_id {
+        return rt.pending_follow_up_response.take();
+    }
+    None
+}
+
+fn should_abort_follow_up_wait(
+    rt: &HudRuntime,
+    expected_session_id: u64,
+    is_cancelled: bool,
+    now: Instant,
+    deadline: Instant,
+) -> Option<FollowUpAbortReason> {
+    if is_cancelled
+        || !rt.visible
+        || rt.session_id != expected_session_id
+        || rt.phase == HudPhase::Stopped
+    {
+        return Some(FollowUpAbortReason::Cancelled);
+    }
+    if now >= deadline {
+        return Some(FollowUpAbortReason::TimedOut);
+    }
+    None
+}
+
+fn capture_follow_up_from_update(rt: &SharedHud, update: &audio::stt::TranscriptUpdate) -> bool {
+    let trimmed = update.text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let mut s = match rt.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    if !s.visible || s.phase != HudPhase::AwaitingInput || s.session_id != update.hud_session_id {
+        return false;
+    }
+    s.pending_transcript = trimmed.to_string();
+    if update.is_final {
+        s.pending_follow_up_response = Some(trimmed.to_string());
+    }
+    true
 }
 
 fn should_finalize_execution(
@@ -270,6 +328,69 @@ fn spawn_deferred_partial_match(
     });
 }
 
+fn await_follow_up_input(
+    app: &AppHandle,
+    rt: &SharedHud,
+    audio: &SharedAudioPipeline,
+    expected_session_id: u64,
+    cancel_flag: &Arc<AtomicBool>,
+    prompt: &str,
+) -> Result<String, String> {
+    {
+        let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+        if !s.visible || s.session_id != expected_session_id || s.phase != HudPhase::Executing {
+            return Err(ACTION_RUN_CANCELLED_MSG.to_string());
+        }
+        s.phase = HudPhase::AwaitingInput;
+        s.pending_follow_up_response = None;
+    }
+    sync_hud_window(app, HudPhase::AwaitingInput)?;
+    emit_hud_phase(app, HudPhase::AwaitingInput);
+    let _ = app.emit(
+        "action-status",
+        serde_json::json!({ "text": format!("Awaiting input: {prompt}") }),
+    );
+    try_start_listening_audio(app, audio, expected_session_id);
+
+    let deadline = Instant::now() + FOLLOW_UP_TIMEOUT;
+    const POLL: Duration = Duration::from_millis(50);
+    loop {
+        std::thread::sleep(POLL);
+        let state = {
+            let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+            if let Some(response) = take_follow_up_response(&mut s, expected_session_id) {
+                return Ok(response);
+            }
+            should_abort_follow_up_wait(
+                &s,
+                expected_session_id,
+                cancel_flag.load(Ordering::Relaxed),
+                Instant::now(),
+                deadline,
+            )
+        };
+        match state {
+            None => {}
+            Some(FollowUpAbortReason::Cancelled) => {
+                audio::stop_shared_pipeline(audio);
+                return Err(ACTION_RUN_CANCELLED_MSG.to_string());
+            }
+            Some(FollowUpAbortReason::TimedOut) => {
+                audio::stop_shared_pipeline(audio);
+                {
+                    let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+                    if s.session_id == expected_session_id {
+                        s.active_run_cancel = None;
+                        s.active_run_session_id = None;
+                    }
+                }
+                let _ = set_phase(app, rt, HudPhase::Done)?;
+                return Err(FOLLOW_UP_TIMEOUT_MSG.to_string());
+            }
+        }
+    }
+}
+
 fn set_phase(app: &AppHandle, rt: &SharedHud, phase: HudPhase) -> Result<u64, String> {
     debug!("flow: set_phase -> {}", phase.as_str());
     let session_id = {
@@ -330,10 +451,32 @@ fn try_match_and_execute(
             cancel_active_run_in_state(&mut s);
             s.active_run_cancel = Some(cancel_flag.clone());
             s.active_run_session_id = Some(executing_session_id);
+            s.pending_follow_up_response = None;
         }
         info!("flow: spawn execute_command for node_id={}", node.id);
         std::thread::spawn(move || {
-            commands::execute_command(&node, &TauriActionRuntime::new(&app_h, cancel_flag.clone()));
+            let followup_cancel = cancel_flag.clone();
+            let app_for_followup = app_h.clone();
+            let rt_for_followup = Arc::clone(&rt_h);
+            let audio_for_followup = audio_h.clone();
+            let runtime = TauriActionRuntime::with_follow_up_handler(
+                &app_h,
+                cancel_flag.clone(),
+                Box::new(move |prompt| {
+                    let response = await_follow_up_input(
+                        &app_for_followup,
+                        &rt_for_followup,
+                        &audio_for_followup,
+                        executing_session_id,
+                        &followup_cancel,
+                        prompt,
+                    )?;
+                    audio::stop_shared_pipeline(&audio_for_followup);
+                    let _ = set_phase(&app_for_followup, &rt_for_followup, HudPhase::Executing)?;
+                    Ok(response)
+                }),
+            );
+            commands::execute_command(&node, &runtime);
             let should_finalize = {
                 let mut s = match rt_h.lock() {
                     Ok(g) => g,
@@ -406,6 +549,9 @@ fn process_transcript_update(
             should_attempt_match_for_update(&s, update.is_final),
         )
     };
+    if capture_follow_up_from_update(rt, &update) {
+        return Ok(());
+    }
     touch_speech_on_transcript(rt, &update.text);
     let pending_meta = update_pending_transcript(rt, &update.text);
     if !can_match {
@@ -450,6 +596,7 @@ fn show_hud_from_hotkey(
         s.last_speech_activity = Some(Instant::now());
         s.pending_transcript.clear();
         s.transcript_revision = 0;
+        s.pending_follow_up_response = None;
         cancel_active_run_in_state(&mut s);
         listening_session_id = Some(s.session_id);
         window.center().map_err(|e| e.to_string())?;
@@ -461,6 +608,7 @@ fn show_hud_from_hotkey(
         s.session_id = s.session_id.wrapping_add(1);
         s.pending_transcript.clear();
         s.transcript_revision = 0;
+        s.pending_follow_up_response = None;
         cancel_active_run_in_state(&mut s);
         window.hide().map_err(|e| e.to_string())?;
     }
@@ -495,6 +643,7 @@ fn dismiss_hud(app: &AppHandle, rt: &SharedHud) -> Result<(), String> {
     s.session_id = s.session_id.wrapping_add(1);
     s.pending_transcript.clear();
     s.transcript_revision = 0;
+    s.pending_follow_up_response = None;
     cancel_active_run_in_state(&mut s);
     window.hide().map_err(|e| e.to_string())?;
 
@@ -528,6 +677,7 @@ fn hud_set_phase(
                 s.last_speech_activity = Some(Instant::now());
                 s.pending_transcript.clear();
                 s.transcript_revision = 0;
+                s.pending_follow_up_response = None;
                 cancel_active_run_in_state(&mut s);
             }
             HudPhase::Stopped => {
@@ -535,6 +685,7 @@ fn hud_set_phase(
                 s.session_id = s.session_id.wrapping_add(1);
                 s.pending_transcript.clear();
                 s.transcript_revision = 0;
+                s.pending_follow_up_response = None;
                 cancel_active_run_in_state(&mut s);
             }
             _ => {}
@@ -718,6 +869,53 @@ mod tests {
     fn no_match_fires_when_idle_since_last_speech_exceeds_timeout() {
         let last = Instant::now() - NO_MATCH_TIMEOUT - Duration::from_millis(50);
         assert!(last.elapsed() >= NO_MATCH_TIMEOUT);
+    }
+
+    #[test]
+    fn follow_up_happy_path_consumes_response_once() {
+        let mut rt = HudRuntime::default();
+        rt.visible = true;
+        rt.phase = HudPhase::AwaitingInput;
+        rt.session_id = 42;
+        rt.pending_follow_up_response = Some("open docs".to_string());
+
+        let response = take_follow_up_response(&mut rt, 42);
+        assert_eq!(response, Some("open docs".to_string()));
+        assert_eq!(rt.pending_follow_up_response, None);
+    }
+
+    #[test]
+    fn follow_up_wait_times_out_after_deadline() {
+        let mut rt = HudRuntime::default();
+        rt.visible = true;
+        rt.phase = HudPhase::AwaitingInput;
+        rt.session_id = 7;
+
+        let now = Instant::now();
+        let deadline = now - Duration::from_millis(1);
+        assert_eq!(
+            should_abort_follow_up_wait(&rt, 7, false, now, deadline),
+            Some(FollowUpAbortReason::TimedOut)
+        );
+    }
+
+    #[test]
+    fn follow_up_wait_cancels_on_escape_or_session_change() {
+        let mut rt = HudRuntime::default();
+        rt.visible = true;
+        rt.phase = HudPhase::AwaitingInput;
+        rt.session_id = 3;
+        let now = Instant::now();
+        let deadline = now + Duration::from_secs(5);
+
+        assert_eq!(
+            should_abort_follow_up_wait(&rt, 3, true, now, deadline),
+            Some(FollowUpAbortReason::Cancelled)
+        );
+        assert_eq!(
+            should_abort_follow_up_wait(&rt, 4, false, now, deadline),
+            Some(FollowUpAbortReason::Cancelled)
+        );
     }
 
     #[test]

@@ -148,12 +148,12 @@ flowchart TD
 **Description:** Implement interactive branch action: executor requests follow-up phrase, orchestrator enters `AwaitingInput`, resumes chain with follow-up match/context.
 
 **Acceptance criteria:**
-- [ ] `SubPrompt` transitions HUD to `awaiting_input` and waits for follow-up input.
-- [ ] Follow-up timeout + cancel path returns to safe terminal phase.
-- [ ] Follow-up response can influence next chain step deterministically.
+- [x] `SubPrompt` transitions HUD to `awaiting_input` and waits for follow-up input.
+- [x] Follow-up timeout + cancel path returns to safe terminal phase.
+- [x] Follow-up response can influence next chain step deterministically.
 
 **Verification:**
-- [ ] New orchestration tests for follow-up happy/timeout/cancel paths.
+- [x] New orchestration tests for follow-up happy/timeout/cancel paths.
 - [ ] Manual voice flow with at least one branching command.
 
 **Dependencies:** Task 5.

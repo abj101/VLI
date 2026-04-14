@@ -28,6 +28,7 @@ pub trait ActionRuntime {
     fn send_keys(&self, keys: &str) -> Result<(), String>;
     fn wait_ms(&self, ms: u64) -> Result<(), String>;
     fn speak(&self, text: &str) -> Result<(), String>;
+    fn request_follow_up(&self, prompt: &str) -> Result<String, String>;
     fn is_cancelled(&self) -> bool;
     fn emit_status(&self, text: &str);
     fn emit_error(&self, message: &str);
@@ -36,14 +37,28 @@ pub trait ActionRuntime {
 pub struct TauriActionRuntime<'a> {
     app: &'a AppHandle,
     cancel_flag: Option<Arc<AtomicBool>>,
+    follow_up_handler: Option<Box<FollowUpHandler>>,
 }
+
+type FollowUpHandler = dyn Fn(&str) -> Result<String, String> + Send + Sync + 'static;
 
 impl<'a> TauriActionRuntime<'a> {
     pub fn new(app: &'a AppHandle, cancel_flag: Arc<AtomicBool>) -> Self {
         Self {
             app,
             cancel_flag: Some(cancel_flag),
+            follow_up_handler: None,
         }
+    }
+
+    pub fn with_follow_up_handler(
+        app: &'a AppHandle,
+        cancel_flag: Arc<AtomicBool>,
+        follow_up_handler: Box<FollowUpHandler>,
+    ) -> Self {
+        let mut runtime = Self::new(app, cancel_flag);
+        runtime.follow_up_handler = Some(follow_up_handler);
+        runtime
     }
 }
 
@@ -130,6 +145,13 @@ impl ActionRuntime for TauriActionRuntime<'_> {
         tts::speak_with_piper(self.app, text)
     }
 
+    fn request_follow_up(&self, prompt: &str) -> Result<String, String> {
+        match &self.follow_up_handler {
+            Some(handler) => handler(prompt),
+            None => Err("SubPrompt follow-up handler is not configured".to_string()),
+        }
+    }
+
     fn is_cancelled(&self) -> bool {
         self.cancel_flag
             .as_ref()
@@ -166,12 +188,14 @@ pub fn execute_command(node: &CommandNode, runtime: &impl ActionRuntime) {
 }
 
 fn execute_actions(actions: &[Action], runtime: &impl ActionRuntime) {
+    let mut follow_up_response: Option<String> = None;
     for action in actions {
         if runtime.is_cancelled() {
             runtime.emit_status(ACTION_CANCELLED_MSG);
             return;
         }
-        match execute_one_action(action, runtime) {
+        let resolved = resolve_action_templates(action, follow_up_response.as_deref());
+        match execute_one_action(&resolved, runtime) {
             Ok(text) => runtime.emit_status(&text),
             Err(err) => {
                 if err == ACTION_CANCELLED_MSG {
@@ -180,6 +204,26 @@ fn execute_actions(actions: &[Action], runtime: &impl ActionRuntime) {
                 }
                 runtime.emit_status(&format!("Failed: {err}"));
                 runtime.emit_error(&err);
+                if matches!(action, Action::SubPrompt { .. }) {
+                    return;
+                }
+            }
+        }
+        if let Action::SubPrompt { prompt } = &resolved {
+            match runtime.request_follow_up(prompt) {
+                Ok(response) => {
+                    follow_up_response = Some(response);
+                    runtime.emit_status("Captured follow-up input");
+                }
+                Err(err) => {
+                    if err == ACTION_CANCELLED_MSG {
+                        runtime.emit_status(ACTION_CANCELLED_MSG);
+                    } else {
+                        runtime.emit_status(&format!("Failed: {err}"));
+                        runtime.emit_error(&err);
+                    }
+                    return;
+                }
             }
         }
     }
@@ -217,7 +261,34 @@ fn execute_one_action(action: &Action, runtime: &impl ActionRuntime) -> Result<S
             runtime.speak(text)?;
             Ok(format!("Spoke: {text}"))
         }
-        Action::SubPrompt { .. } => Err("SubPrompt is not implemented yet".to_string()),
+        Action::SubPrompt { prompt } => {
+            validate_sub_prompt(prompt)?;
+            Ok(format!("Awaiting follow-up: {prompt}"))
+        }
+    }
+}
+
+fn resolve_action_templates(action: &Action, follow_up_response: Option<&str>) -> Action {
+    let Some(response) = follow_up_response else {
+        return action.clone();
+    };
+    let render = |input: &str| input.replace("{{follow_up}}", response);
+    match action {
+        Action::OpenApp { name, path } => Action::OpenApp {
+            name: render(name),
+            path: render(path),
+        },
+        Action::OpenUrl { url } => Action::OpenUrl { url: render(url) },
+        Action::RunScript { script, args } => Action::RunScript {
+            script: render(script),
+            args: args.iter().map(|arg| render(arg)).collect(),
+        },
+        Action::SendKeys { keys } => Action::SendKeys { keys: render(keys) },
+        Action::Wait { ms } => Action::Wait { ms: *ms },
+        Action::Speak { text } => Action::Speak { text: render(text) },
+        Action::SubPrompt { prompt } => Action::SubPrompt {
+            prompt: render(prompt),
+        },
     }
 }
 
@@ -312,6 +383,20 @@ fn validate_speak_text(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_sub_prompt(prompt: &str) -> Result<(), String> {
+    let trimmed = prompt.trim();
+    if trimmed.is_empty() {
+        return Err("SubPrompt prompt cannot be empty".to_string());
+    }
+    if trimmed.chars().count() > 200 {
+        return Err("SubPrompt prompt exceeds max length of 200 characters".to_string());
+    }
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Err("SubPrompt prompt cannot contain control characters".to_string());
+    }
+    Ok(())
+}
+
 fn is_shell_metachar(c: char) -> bool {
     matches!(
         c,
@@ -351,6 +436,9 @@ mod tests {
         fail_scripts: Vec<String>,
         fail_keys: Vec<String>,
         fail_speak_texts: Vec<String>,
+        follow_up_answers: Vec<String>,
+        follow_up_prompts: Vec<String>,
+        fail_follow_up_prompt: Option<String>,
         cancelled: bool,
     }
 
@@ -389,6 +477,22 @@ mod tests {
                 state: Arc::new(Mutex::new(s)),
             }
         }
+
+        fn with_follow_up_answers(answers: Vec<&str>) -> Self {
+            let mut s = MockState::default();
+            s.follow_up_answers = answers.into_iter().map(str::to_string).collect();
+            Self {
+                state: Arc::new(Mutex::new(s)),
+            }
+        }
+
+        fn with_follow_up_failure(prompt: &str) -> Self {
+            let mut s = MockState::default();
+            s.fail_follow_up_prompt = Some(prompt.to_string());
+            Self {
+                state: Arc::new(Mutex::new(s)),
+            }
+        }
     }
 
     impl Clone for MockState {
@@ -407,6 +511,9 @@ mod tests {
                 fail_scripts: self.fail_scripts.clone(),
                 fail_keys: self.fail_keys.clone(),
                 fail_speak_texts: self.fail_speak_texts.clone(),
+                follow_up_answers: self.follow_up_answers.clone(),
+                follow_up_prompts: self.follow_up_prompts.clone(),
+                fail_follow_up_prompt: self.fail_follow_up_prompt.clone(),
                 cancelled: self.cancelled,
             }
         }
@@ -461,6 +568,18 @@ mod tests {
                 return Err(format!("mock speak failed: {text}"));
             }
             Ok(())
+        }
+
+        fn request_follow_up(&self, prompt: &str) -> Result<String, String> {
+            let mut s = self.state.lock().unwrap();
+            s.follow_up_prompts.push(prompt.to_string());
+            if s.fail_follow_up_prompt.as_deref() == Some(prompt) {
+                return Err("Follow-up timed out".to_string());
+            }
+            if s.follow_up_answers.is_empty() {
+                return Err("Follow-up input not provided".to_string());
+            }
+            Ok(s.follow_up_answers.remove(0))
         }
 
         fn is_cancelled(&self) -> bool {
@@ -677,5 +796,43 @@ mod tests {
         assert!(s.speak_calls.is_empty());
         assert_eq!(s.statuses, vec![ACTION_CANCELLED_MSG.to_string()]);
         assert!(s.errors.is_empty());
+    }
+
+    #[test]
+    fn sub_prompt_captures_follow_up_and_templates_next_action() {
+        let runtime = MockRuntime::with_follow_up_answers(vec!["docs"]);
+        let node = node_with_actions(vec![
+            Action::SubPrompt {
+                prompt: "Which page should I open?".into(),
+            },
+            Action::OpenUrl {
+                url: "https://example.com/{{follow_up}}".into(),
+            },
+        ]);
+
+        execute_command(&node, &runtime);
+        let s = runtime.snapshot();
+        assert_eq!(s.follow_up_prompts, vec!["Which page should I open?".to_string()]);
+        assert_eq!(s.url_calls, vec!["https://example.com/docs".to_string()]);
+        assert!(s.errors.is_empty());
+    }
+
+    #[test]
+    fn sub_prompt_timeout_stops_remaining_actions() {
+        let runtime = MockRuntime::with_follow_up_failure("Need input");
+        let node = node_with_actions(vec![
+            Action::SubPrompt {
+                prompt: "Need input".into(),
+            },
+            Action::OpenUrl {
+                url: "https://example.com/never".into(),
+            },
+        ]);
+
+        execute_command(&node, &runtime);
+        let s = runtime.snapshot();
+        assert_eq!(s.follow_up_prompts, vec!["Need input".to_string()]);
+        assert!(s.url_calls.is_empty());
+        assert_eq!(s.errors, vec!["Follow-up timed out".to_string()]);
     }
 }
