@@ -176,5 +176,5 @@ See [plan.md](./plan.md) for full task descriptions. All `npm`/`tauri` commands 
 1. [ ] Fuzzy phrase path: trigger with typo phrase (e.g., "open notpad") and verify intended command executes.
 2. [ ] Multi-action chain path: trigger `open github and notepad` and verify ordered behavior (`OpenApp` -> `Wait` -> `OpenUrl`).
 3. [ ] Speak action path: run command including `Speak`; verify audible output (or controlled runtime error if Piper missing).
-4. [ ] Sub-prompt happy path: command enters `awaiting_input`, provide follow-up phrase, verify templated next action executes.
+4. [ ] Sub-prompt happy path: trigger `subprompt test`, command enters `awaiting_input`, provide follow-up phrase, verify browser opens `https://github.com/search?q=<follow_up>`.
 5. [ ] Sub-prompt timeout/cancel path: do not answer (or cancel), verify safe terminal HUD phase with no crash/deadlock.

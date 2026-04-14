@@ -113,6 +113,24 @@ fn default_command_specs() -> Vec<DefaultCommandSpec> {
                 fuzzy_threshold_pct: 80,
             },
         },
+        DefaultCommandSpec {
+            trigger_key: "subprompt test",
+            priority: 10,
+            row: NewCommandNode {
+                name: "SubPrompt Test".into(),
+                trigger_phrases: vec!["subprompt test".into()],
+                actions: vec![
+                    Action::SubPrompt {
+                        prompt: "What should I search on GitHub?".into(),
+                    },
+                    Action::OpenUrl {
+                        url: "https://github.com/search?q={{follow_up}}".into(),
+                    },
+                ],
+                enabled: true,
+                fuzzy_threshold_pct: 80,
+            },
+        },
     ]
 }
 
@@ -273,7 +291,7 @@ mod tests {
         init_db(&path).unwrap();
         let conn = Connection::open(&path).unwrap();
         let all = get_all_commands(&conn).unwrap();
-        assert_eq!(all.len(), 3);
+        assert_eq!(all.len(), 4);
         assert!(all.iter().any(|n| {
             n.trigger_phrases.contains(&"open github and notepad".to_string())
                 && n.enabled
@@ -294,10 +312,23 @@ mod tests {
         assert!(all.iter().any(|n| {
             n.trigger_phrases.contains(&"open github".to_string()) && !n.enabled
         }));
+        assert!(all.iter().any(|n| {
+            n.trigger_phrases.contains(&"subprompt test".to_string())
+                && !n.enabled
+                && n.actions
+                    == vec![
+                        Action::SubPrompt {
+                            prompt: "What should I search on GitHub?".into()
+                        },
+                        Action::OpenUrl {
+                            url: "https://github.com/search?q={{follow_up}}".into()
+                        }
+                    ]
+        }));
 
         init_db(&path).unwrap();
         let conn2 = Connection::open(&path).unwrap();
-        assert_eq!(get_all_commands(&conn2).unwrap().len(), 3);
+        assert_eq!(get_all_commands(&conn2).unwrap().len(), 4);
     }
 
     #[test]

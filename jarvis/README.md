@@ -68,7 +68,7 @@ Use this gate before calling a Phase 2 build releasable:
 1. Trigger fuzzy phrase (typo) and confirm intended command still matches/executes.
 2. Run a multi-action chain (`OpenApp` -> `Wait` -> `OpenUrl`) and confirm strict order.
 3. Run at least one command with `Speak`; confirm audible output or controlled Piper-missing error.
-4. Run a `SubPrompt` command and provide follow-up input; confirm templated follow-up action executes.
+4. Run the `subprompt test` voice command, answer with a topic (for example `rust`), and confirm browser opens GitHub search results for that topic.
 5. Re-run `SubPrompt` and let it timeout (or cancel); confirm safe terminal HUD phase, no crash/deadlock.
 
 ## Recommended IDE Setup
