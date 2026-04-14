@@ -3,6 +3,9 @@
 #[cfg(feature = "porcupine")]
 pub mod porcupine;
 
+#[cfg(feature = "oww")]
+pub mod oww;
+
 use thiserror::Error;
 
 /// Picovoice service name for the Porcupine access key (same pattern as Anthropic in T4-4).

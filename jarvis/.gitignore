@@ -28,3 +28,6 @@ coverage
 *.ppn
 *.pv
 **/libpv_porcupine.dll
+
+# OpenWakeWord ONNX (fetch via scripts/download-oww-model.ps1)
+src-tauri/resources/oww/*.onnx
