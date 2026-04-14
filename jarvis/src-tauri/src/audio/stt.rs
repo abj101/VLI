@@ -146,6 +146,41 @@ fn push_ring(buffer: &mut Vec<f32>, chunk: &[f32]) {
     }
 }
 
+fn is_word_like_token(token: &str) -> bool {
+    let mut letters = 0usize;
+    let mut digits = 0usize;
+    let mut total = 0usize;
+    for ch in token.chars() {
+        if ch.is_whitespace() {
+            continue;
+        }
+        total += 1;
+        if ch.is_alphabetic() {
+            letters += 1;
+        } else if ch.is_ascii_digit() {
+            digits += 1;
+        }
+    }
+    if total == 0 {
+        return false;
+    }
+    letters >= 2 || (letters >= 1 && digits >= 1 && total <= 8)
+}
+
+/// Keep only plausible word output from Whisper and normalize whitespace.
+/// Returns `None` for silence/noise-like decode output.
+fn normalize_transcript_candidate(raw: &str) -> Option<String> {
+    let normalized = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+    let has_word_like = normalized.split_whitespace().any(is_word_like_token);
+    if !has_word_like {
+        return None;
+    }
+    Some(normalized)
+}
+
 #[derive(Debug, Default)]
 struct SilenceResetTracker {
     silent_samples: usize,
@@ -231,8 +266,12 @@ fn stt_loop(
                 continue;
             }
         };
+        let text = normalize_transcript_candidate(&text);
 
-        if text != last_text {
+        if let Some(text) = text {
+            if text == last_text {
+                continue;
+            }
             last_text = text.clone();
             debug!(
                 "stt: emit transcript-update partial chars={} preview={:?}",
@@ -247,13 +286,24 @@ fn stt_loop(
                     hud_session_id,
                 },
             );
+        } else if !last_text.is_empty() {
+            last_text.clear();
+            debug!("stt: suppress non-word/silence decode; clear transcript");
+            let _ = app.emit(
+                "transcript-update",
+                TranscriptUpdate {
+                    text: String::new(),
+                    is_final: false,
+                    hud_session_id,
+                },
+            );
         }
     }
 
     // Channel closed: final pass (best effort).
     if buffer_16k.len() >= MIN_DECODE_SAMPLES {
         if let Ok(text) = run_decode(&ctx, &buffer_16k) {
-            if !text.is_empty() {
+            if let Some(text) = normalize_transcript_candidate(&text) {
                 debug!(
                     "stt: emit transcript-update final chars={} preview={:?}",
                     text.chars().count(),
@@ -279,8 +329,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        normalize_peak_f32, resample_mono_to_16k, SilenceResetTracker, TranscriptUpdate,
-        TARGET_RATE,
+        normalize_peak_f32, normalize_transcript_candidate, resample_mono_to_16k,
+        SilenceResetTracker, TranscriptUpdate, TARGET_RATE,
     };
 
     #[test]
@@ -343,5 +393,19 @@ mod tests {
         assert!(!t.push_and_should_reset(&loud));
         assert!(!t.push_and_should_reset(&silence));
         assert!(t.push_and_should_reset(&silence));
+    }
+
+    #[test]
+    fn transcript_candidate_rejects_noise_only_text() {
+        assert_eq!(normalize_transcript_candidate("... --- !!!"), None);
+        assert_eq!(normalize_transcript_candidate("   "), None);
+    }
+
+    #[test]
+    fn transcript_candidate_accepts_word_like_text() {
+        assert_eq!(
+            normalize_transcript_candidate("  open   notepad now  "),
+            Some("open notepad now".into())
+        );
     }
 }
