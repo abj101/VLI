@@ -142,7 +142,7 @@ fn process_transcript_update(
     }
 
     let done_session_id = set_phase(app, rt, HudPhase::Done)?;
-    schedule_auto_dismiss(app.clone(), Arc::clone(rt), Arc::clone(audio), done_session_id);
+    schedule_auto_dismiss(app.clone(), Arc::clone(rt), audio.clone(), done_session_id);
     Ok(())
 }
 
@@ -185,7 +185,7 @@ fn show_hud_from_hotkey(
     if tray::mic_start_allowed(is_paused, phase) {
         try_start_listening_audio(app, audio);
         if let Some(sid) = listening_session_id.or(Some(session_id)) {
-            schedule_no_match_timeout(app.clone(), Arc::clone(rt), Arc::clone(audio), sid);
+            schedule_no_match_timeout(app.clone(), Arc::clone(rt), audio.clone(), sid);
         }
     } else {
         audio::stop_shared_pipeline(audio);
@@ -255,18 +255,18 @@ fn hud_dismiss(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let hud_state: SharedHud = Arc::new(Mutex::new(HudRuntime::default()));
-    let audio_pipeline: SharedAudioPipeline = Arc::new(Mutex::new(None));
+    let audio_pipeline = SharedAudioPipeline(Arc::new(Mutex::new(None)));
     let is_paused = Arc::new(AtomicBool::new(false));
 
     tauri::Builder::default()
         .manage(Arc::clone(&hud_state))
-        .manage(Arc::clone(&audio_pipeline))
+        .manage(audio_pipeline.clone())
         .manage(Arc::clone(&is_paused))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .setup({
             let hud_state = Arc::clone(&hud_state);
-            let audio_for_shortcut = Arc::clone(&audio_pipeline);
+            let audio_for_shortcut = audio_pipeline.clone();
             let is_paused_for_shortcut = Arc::clone(&is_paused);
             move |app| {
                 let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -278,7 +278,7 @@ pub fn run() {
                     tray::setup_tray(
                         app.handle(),
                         Arc::clone(&is_paused_for_shortcut),
-                        Arc::clone(&audio_for_shortcut),
+                        audio_for_shortcut.clone(),
                     )
                     .map_err(|e| e.to_string())?;
                 }
@@ -286,7 +286,7 @@ pub fn run() {
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 {
                     let transcript_hud = Arc::clone(&hud_state);
-                    let transcript_audio = Arc::clone(&audio_for_shortcut);
+                    let transcript_audio = audio_for_shortcut.clone();
                     let transcript_app = app.handle().clone();
                     app.listen("transcript-update", move |event| {
                         if let Err(err) = process_transcript_update(
@@ -309,7 +309,7 @@ pub fn run() {
                                 .map_err(|e| e.to_string())?
                                 .with_handler({
                                     let hud_state = Arc::clone(&hud_state);
-                                    let audio_for_shortcut = Arc::clone(&audio_for_shortcut);
+                                    let audio_for_shortcut = audio_for_shortcut.clone();
                                     let is_paused_for_shortcut =
                                         Arc::clone(&is_paused_for_shortcut);
                                     move |app, _shortcut, event| {

@@ -2,7 +2,7 @@ use crate::db::{Action, CommandNode};
 use serde::Serialize;
 use std::process::Command;
 use tauri::{AppHandle, Emitter};
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_opener::OpenerExt;
 
 pub const ACTION_STATUS_EVENT: &str = "action-status";
 pub const ACTION_ERROR_EVENT: &str = "action-error";
@@ -49,8 +49,8 @@ impl ActionRuntime for TauriActionRuntime<'_> {
 
     fn open_url(&self, url: &str) -> Result<(), String> {
         self.app
-            .shell()
-            .open(url, None::<&str>)
+            .opener()
+            .open_url(url, None::<&str>)
             .map_err(|e| format!("failed to open url `{url}`: {e}"))
     }
 

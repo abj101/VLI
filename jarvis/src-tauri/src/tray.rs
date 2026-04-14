@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 /// `Listening` shows the HUD capture UI; mic/STT only start when not paused.
 pub fn mic_start_allowed(is_paused: &AtomicBool, phase: HudPhase) -> bool {
@@ -27,11 +27,12 @@ pub fn setup_tray(
 
     let pause_item_for_menu = pause_item.clone();
     let is_paused_for_menu = Arc::clone(&is_paused);
-    let audio_for_menu = Arc::clone(&audio);
+    let audio_for_menu = audio.clone();
 
     let icon = app
         .default_window_icon()
-        .expect("bundle should define window icons in tauri.conf.json");
+        .expect("bundle should define window icons in tauri.conf.json")
+        .clone();
 
     TrayIconBuilder::with_id("main")
         .tooltip("JARVIS")

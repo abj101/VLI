@@ -3,7 +3,7 @@
 ## Prerequisites (Windows)
 
 - [Rust](https://rustup.rs/) stable, [Node.js](https://nodejs.org/) LTS
-- **Whisper / `whisper-rs`:** CMake plus a **MSVC** C++ build environment (Visual Studio “Desktop development with C++” workload, or Build Tools). `whisper-rs` builds native `whisper.cpp` sources via CMake.
+- **Whisper / `whisper-rs`:** CMake, **LLVM 18.x** (install via winget; set user env `LIBCLANG_PATH` to `C:\Program Files\LLVM\bin` so bindgen can find `libclang.dll`), plus a **MSVC** C++ build environment (Visual Studio “Desktop development with C++” workload, or Build Tools). `whisper-rs` builds native `whisper.cpp` sources via CMake.
 - **Microphone** permission for the dev or packaged app
 
 ## Whisper model (bundled path)
@@ -26,3 +26,4 @@ This writes `src-tauri/resources/ggml-tiny.en.bin`, which `tauri.conf.json` list
 ## Recommended IDE Setup
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+

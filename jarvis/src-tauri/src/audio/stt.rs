@@ -1,13 +1,13 @@
 //! Whisper inference thread: PCM → 16 kHz → rolling buffer → `transcript-update` (Task 4b).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use whisper_rs::{
-    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
+    FullParams, SamplingStrategy, WhisperContext, WhisperState,
 };
 
 const WHISPER_MODEL_FILE: &str = "ggml-tiny.en.bin";
@@ -19,7 +19,7 @@ const INFER_EVERY: Duration = Duration::from_millis(750);
 /// Need some audio before first decode.
 const MIN_DECODE_SAMPLES: usize = TARGET_RATE as usize / 4;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptUpdate {
     pub text: String,
     pub is_final: bool,

@@ -110,7 +110,8 @@ fn build_stream<T>(
     last_amp_emit: Arc<Mutex<Instant>>,
 ) -> Result<Stream, String>
 where
-    T: cpal::Sample,
+    T: cpal::Sample + cpal::SizedSample,
+    f32: cpal::FromSample<T>,
 {
     let app_err = app.clone();
     let err_fn = move |err| {
