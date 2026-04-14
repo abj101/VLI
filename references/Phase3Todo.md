@@ -130,9 +130,9 @@ Before T3-7, confirm all of the following:
 - [ ] NodeForm: creates, edits, all 6 action types, sub_prompt, drag-drop action chain
 - [ ] Settings: hotkey, default threshold, theme — all persist across restart
 - [ ] `MIGRATIONS.md` exists and documents the sort_order migration
-- [ ] `cargo clippy -- -D warnings` clean
-- [ ] `npm run lint` clean
-- [ ] `npm run test` clean
+- [x] `cargo clippy -- -D warnings` clean
+- [x] `npm run lint` clean
+- [x] `npm run test` clean
 - [ ] **Human has reviewed and approved** — do not proceed until this is checked
 
 ---
