@@ -53,7 +53,10 @@
       "resources/ggml-tiny.en.bin",
       "resources/porcupine/libpv_porcupine.dll",
       "resources/porcupine/porcupine_params.pv",
-      "resources/porcupine/porcupine_windows.ppn"
+      "resources/porcupine/porcupine_windows.ppn",
+      "resources/oww/melspectrogram.onnx",
+      "resources/oww/embedding_model.onnx",
+      "resources/oww/hey_jarvis_v0.1.onnx"
     ],
     "icon": [
       "icons/32x32.png",

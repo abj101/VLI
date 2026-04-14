@@ -1,24 +1,15 @@
 /**
- * Downloads Porcupine DLL + .pv + .ppn from the public Picovoice GitHub repo (no API key).
- * Writes to src-tauri/resources/porcupine/. Gitignored; run via `npm run fetch-wake-models` or `prebuild`.
+ * Downloads Porcupine + OpenWakeWord assets (no API key). Writes under
+ * src-tauri/resources/{porcupine,oww}/. Gitignored; run via `npm run fetch-wake-models`, `prebuild`, or Tauri `beforeDevCommand`.
  */
 import fs from "fs/promises";
 import https from "https";
 import path from "path";
 import { fileURLToPath } from "url";
+import { oww, porcupine } from "./fetch-wake-models.config.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dest = path.join(__dirname, "..", "src-tauri", "resources", "porcupine");
-const base = "https://raw.githubusercontent.com/Picovoice/porcupine/master";
-
-const files = [
-  ["lib/windows/amd64/libpv_porcupine.dll", "libpv_porcupine.dll"],
-  ["lib/common/porcupine_params.pv", "porcupine_params.pv"],
-  [
-    "resources/keyword_files/windows/porcupine_windows.ppn",
-    "porcupine_windows.ppn",
-  ],
-];
+const resourcesRoot = path.join(__dirname, "..", "src-tauri", "resources");
 
 function download(url) {
   return new Promise((resolve, reject) => {
@@ -46,21 +37,35 @@ function download(url) {
   });
 }
 
-await fs.mkdir(dest, { recursive: true });
-for (const [rel, name] of files) {
-  const out = path.join(dest, name);
+async function fetchIfMissing(label, destDir, url, outName) {
+  const out = path.join(destDir, outName);
   try {
     const st = await fs.stat(out);
     if (st.size > 0) {
-      console.log(`fetch-wake-models: ${name} (skip, ${st.size} bytes)`);
-      continue;
+      console.log(`fetch-wake-models: ${label}${outName} (skip, ${st.size} bytes)`);
+      return;
     }
   } catch {
     /* missing */
   }
-  const url = `${base}/${rel}`;
-  process.stdout.write(`fetch-wake-models: ${name} ... `);
+  process.stdout.write(`fetch-wake-models: ${label}${outName} ... `);
   const buf = await download(url);
   await fs.writeFile(out, buf);
   console.log(`${buf.length} bytes`);
+}
+
+await fs.mkdir(resourcesRoot, { recursive: true });
+
+const porcupineDest = path.join(resourcesRoot, porcupine.destSubdir);
+await fs.mkdir(porcupineDest, { recursive: true });
+for (const [rel, name] of porcupine.files) {
+  const url = `${porcupine.base}/${rel}`;
+  await fetchIfMissing("", porcupineDest, url, name);
+}
+
+const owwDest = path.join(resourcesRoot, oww.destSubdir);
+await fs.mkdir(owwDest, { recursive: true });
+for (const name of oww.files) {
+  const url = `${oww.base}/${name}`;
+  await fetchIfMissing("oww/", owwDest, url, name);
 }

@@ -1,6 +1,6 @@
 //! OpenWakeWord ONNX backend (`ort`): melspectrogram + embedding + wake-word classifier (Apache-2.0 models from upstream releases).
 //!
-//! Models are **not** committed; use `jarvis/scripts/download-oww-model.ps1` and place files under `resource_dir/oww/`.
+//! Models are **not** committed; fetch with `npm run fetch-wake-models` (from `jarvis/`) or `scripts/download-oww-model.ps1` into `resource_dir/oww/`.
 
 use crate::audio::wake::{WakeDetector, WakeError};
 use log::warn;
@@ -260,7 +260,7 @@ impl OpenWakeWordBackend {
                 dir.display()
             );
             return Err(WakeError::Init(format!(
-                "missing OpenWakeWord models under {} (run scripts/download-oww-model.ps1)",
+                "missing OpenWakeWord models under {} (run `npm run fetch-wake-models` from jarvis/ or scripts/download-oww-model.ps1)",
                 dir.display()
             )));
         }

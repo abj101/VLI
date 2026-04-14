@@ -3,6 +3,7 @@
 #
 # Usage:
 #   .\scripts\download-oww-model.ps1
+#   (or from jarvis/: `npm run fetch-wake-models` — same files via Node)
 #
 # Produces under src-tauri/resources/oww/:
 #   - melspectrogram.onnx
