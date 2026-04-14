@@ -2149,6 +2149,7 @@ dependencies = [
  "cpal",
  "env_logger",
  "log",
+ "rapidfuzz",
  "rusqlite",
  "serde",
  "serde_json",
@@ -3446,6 +3447,12 @@ checksum = "16abd0c1b639e9eb4d7c50c0b8100b0d0f849be2349829c740fe8e6eb4816429"
 dependencies = [
  "rand_core 0.5.1",
 ]
+
+[[package]]
+name = "rapidfuzz"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "270e04e5ea61d40841942bb15e451c29ee1618637bcf97fc7ede5dd4a9b1601b"
 
 [[package]]
 name = "raw-window-handle"

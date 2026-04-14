@@ -57,13 +57,13 @@ flowchart TD
 **Description:** Introduce `rapidfuzz` matcher path with deterministic tie-break, per-node threshold (default `0.80`), and span extraction fallback.
 
 **Acceptance criteria:**
-- [ ] Exact matches still succeed (no regression).
-- [ ] Near-phrase inputs match when score >= threshold.
-- [ ] Ambiguous ties resolve predictably (documented order).
+- [x] Exact matches still succeed (no regression).
+- [x] Near-phrase inputs match when score >= threshold.
+- [x] Ambiguous ties resolve predictably (documented order).
 
 **Verification:**
-- [ ] `cargo test commands::matcher`
-- [ ] Added tests for threshold boundary, tie-break, no-match.
+- [x] `cargo test commands::matcher`
+- [x] Added tests for threshold boundary, tie-break, no-match.
 
 **Dependencies:** Task 1.
 

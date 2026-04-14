@@ -27,11 +27,33 @@ pub fn init_db(path: &Path) -> Result<(), DbError> {
             trigger_phrases TEXT NOT NULL,
             actions TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1,
+            fuzzy_threshold_pct INTEGER NOT NULL DEFAULT 80,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         ",
     )?;
+    ensure_fuzzy_threshold_column(&conn)?;
     maybe_seed(&conn)?;
+    Ok(())
+}
+
+fn ensure_fuzzy_threshold_column(conn: &Connection) -> Result<(), DbError> {
+    let mut stmt = conn.prepare("PRAGMA table_info(command_nodes)")?;
+    let mut rows = stmt.query([])?;
+    let mut has_column = false;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == "fuzzy_threshold_pct" {
+            has_column = true;
+            break;
+        }
+    }
+    if !has_column {
+        conn.execute(
+            "ALTER TABLE command_nodes ADD COLUMN fuzzy_threshold_pct INTEGER NOT NULL DEFAULT 80",
+            [],
+        )?;
+    }
     Ok(())
 }
 
@@ -50,6 +72,7 @@ fn maybe_seed(conn: &Connection) -> Result<(), DbError> {
                 path: "notepad.exe".into(),
             }],
             enabled: true,
+            fuzzy_threshold_pct: 80,
         },
     )?;
     insert_command(
@@ -61,6 +84,7 @@ fn maybe_seed(conn: &Connection) -> Result<(), DbError> {
                 url: "https://github.com".into(),
             }],
             enabled: true,
+            fuzzy_threshold_pct: 80,
         },
     )?;
     Ok(())
@@ -70,16 +94,23 @@ pub fn insert_command(conn: &Connection, row: &NewCommandNode) -> Result<i64, Db
     let trigger_phrases = serde_json::to_string(&row.trigger_phrases)?;
     let actions = serde_json::to_string(&row.actions)?;
     let enabled = i32::from(row.enabled);
+    let fuzzy_threshold_pct = i64::from(row.fuzzy_threshold_pct.min(100));
     conn.execute(
-        "INSERT INTO command_nodes (name, trigger_phrases, actions, enabled) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![row.name, trigger_phrases, actions, enabled],
+        "INSERT INTO command_nodes (name, trigger_phrases, actions, enabled, fuzzy_threshold_pct) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![
+            row.name,
+            trigger_phrases,
+            actions,
+            enabled,
+            fuzzy_threshold_pct
+        ],
     )?;
     Ok(conn.last_insert_rowid())
 }
 
 pub fn get_all_commands(conn: &Connection) -> Result<Vec<CommandNode>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, trigger_phrases, actions, enabled, created_at FROM command_nodes ORDER BY id ASC",
+        "SELECT id, name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, created_at FROM command_nodes ORDER BY id ASC",
     )?;
     let mut rows = stmt.query([])?;
     let mut out = Vec::new();
@@ -98,9 +129,17 @@ pub fn update_command(
     let trigger_phrases = serde_json::to_string(&row.trigger_phrases)?;
     let actions = serde_json::to_string(&row.actions)?;
     let enabled = i32::from(row.enabled);
+    let fuzzy_threshold_pct = i64::from(row.fuzzy_threshold_pct.min(100));
     let n = conn.execute(
-        "UPDATE command_nodes SET name = ?1, trigger_phrases = ?2, actions = ?3, enabled = ?4 WHERE id = ?5",
-        rusqlite::params![row.name, trigger_phrases, actions, enabled, id],
+        "UPDATE command_nodes SET name = ?1, trigger_phrases = ?2, actions = ?3, enabled = ?4, fuzzy_threshold_pct = ?5 WHERE id = ?6",
+        rusqlite::params![
+            row.name,
+            trigger_phrases,
+            actions,
+            enabled,
+            fuzzy_threshold_pct,
+            id
+        ],
     )?;
     Ok(n > 0)
 }
@@ -108,7 +147,7 @@ pub fn update_command(
 #[allow(dead_code)] // used in tests and upcoming editor APIs
 pub fn get_command_by_id(conn: &Connection, id: i64) -> Result<Option<CommandNode>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, trigger_phrases, actions, enabled, created_at FROM command_nodes WHERE id = ?1",
+        "SELECT id, name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, created_at FROM command_nodes WHERE id = ?1",
     )?;
     let mut rows = stmt.query(rusqlite::params![id])?;
     if let Some(row) = rows.next()? {
@@ -128,13 +167,15 @@ fn row_to_command(row: &rusqlite::Row<'_>) -> Result<CommandNode, DbError> {
     let trigger_phrases: String = row.get(2)?;
     let actions: String = row.get(3)?;
     let enabled_i: i32 = row.get(4)?;
+    let fuzzy_threshold_pct: i64 = row.get(5)?;
     Ok(CommandNode {
         id: row.get(0)?,
         name: row.get(1)?,
         trigger_phrases: serde_json::from_str(&trigger_phrases)?,
         actions: serde_json::from_str(&actions)?,
         enabled: enabled_i != 0,
-        created_at: row.get(5)?,
+        fuzzy_threshold_pct: fuzzy_threshold_pct.clamp(0, 100) as u16,
+        created_at: row.get(6)?,
     })
 }
 
@@ -197,6 +238,7 @@ mod tests {
                     url: "https://example.com".into(),
                 }],
                 enabled: false,
+                fuzzy_threshold_pct: 80,
             },
         )
         .unwrap();
@@ -225,6 +267,7 @@ mod tests {
                     url: "https://example.com".into(),
                 }],
                 enabled: true,
+                fuzzy_threshold_pct: 80,
             },
         )
         .unwrap();
@@ -242,6 +285,7 @@ mod tests {
                     },
                 ],
                 enabled: false,
+                fuzzy_threshold_pct: 90,
             },
         )
         .unwrap();
@@ -251,6 +295,7 @@ mod tests {
         assert_eq!(one.name, "Updated");
         assert_eq!(one.trigger_phrases, vec!["do better thing".to_string()]);
         assert!(!one.enabled);
+        assert_eq!(one.fuzzy_threshold_pct, 90);
         assert_eq!(
             one.actions,
             vec![
@@ -279,6 +324,7 @@ mod tests {
         let all = get_all_commands(&conn).unwrap();
         assert!(all.iter().any(|node| {
             node.name == "Legacy"
+                && node.fuzzy_threshold_pct == 80
                 && node.actions
                     == vec![Action::OpenApp {
                         name: "notepad".into(),

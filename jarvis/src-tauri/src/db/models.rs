@@ -8,6 +8,7 @@ pub struct CommandNode {
     pub trigger_phrases: Vec<String>,
     pub actions: Vec<Action>,
     pub enabled: bool,
+    pub fuzzy_threshold_pct: u16,
     pub created_at: String,
 }
 
@@ -18,6 +19,7 @@ pub struct NewCommandNode {
     pub trigger_phrases: Vec<String>,
     pub actions: Vec<Action>,
     pub enabled: bool,
+    pub fuzzy_threshold_pct: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

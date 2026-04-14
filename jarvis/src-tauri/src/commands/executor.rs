@@ -160,6 +160,7 @@ mod tests {
             trigger_phrases: vec!["test".into()],
             actions,
             enabled: true,
+            fuzzy_threshold_pct: 80,
             created_at: "now".into(),
         }
     }
