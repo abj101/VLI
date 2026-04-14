@@ -4,6 +4,7 @@
 
 - [Rust](https://rustup.rs/) stable, [Node.js](https://nodejs.org/) LTS
 - **Whisper / `whisper-rs`:** **CMake** (e.g. `winget install Kitware.CMake`) and **LLVM 18.x** (winget; for bindgen set user env `LIBCLANG_PATH` to `C:\Program Files\LLVM\bin` so `libclang.dll` is found), plus a **MSVC** C++ build environment (Visual Studio “Desktop development with C++” workload, or Build Tools). `whisper-rs` builds native `whisper.cpp` sources via CMake.
+- **Piper TTS (`Speak` action):** install/download `piper.exe` and one `.onnx` voice model. Configure with env vars `JARVIS_PIPER_BIN` and `JARVIS_PIPER_MODEL` (or `PIPER_BIN` / `PIPER_MODEL`). Fallback search paths include `src-tauri/resources/piper/`.
 - **PATH / discovery:** This repo prepends **`%ProgramFiles%\CMake\bin`** and **`%ProgramFiles%\LLVM\bin`** to `PATH` in **`.vscode/settings.json`** (repo root and under `jarvis/`) so Cursor/VS Code integrated terminals find `cmake` and LLVM. Rust builds also read **`src-tauri/.cargo/config.toml`**, which sets **`CMAKE`** to the default Kitware path when that file exists (override with your own `CMAKE` env if CMake is installed elsewhere). For shells outside the editor, add those directories to your user **PATH** or export **`CMAKE`**.
 - **Microphone** permission for the dev or packaged app
 
@@ -16,6 +17,15 @@ Weights are **not** committed (see root `.gitignore` `*.bin`). From the `jarvis`
 ```
 
 This writes `src-tauri/resources/ggml-tiny.en.bin`, which `tauri.conf.json` lists under `bundle.resources`. Run the script before `npm run tauri build` so bundling can include the file.
+
+## Piper voice model (for `Speak`)
+
+`Speak` looks for Piper runtime/model in this order:
+
+- Env vars: `JARVIS_PIPER_BIN` + `JARVIS_PIPER_MODEL` (or `PIPER_BIN` + `PIPER_MODEL`)
+- Bundled/resources fallback: `src-tauri/resources/piper/piper.exe` and `src-tauri/resources/piper/en_US-amy-medium.onnx`
+
+Successful synth output is cached in app data under `tts-cache/` to avoid repeated synthesis for same text + voice.
 
 ## Commands (from `jarvis/`)
 

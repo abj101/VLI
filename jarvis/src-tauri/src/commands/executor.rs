@@ -1,4 +1,7 @@
-use crate::db::{Action, CommandNode};
+use crate::{
+    audio::tts,
+    db::{Action, CommandNode},
+};
 use log::debug;
 use serde::Serialize;
 use std::process::Command;
@@ -21,6 +24,7 @@ pub trait ActionRuntime {
     fn run_script(&self, script: &str, args: &[String]) -> Result<(), String>;
     fn send_keys(&self, keys: &str) -> Result<(), String>;
     fn wait_ms(&self, ms: u64) -> Result<(), String>;
+    fn speak(&self, text: &str) -> Result<(), String>;
     fn emit_status(&self, text: &str);
     fn emit_error(&self, message: &str);
 }
@@ -105,6 +109,11 @@ impl ActionRuntime for TauriActionRuntime<'_> {
         Ok(())
     }
 
+    fn speak(&self, text: &str) -> Result<(), String> {
+        debug!("executor: speak chars={}", text.chars().count());
+        tts::speak_with_piper(self.app, text)
+    }
+
     fn emit_status(&self, text: &str) {
         let _ = self.app.emit(
             ACTION_STATUS_EVENT,
@@ -172,7 +181,11 @@ fn execute_one_action(action: &Action, runtime: &impl ActionRuntime) -> Result<S
             runtime.wait_ms(*ms)?;
             Ok(format!("Waiting {ms}ms..."))
         }
-        Action::Speak { .. } => Err("Speak is not implemented yet".to_string()),
+        Action::Speak { text } => {
+            validate_speak_text(text)?;
+            runtime.speak(text)?;
+            Ok(format!("Spoke: {text}"))
+        }
         Action::SubPrompt { .. } => Err("SubPrompt is not implemented yet".to_string()),
     }
 }
@@ -254,6 +267,20 @@ fn validate_wait_ms(ms: u64) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_speak_text(text: &str) -> Result<(), String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("Speak text cannot be empty".to_string());
+    }
+    if trimmed.chars().count() > 400 {
+        return Err("Speak text exceeds max length of 400 characters".to_string());
+    }
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Err("Speak text cannot contain control characters".to_string());
+    }
+    Ok(())
+}
+
 fn is_shell_metachar(c: char) -> bool {
     matches!(
         c,
@@ -285,12 +312,14 @@ mod tests {
         script_calls: Vec<(String, Vec<String>)>,
         key_calls: Vec<String>,
         wait_calls: Vec<u64>,
+        speak_calls: Vec<String>,
         statuses: Vec<String>,
         errors: Vec<String>,
         fail_app_paths: Vec<String>,
         fail_urls: Vec<String>,
         fail_scripts: Vec<String>,
         fail_keys: Vec<String>,
+        fail_speak_texts: Vec<String>,
     }
 
     #[derive(Clone, Default, Debug)]
@@ -330,12 +359,14 @@ mod tests {
                 script_calls: self.script_calls.clone(),
                 key_calls: self.key_calls.clone(),
                 wait_calls: self.wait_calls.clone(),
+                speak_calls: self.speak_calls.clone(),
                 statuses: self.statuses.clone(),
                 errors: self.errors.clone(),
                 fail_app_paths: self.fail_app_paths.clone(),
                 fail_urls: self.fail_urls.clone(),
                 fail_scripts: self.fail_scripts.clone(),
                 fail_keys: self.fail_keys.clone(),
+                fail_speak_texts: self.fail_speak_texts.clone(),
             }
         }
     }
@@ -379,6 +410,15 @@ mod tests {
 
         fn wait_ms(&self, ms: u64) -> Result<(), String> {
             self.state.lock().unwrap().wait_calls.push(ms);
+            Ok(())
+        }
+
+        fn speak(&self, text: &str) -> Result<(), String> {
+            let mut s = self.state.lock().unwrap();
+            s.speak_calls.push(text.to_string());
+            if s.fail_speak_texts.iter().any(|t| t == text) {
+                return Err(format!("mock speak failed: {text}"));
+            }
             Ok(())
         }
 
@@ -540,5 +580,37 @@ mod tests {
         assert_eq!(s.script_calls, vec![("echo".to_string(), vec!["done".to_string()])]);
         assert!(s.statuses.iter().any(|status| status.contains("Waiting 10ms")));
         assert!(s.errors.is_empty());
+    }
+
+    #[test]
+    fn speak_action_emits_success_and_chain_continues() {
+        let runtime = MockRuntime::default();
+        let node = node_with_actions(vec![
+            Action::Speak {
+                text: "task complete".into(),
+            },
+            Action::OpenUrl {
+                url: "https://example.com".into(),
+            },
+        ]);
+
+        execute_command(&node, &runtime);
+        let s = runtime.snapshot();
+        assert!(s.errors.is_empty());
+        assert_eq!(s.speak_calls, vec!["task complete".to_string()]);
+        assert!(s.statuses.iter().any(|status| status.contains("Spoke: task complete")));
+        assert_eq!(s.url_calls, vec!["https://example.com".to_string()]);
+    }
+
+    #[test]
+    fn rejects_empty_speak_payload() {
+        let runtime = MockRuntime::default();
+        let node = node_with_actions(vec![Action::Speak { text: "   ".into() }]);
+
+        execute_command(&node, &runtime);
+        let s = runtime.snapshot();
+        assert!(s.speak_calls.is_empty());
+        assert_eq!(s.errors.len(), 1);
+        assert!(s.errors[0].contains("Speak text cannot be empty"));
     }
 }

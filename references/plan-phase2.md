@@ -107,11 +107,11 @@ flowchart TD
 
 **Acceptance criteria:**
 - [ ] `Speak` action emits audible output on Windows dev environment.
-- [ ] Missing Piper runtime/model emits controlled error event, no panic.
-- [ ] `Speak` composes in chain with other actions.
+- [x] Missing Piper runtime/model emits controlled error event, no panic.
+- [x] `Speak` composes in chain with other actions.
 
 **Verification:**
-- [ ] `cargo test commands::executor` (mock runtime for speak path)
+- [x] `cargo test commands::executor` (mock runtime for speak path)
 - [ ] Manual command with `Speak` action.
 
 **Dependencies:** Task 3.
