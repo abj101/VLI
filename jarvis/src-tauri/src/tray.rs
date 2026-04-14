@@ -5,6 +5,8 @@ use crate::hud::HudPhase;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
+use tauri::image::Image;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri::menu::{Menu, MenuItem};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri::tray::TrayIconBuilder;
@@ -29,10 +31,9 @@ pub fn setup_tray(
     let is_paused_for_menu = Arc::clone(&is_paused);
     let audio_for_menu = audio.clone();
 
-    let icon = app
-        .default_window_icon()
-        .expect("bundle should define window icons in tauri.conf.json")
-        .clone();
+    // Embedded PNG: `default_window_icon()` can render blank in the Windows notification area.
+    let icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))
+        .expect("embedded tray icon must decode");
 
     TrayIconBuilder::with_id("main")
         .tooltip("JARVIS")

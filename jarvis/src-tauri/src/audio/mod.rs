@@ -4,13 +4,22 @@ pub mod capture;
 pub mod stt;
 
 use std::ops::Deref;
+use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use tauri::AppHandle;
+use tauri::Emitter;
 
 use capture::CaptureSession;
-use stt::{spawn_stt_thread, resolve_whisper_model_path};
+use stt::{resolve_whisper_model_path, spawn_stt_thread};
 use whisper_rs::{WhisperContext, WhisperContextParameters};
+
+/// Consumes PCM when STT is unavailable so the capture thread keeps running and amplitude events fire.
+fn spawn_pcm_drain(pcm_rx: Receiver<Vec<f32>>) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        while pcm_rx.recv().is_ok() {}
+    })
+}
 
 /// Owns live mic stream + STT worker; dropping stops capture and closes the PCM channel.
 pub struct AudioPipeline {
@@ -19,22 +28,32 @@ pub struct AudioPipeline {
 }
 
 impl AudioPipeline {
-    /// Starts default input device → PCM `mpsc` → Whisper thread. Emits Tauri events from both.
+    /// Starts default input → PCM channel. Whisper/STT starts only when the model loads; mic + amplitude always run if capture succeeds.
     pub fn start(app: &AppHandle) -> Result<Self, String> {
-        let model_path = resolve_whisper_model_path(app)?;
-        let ctx = WhisperContext::new_with_params(
-            model_path.to_string_lossy().as_ref(),
-            WhisperContextParameters::default(),
-        )
-        .map_err(|e| format!("failed to load whisper model: {e}"))?;
-
         let (pcm_tx, pcm_rx) = std::sync::mpsc::channel();
         let (capture, sample_rate) = capture::start_capture(app.clone(), pcm_tx)?;
-        let stt = spawn_stt_thread(app.clone(), ctx, pcm_rx, sample_rate);
-        Ok(Self {
-            capture,
-            stt: Some(stt),
-        })
+
+        let stt = match resolve_whisper_model_path(app) {
+            Ok(model_path) => match WhisperContext::new_with_params(
+                model_path.to_string_lossy().as_ref(),
+                WhisperContextParameters::default(),
+            ) {
+                Ok(ctx) => Some(spawn_stt_thread(app.clone(), ctx, pcm_rx, sample_rate)),
+                Err(e) => {
+                    let _ = app.emit(
+                        "audio-error",
+                        serde_json::json!({ "message": format!("failed to load whisper model: {e}") }),
+                    );
+                    Some(spawn_pcm_drain(pcm_rx))
+                }
+            },
+            Err(msg) => {
+                let _ = app.emit("audio-error", serde_json::json!({ "message": msg }));
+                Some(spawn_pcm_drain(pcm_rx))
+            }
+        };
+
+        Ok(Self { capture, stt })
     }
 }
 
@@ -69,4 +88,17 @@ impl Deref for SharedAudioPipeline {
 /// Clears any live pipeline (stops capture and joins STT).
 pub fn stop_shared_pipeline(slot: &SharedAudioPipeline) {
     *slot.lock().unwrap() = None;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::spawn_pcm_drain;
+
+    #[test]
+    fn pcm_drain_joins_after_sender_dropped() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(vec![0.5f32]).unwrap();
+        drop(tx);
+        spawn_pcm_drain(rx).join().expect("drain thread should exit");
+    }
 }

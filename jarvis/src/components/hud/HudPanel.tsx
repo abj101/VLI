@@ -191,11 +191,14 @@ function HudBody() {
       animate={{ opacity }}
       transition={transition}
     >
-      <div className="hud-row-top">
+      <div className="hud-transcript-wrap">
+        <TranscriptBlock />
+      </div>
+      <div className="hud-bottom-bar">
         <WaveformBars />
+        <p className="hud-hint">Toggle: Ctrl+Shift+J · Esc stops</p>
         <StopHudButton />
       </div>
-      <TranscriptBlock />
     </motion.div>
   );
 }
@@ -223,7 +226,6 @@ export function HudPanel() {
     <div className="hud-root">
       <div className="hud-title">JARVIS</div>
       <HudBody />
-      <p className="hud-hint">Toggle: Ctrl+Shift+J · Esc stops</p>
     </div>
   );
 }
