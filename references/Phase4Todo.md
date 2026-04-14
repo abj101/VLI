@@ -19,7 +19,7 @@
 - [x] `audio/wake/mod.rs` created — `WakeDetector` trait with `process_frame` + `backend_name`
 - [x] `audio/wake/porcupine.rs` — `PorcupineBackend` implements trait
 - [x] Porcupine access key read from OS keychain at construction
-- [ ] `.ppn` model file + Porcupine shared lib added to `bundle.resources` (T4-5: add after models present locally)
+- [x] `.ppn` model file + Porcupine shared lib added to `bundle.resources` (`prebuild` runs `fetch-wake-models.mjs` so files exist before bundle)
 - [x] `scripts/download-wake-models.ps1` fetches binaries (not committed to git)
 - [x] `.gitignore` covers `*.ppn`, `*.dll` model files
 - [x] Missing key or model → app starts in hotkey-only mode (no panic, warning logged)

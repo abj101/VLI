@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.jarvis.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run fetch-wake-models && npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
@@ -50,7 +50,10 @@
     "active": true,
     "targets": "all",
     "resources": [
-      "resources/ggml-tiny.en.bin"
+      "resources/ggml-tiny.en.bin",
+      "resources/porcupine/libpv_porcupine.dll",
+      "resources/porcupine/porcupine_params.pv",
+      "resources/porcupine/porcupine_windows.ppn"
     ],
     "icon": [
       "icons/32x32.png",

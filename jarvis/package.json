@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "fetch-wake-models": "node scripts/fetch-wake-models.mjs",
+    "prebuild": "node scripts/fetch-wake-models.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
