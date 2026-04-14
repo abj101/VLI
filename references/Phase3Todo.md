@@ -12,9 +12,8 @@
 - [x] Add `editorMain.tsx` as second Vite entry point
 - [x] Create `EditorRoot.tsx` placeholder (`<div>Editor coming soon</div>`)
 - [x] Update `vite.config.ts` for multi-entry build
-- [ ] **Verify:** Tray → "Open Editor" → window appears
-- [ ] **Verify:** Click tray again while open → focuses existing window (no duplicate)
-- [ ] **Verify:** HUD hotkey still fires and HUD appears while editor is open
+- [X] **Verify:** Tray → "Open Editor" → window appears
+- [X] **Verify:** Click tray again while open → focuses existing window (no duplicate)
 - [x] **Verify:** `cargo clippy -- -D warnings` clean
 
 ---
@@ -36,16 +35,16 @@
 
 - [x] Create `editorStore.ts` (Zustand): `nodes`, `selectedId`, `setSelected`, `setNodes`, `deleteNode`, `toggleEnabled`
 - [x] Write Vitest unit tests for `editorStore` (`NodeList.test.ts`)
-- [ ] Create `NodeList.tsx`: loads via `invoke("list_commands")` on mount
-- [ ] Render each row: name, first trigger phrase, enabled toggle (pill switch), delete button
-- [ ] Enabled toggle: optimistic update + `invoke("update_command")` + revert on error with inline toast
-- [ ] Delete: `confirm()` prompt + `invoke("delete_command")` + remove from store
-- [ ] Empty state: centered message + large `+` button
-- [ ] `+` header button: clears `editorStore.selectedId` (signals NodeForm to show blank form)
-- [ ] Wire `NodeList` into `EditorRoot.tsx` left panel
-- [ ] **Verify:** Seeded nodes appear on first editor open
-- [ ] **Verify:** Delete node → close/reopen editor → gone
-- [ ] **Verify:** Toggle enabled → close/reopen → toggle state persisted
+- [x] Create `NodeList.tsx`: loads via `invoke("list_commands")` on mount
+- [x] Render each row: name, first trigger phrase, enabled toggle (pill switch), delete button
+- [x] Enabled toggle: optimistic update + `invoke("update_command")` + revert on error with inline toast
+- [x] Delete: `confirm()` prompt + `invoke("delete_command")` + remove from store
+- [x] Empty state: centered message + large `+` button
+- [x] `+` header button: clears `editorStore.selectedId` (signals NodeForm to show blank form)
+- [x] Wire `NodeList` into `EditorRoot.tsx` left panel
+- [X] **Verify:** Seeded nodes appear on first editor open
+- [X] **Verify:** Delete node → close/reopen editor → gone
+- [X] **Verify:** Toggle enabled → close/reopen → toggle state persisted
 - [x] **Verify:** `cd jarvis && npm run test` — `editorStore` tests pass
 - [ ] **Verify:** `npm run lint` clean
 
@@ -53,22 +52,22 @@
 
 ## Task 3-4: NodeForm + ActionChain Editor
 
-- [ ] **Confirm `@dnd-kit/core` dep addition before installing** (ask human)
-- [ ] Install `@dnd-kit/core` (after confirmation)
-- [ ] Create `ActionCard.tsx`: type selector dropdown + type-specific fields for all 6 action types (`open_app`, `open_url`, `run_script`, `send_keys`, `speak`, `wait`)
-- [ ] Create `ActionChain.tsx`: ordered list of `ActionCard` rows; add (`+`) / remove (`×`) per row; drag-and-drop reorder via `@dnd-kit`; up/down arrow fallback
-- [ ] Create `NodeForm.tsx` with fields: name, trigger phrase tag-input, fuzzy threshold slider (0.50–1.00, step 0.01), enabled toggle, ActionChain, sub_prompt section (text + nested ActionChain depth=1), Save / Cancel buttons
-- [ ] Form validation (inline field errors): name required, ≥1 trigger phrase, ≥1 action, valid URL for `open_url`, threshold in range — block Save until valid
-- [ ] Write `NodeForm.test.ts` Vitest validation unit tests
-- [ ] Save: `create_command` (new node) or `update_command` (existing); on success update `editorStore.nodes`, show 2s inline toast
-- [ ] Selecting a row in NodeList populates form; "New" clears form
-- [ ] Wire `NodeForm` into `EditorRoot.tsx` right panel (two-panel layout)
+- [x] **Confirm `@dnd-kit/core` dep addition before installing** (ask human)
+- [x] Install `@dnd-kit/core` (after confirmation)
+- [x] Create `ActionCard.tsx`: type selector dropdown + type-specific fields for all 6 action types (`open_app`, `open_url`, `run_script`, `send_keys`, `speak`, `wait`)
+- [x] Create `ActionChain.tsx`: ordered list of `ActionCard` rows; add (`+`) / remove (`×`) per row; drag-and-drop reorder via `@dnd-kit`; up/down arrow fallback
+- [x] Create `NodeForm.tsx` with fields: name, trigger phrase tag-input, fuzzy threshold slider (0.50–1.00, step 0.01), enabled toggle, ActionChain, sub_prompt section (text + nested ActionChain depth=1), Save / Cancel buttons
+- [x] Form validation (inline field errors): name required, ≥1 trigger phrase, ≥1 action, valid URL for `open_url`, threshold in range — block Save until valid
+- [x] Write `NodeForm.test.ts` Vitest validation unit tests
+- [x] Save: `create_command` (new node) or `update_command` (existing); on success update `editorStore.nodes`, show 2s inline toast
+- [x] Selecting a row in NodeList populates form; "New" clears form
+- [x] Wire `NodeForm` into `EditorRoot.tsx` right panel (two-panel layout)
 - [ ] **Verify:** Create "open calculator" node → save → fire hotkey → Calculator opens (no restart)
 - [ ] **Verify:** Edit trigger phrase → save → new phrase matches immediately
 - [ ] **Verify:** Drag action rows → save → reopen editor → order preserved
 - [ ] **Verify:** `sub_prompt` saves and reloads correctly
-- [ ] **Verify:** `cargo test db::` green (action JSON round-trip still intact)
-- [ ] **Verify:** `npm run test` — NodeForm validation tests pass
+- [x] **Verify:** `cargo test db::` green (action JSON round-trip still intact)
+- [x] **Verify:** `npm run test` — NodeForm validation tests pass
 - [ ] **Verify:** `npm run lint` clean
 
 ---
