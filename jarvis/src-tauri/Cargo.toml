@@ -22,6 +22,11 @@ tauri-build = { version = "2", features = [] }
 default = ["porcupine", "oww"]
 oww = ["dep:ort", "dep:ndarray"]
 porcupine = ["dep:libloading"]
+# Optional Whisper.cpp GPU backends (requires matching SDK/toolchain when building).
+# Example: `cargo build --features whisper-vulkan` (Vulkan SDK on PATH).
+whisper-vulkan = ["whisper-rs/vulkan"]
+whisper-cuda = ["whisper-rs/cuda"]
+whisper-metal = ["whisper-rs/metal"]
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }

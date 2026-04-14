@@ -468,6 +468,18 @@ html[data-theme="light"] {
   color: #9ca3af;
 }
 
+.editor-settings-checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: #e5e7eb;
+}
+
+.editor-settings-checkbox-row input {
+  margin-top: 3px;
+}
+
 .editor-settings-code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
     monospace;

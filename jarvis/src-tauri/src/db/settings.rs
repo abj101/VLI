@@ -10,6 +10,7 @@ pub const SETTING_REMOTE_STT_URL: &str = "remote_stt_url";
 pub const SETTING_REMOTE_STT_MODEL: &str = "remote_stt_model";
 pub const SETTING_REMOTE_STT_TIMEOUT_SECS: &str = "remote_stt_timeout_secs";
 pub const SETTING_REMOTE_STT_KEY_STORED: &str = "remote_stt_key_stored";
+pub const SETTING_LOCAL_WHISPER_USE_GPU: &str = "local_whisper_use_gpu";
 
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>, DbError> {
     let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
@@ -89,6 +90,8 @@ pub struct AppSettings {
     pub remote_stt_model: Option<String>,
     pub remote_stt_timeout_secs: u32,
     pub remote_stt_key_stored: bool,
+    /// When true and the binary includes a GPU backend, local Whisper uses GPU (see `whisper_gpu_compile_supported`).
+    pub local_whisper_use_gpu: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -100,6 +103,7 @@ pub struct SettingsPatch {
     pub remote_stt_url: Option<String>,
     pub remote_stt_model: Option<String>,
     pub remote_stt_timeout_secs: Option<u32>,
+    pub local_whisper_use_gpu: Option<bool>,
 }
 
 pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
@@ -117,6 +121,10 @@ pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
             SETTING_REMOTE_STT_TIMEOUT_SECS,
         )?),
         remote_stt_key_stored: bool_from_setting(get_setting(conn, SETTING_REMOTE_STT_KEY_STORED)?),
+        local_whisper_use_gpu: bool_from_setting(get_setting(
+            conn,
+            SETTING_LOCAL_WHISPER_USE_GPU,
+        )?),
     })
 }
 
@@ -182,6 +190,13 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
         }
         set_setting(conn, SETTING_REMOTE_STT_TIMEOUT_SECS, &format!("{secs}"))?;
     }
+    if let Some(on) = patch.local_whisper_use_gpu {
+        set_setting(
+            conn,
+            SETTING_LOCAL_WHISPER_USE_GPU,
+            if on { "1" } else { "0" },
+        )?;
+    }
     Ok(())
 }
 
@@ -243,6 +258,7 @@ mod tests {
         assert_eq!(s.remote_stt_model, None);
         assert_eq!(s.remote_stt_timeout_secs, 30);
         assert!(!s.remote_stt_key_stored);
+        assert!(!s.local_whisper_use_gpu);
     }
 
     #[test]
@@ -257,6 +273,7 @@ mod tests {
                 remote_stt_url: None,
                 remote_stt_model: None,
                 remote_stt_timeout_secs: None,
+                local_whisper_use_gpu: None,
             },
         )
         .expect("patch");
@@ -277,6 +294,7 @@ mod tests {
                 remote_stt_url: None,
                 remote_stt_model: None,
                 remote_stt_timeout_secs: None,
+                local_whisper_use_gpu: None,
             },
         )
         .expect_err("expected validation error");
@@ -298,6 +316,7 @@ mod tests {
                 remote_stt_url: Some("https://example.com/v1/transcribe".into()),
                 remote_stt_model: Some("test-model".into()),
                 remote_stt_timeout_secs: Some(60),
+                local_whisper_use_gpu: None,
             },
         )
         .expect("patch");
@@ -320,9 +339,45 @@ mod tests {
                 remote_stt_url: Some("ftp://bad.example/transcribe".into()),
                 remote_stt_model: None,
                 remote_stt_timeout_secs: None,
+                local_whisper_use_gpu: None,
             },
         )
         .expect_err("expected validation error");
         assert!(matches!(err, DbError::Validation(_)));
+    }
+
+    #[test]
+    fn apply_settings_patch_persists_local_whisper_use_gpu() {
+        let (_dir, conn) = open_temp();
+        apply_settings_patch(
+            &conn,
+            &SettingsPatch {
+                wake_engine: None,
+                oww_threshold: None,
+                stt_provider: None,
+                remote_stt_url: None,
+                remote_stt_model: None,
+                remote_stt_timeout_secs: None,
+                local_whisper_use_gpu: Some(true),
+            },
+        )
+        .expect("patch");
+        let s = get_app_settings(&conn).expect("reload");
+        assert!(s.local_whisper_use_gpu);
+        apply_settings_patch(
+            &conn,
+            &SettingsPatch {
+                wake_engine: None,
+                oww_threshold: None,
+                stt_provider: None,
+                remote_stt_url: None,
+                remote_stt_model: None,
+                remote_stt_timeout_secs: None,
+                local_whisper_use_gpu: Some(false),
+            },
+        )
+        .expect("patch off");
+        let s = get_app_settings(&conn).expect("reload");
+        assert!(!s.local_whisper_use_gpu);
     }
 }

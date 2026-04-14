@@ -291,6 +291,7 @@ mod tests {
             remote_stt_model: None,
             remote_stt_timeout_secs: 30,
             remote_stt_key_stored: false,
+            local_whisper_use_gpu: false,
         };
         let r = build_wake_detector("hotkey", tmp.path(), &s);
         assert!(r.is_err());

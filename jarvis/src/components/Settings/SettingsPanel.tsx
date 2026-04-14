@@ -24,6 +24,7 @@ type AppSettingsPayload = {
   remoteSttModel: string | null;
   remoteSttTimeoutSecs: number;
   remoteSttKeyStored: boolean;
+  localWhisperUseGpu: boolean;
 };
 
 function applyTheme(theme: EditorTheme) {
@@ -59,13 +60,16 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [remoteSttKeyStored, setRemoteSttKeyStored] = useState(false);
   const [remoteSttKeyInput, setRemoteSttKeyInput] = useState("");
   const [savingRemoteStt, setSavingRemoteStt] = useState(false);
+  const [localWhisperUseGpu, setLocalWhisperUseGpu] = useState(false);
+  const [whisperGpuCompileSupported, setWhisperGpuCompileSupported] = useState(false);
 
   const refreshFromBackend = async () => {
-    const [savedHotkey, savedThreshold, savedTheme, app] = await Promise.all([
+    const [savedHotkey, savedThreshold, savedTheme, app, gpuSupported] = await Promise.all([
       invoke<string | null>("get_setting", { key: HOTKEY_KEY }),
       invoke<string | null>("get_setting", { key: DEFAULT_THRESHOLD_KEY }),
       invoke<string | null>("get_setting", { key: THEME_KEY }),
       invoke<AppSettingsPayload>("get_settings"),
+      invoke<boolean>("whisper_gpu_compile_supported"),
     ]);
     if (savedHotkey && savedHotkey.trim().length > 0) {
       setHotkey(savedHotkey.trim());
@@ -85,6 +89,8 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     setRemoteSttModel(app.remoteSttModel ?? "");
     setRemoteSttTimeoutSecs(app.remoteSttTimeoutSecs);
     setRemoteSttKeyStored(app.remoteSttKeyStored);
+    setLocalWhisperUseGpu(app.localWhisperUseGpu);
+    setWhisperGpuCompileSupported(gpuSupported);
   };
 
   useEffect(() => {
@@ -171,8 +177,21 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       setRemoteSttModel(s.remoteSttModel ?? "");
       setRemoteSttTimeoutSecs(s.remoteSttTimeoutSecs);
       setRemoteSttKeyStored(s.remoteSttKeyStored);
+      setLocalWhisperUseGpu(s.localWhisperUseGpu);
     } catch (err) {
       setToastText(`Failed to save transcription provider: ${String(err)}`);
+    }
+  };
+
+  const persistLocalWhisperUseGpu = async (next: boolean) => {
+    setLocalWhisperUseGpu(next);
+    try {
+      const s = await invoke<AppSettingsPayload>("update_settings", {
+        patch: { localWhisperUseGpu: next },
+      });
+      setLocalWhisperUseGpu(s.localWhisperUseGpu);
+    } catch (err) {
+      setToastText(`Failed to save Whisper GPU setting: ${String(err)}`);
     }
   };
 
@@ -360,6 +379,27 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               Choose how spoken audio is turned into text for command matching. Remote requires a
               compatible HTTPS endpoint and API key in the keychain.
             </p>
+
+            {sttProvider === "local" && (
+              <label className="editor-settings-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={localWhisperUseGpu}
+                  disabled={!whisperGpuCompileSupported}
+                  onChange={(e) => void persistLocalWhisperUseGpu(e.target.checked)}
+                />
+                <span>Use GPU for Whisper (when available)</span>
+              </label>
+            )}
+            {sttProvider === "local" && !whisperGpuCompileSupported && (
+              <p className="editor-settings-help">
+                This build uses CPU-only Whisper. Rebuild with a GPU feature to enable acceleration,
+                for example{" "}
+                <code className="editor-settings-code">cargo tauri build --features whisper-vulkan</code>{" "}
+                (Vulkan SDK), <code className="editor-settings-code">whisper-cuda</code> (NVIDIA +
+                CUDA), or on macOS <code className="editor-settings-code">whisper-metal</code>.
+              </p>
+            )}
 
             {sttProvider === "remote" && (
               <>

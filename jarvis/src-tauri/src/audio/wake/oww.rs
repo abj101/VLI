@@ -454,6 +454,7 @@ mod tests {
             remote_stt_model: None,
             remote_stt_timeout_secs: 30,
             remote_stt_key_stored: false,
+            local_whisper_use_gpu: false,
         };
         let b = crate::audio::wake::try_open_wake_word_oww(&base, &settings).expect("oww init");
         assert!((b.threshold() - 0.73).abs() < 0.000_1);

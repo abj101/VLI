@@ -24,7 +24,8 @@ pub use transcription::RemoteSttParams;
 
 /// Resolved STT path for [`AudioPipeline::start`].
 pub enum SttPipelineChoice {
-    Local,
+    /// Local Whisper; `use_gpu` is passed to whisper.cpp when supported by the build.
+    Local { use_gpu: bool },
     Os,
     Remote(RemoteSttParams),
 }
@@ -69,26 +70,30 @@ impl AudioPipeline {
                     ))
                 }
             }
-            SttPipelineChoice::Local => match resolve_whisper_model_path(app) {
-                Ok(model_path) => match WhisperContext::new_with_params(
-                    model_path.to_string_lossy().as_ref(),
-                    WhisperContextParameters::default(),
-                ) {
-                    Ok(ctx) => Some(spawn_stt_thread(
-                        app.clone(),
-                        ctx,
-                        pcm_rx,
-                        sample_rate,
-                        hud_session_id,
-                    )),
-                    Err(e) => {
-                        let _ = app.emit(
-                            "audio-error",
-                            serde_json::json!({ "message": format!("failed to load whisper model: {e}") }),
-                        );
-                        Some(spawn_pcm_drain(pcm_rx))
+            SttPipelineChoice::Local { use_gpu } => match resolve_whisper_model_path(app) {
+                Ok(model_path) => {
+                    let mut params = WhisperContextParameters::default();
+                    params.use_gpu(use_gpu);
+                    match WhisperContext::new_with_params(
+                        model_path.to_string_lossy().as_ref(),
+                        params,
+                    ) {
+                        Ok(ctx) => Some(spawn_stt_thread(
+                            app.clone(),
+                            ctx,
+                            pcm_rx,
+                            sample_rate,
+                            hud_session_id,
+                        )),
+                        Err(e) => {
+                            let _ = app.emit(
+                                "audio-error",
+                                serde_json::json!({ "message": format!("failed to load whisper model: {e}") }),
+                            );
+                            Some(spawn_pcm_drain(pcm_rx))
+                        }
                     }
-                },
+                }
                 Err(msg) => {
                     let _ = app.emit("audio-error", serde_json::json!({ "message": msg }));
                     Some(spawn_pcm_drain(pcm_rx))

@@ -240,13 +240,15 @@ fn preview_chars(s: &str, max: usize) -> String {
 
 fn load_stt_pipeline_choice(app: &AppHandle) -> audio::SttPipelineChoice {
     let Ok(conn) = open_db_connection(app) else {
-        return audio::SttPipelineChoice::Local;
+        return audio::SttPipelineChoice::Local { use_gpu: false };
     };
     let Ok(settings) = db::get_app_settings(&conn) else {
-        return audio::SttPipelineChoice::Local;
+        return audio::SttPipelineChoice::Local { use_gpu: false };
     };
     match audio::transcription::parse_stt_provider(Some(settings.stt_provider.as_str())) {
-        audio::transcription::SttProvider::Local => audio::SttPipelineChoice::Local,
+        audio::transcription::SttProvider::Local => audio::SttPipelineChoice::Local {
+            use_gpu: settings.local_whisper_use_gpu,
+        },
         audio::transcription::SttProvider::Os => audio::SttPipelineChoice::Os,
         audio::transcription::SttProvider::Remote => {
             let key = if settings.remote_stt_key_stored {
@@ -1321,6 +1323,16 @@ fn get_settings(app: AppHandle) -> Result<db::AppSettings, String> {
     db::get_app_settings(&conn).map_err(|e| e.to_string())
 }
 
+/// `true` when this binary was built with a Whisper GPU backend (Vulkan / CUDA / Metal).
+#[tauri::command]
+fn whisper_gpu_compile_supported() -> bool {
+    cfg!(any(
+        feature = "whisper-vulkan",
+        feature = "whisper-cuda",
+        feature = "whisper-metal"
+    ))
+}
+
 #[tauri::command]
 fn update_settings(
     app: AppHandle,
@@ -1581,6 +1593,7 @@ pub fn run() {
             set_setting,
             set_hotkey,
             get_settings,
+            whisper_gpu_compile_supported,
             update_settings,
             save_api_key,
             delete_api_key
@@ -1613,6 +1626,7 @@ mod tests {
             remote_stt_model: None,
             remote_stt_timeout_secs: 30,
             remote_stt_key_stored: false,
+            local_whisper_use_gpu: false,
         }
     }
 
@@ -1632,6 +1646,7 @@ mod tests {
             remote_stt_url: None,
             remote_stt_model: None,
             remote_stt_timeout_secs: None,
+            local_whisper_use_gpu: None,
         };
         assert!(settings_patch_triggers_wake_reload(
             &patch,
@@ -1648,6 +1663,7 @@ mod tests {
             remote_stt_url: None,
             remote_stt_model: None,
             remote_stt_timeout_secs: None,
+            local_whisper_use_gpu: None,
         };
         assert!(!settings_patch_triggers_wake_reload(
             &patch,
