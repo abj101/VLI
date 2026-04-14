@@ -22,6 +22,9 @@ const MIN_DECODE_SAMPLES: usize = TARGET_RATE as usize / 4;
 pub struct TranscriptUpdate {
     pub text: String,
     pub is_final: bool,
+    /// Must match the HUD `session_id` when the mic pipeline for this listen was started.
+    /// Ignores emissions from detached STT threads after pipeline teardown (`mem::forget` join handle).
+    pub hud_session_id: u64,
 }
 
 /// Tauri `resource_dir()` may not match `src-tauri/resources/` during `tauri dev`; keep a crate-relative fallback.
@@ -144,10 +147,11 @@ pub fn spawn_stt_thread(
     ctx: WhisperContext,
     pcm_rx: Receiver<Vec<f32>>,
     input_sample_rate: u32,
+    hud_session_id: u64,
 ) -> JoinHandle<()> {
     let app_err = app.clone();
     std::thread::spawn(move || {
-        if let Err(e) = stt_loop(app, ctx, pcm_rx, input_sample_rate) {
+        if let Err(e) = stt_loop(app, ctx, pcm_rx, input_sample_rate, hud_session_id) {
             let _ = app_err.emit("audio-error", serde_json::json!({ "message": e }));
         }
     })
@@ -158,6 +162,7 @@ fn stt_loop(
     ctx: WhisperContext,
     pcm_rx: Receiver<Vec<f32>>,
     input_sample_rate: u32,
+    hud_session_id: u64,
 ) -> Result<(), String> {
     let mut buffer_16k: Vec<f32> = Vec::new();
     let mut last_decode = Instant::now() - INFER_EVERY;
@@ -195,6 +200,7 @@ fn stt_loop(
                 TranscriptUpdate {
                     text,
                     is_final: false,
+                    hud_session_id,
                 },
             );
         }
@@ -214,6 +220,7 @@ fn stt_loop(
                     TranscriptUpdate {
                         text,
                         is_final: true,
+                        hud_session_id,
                     },
                 );
             }
@@ -256,10 +263,12 @@ mod tests {
         let u = TranscriptUpdate {
             text: "hello".into(),
             is_final: true,
+            hud_session_id: 42,
         };
         let j = serde_json::to_value(&u).expect("serialize");
         assert_eq!(j["text"], "hello");
         assert_eq!(j["is_final"], true);
+        assert_eq!(j["hud_session_id"], 42);
     }
 
     #[test]

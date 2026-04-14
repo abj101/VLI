@@ -43,14 +43,14 @@ fn preview_chars(s: &str, max: usize) -> String {
     }
 }
 
-fn try_start_listening_audio(app: &AppHandle, slot: &SharedAudioPipeline) {
+fn try_start_listening_audio(app: &AppHandle, slot: &SharedAudioPipeline, hud_session_id: u64) {
     let old = {
         let mut g = slot.lock().unwrap();
         g.take()
     };
     drop(old);
 
-    match audio::AudioPipeline::start(app) {
+    match audio::AudioPipeline::start(app, hud_session_id) {
         Ok(p) => {
             let mut g = slot.lock().unwrap();
             *g = Some(p);
@@ -217,17 +217,25 @@ fn process_transcript_update(
     let update: audio::stt::TranscriptUpdate = serde_json::from_str(payload)
         .map_err(|e| format!("invalid transcript-update payload: {e}"))?;
     debug!(
-        "flow: transcript-update is_final={} len={} preview={:?}",
+        "flow: transcript-update is_final={} session={} len={} preview={:?}",
         update.is_final,
+        update.hud_session_id,
         update.text.chars().count(),
         preview_chars(&update.text, 72)
     );
-    touch_speech_on_transcript(rt, &update.text);
 
     let can_match = {
         let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+        if update.hud_session_id != s.session_id {
+            debug!(
+                "flow: skip (stale transcript session id={} current={})",
+                update.hud_session_id, s.session_id
+            );
+            return Ok(());
+        }
         should_attempt_command_match(&s)
     };
+    touch_speech_on_transcript(rt, &update.text);
     if !can_match {
         debug!("flow: skip (not listening or not visible)");
         return Ok(());
@@ -321,7 +329,7 @@ fn show_hud_from_hotkey(
     emit_hud_phase(app, phase);
 
     if tray::mic_start_allowed(is_paused, phase) {
-        try_start_listening_audio(app, audio);
+        try_start_listening_audio(app, audio, session_id);
         if let Some(sid) = listening_session_id.or(Some(session_id)) {
             spawn_no_match_watchdog(app.clone(), Arc::clone(rt), audio.clone(), sid);
         }

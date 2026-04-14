@@ -31,7 +31,7 @@ pub struct AudioPipeline {
 
 impl AudioPipeline {
     /// Starts default input → PCM channel. Whisper/STT starts only when the model loads; mic + amplitude always run if capture succeeds.
-    pub fn start(app: &AppHandle) -> Result<Self, String> {
+    pub fn start(app: &AppHandle, hud_session_id: u64) -> Result<Self, String> {
         let (pcm_tx, pcm_rx) = std::sync::mpsc::channel();
         let (capture, sample_rate) = capture::start_capture(app.clone(), pcm_tx)?;
 
@@ -40,7 +40,13 @@ impl AudioPipeline {
                 model_path.to_string_lossy().as_ref(),
                 WhisperContextParameters::default(),
             ) {
-                Ok(ctx) => Some(spawn_stt_thread(app.clone(), ctx, pcm_rx, sample_rate)),
+                Ok(ctx) => Some(spawn_stt_thread(
+                    app.clone(),
+                    ctx,
+                    pcm_rx,
+                    sample_rate,
+                    hud_session_id,
+                )),
                 Err(e) => {
                     let _ = app.emit(
                         "audio-error",
