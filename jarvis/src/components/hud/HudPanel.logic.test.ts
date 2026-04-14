@@ -47,23 +47,31 @@ describe("selectCenterContent", () => {
     expect(out).toEqual({ kind: "error", text: "Microphone unavailable" });
   });
 
-  it("shows live transcript during awaiting_input even when prompt text exists", () => {
+  it("shows live transcript during awaiting_input when status is not follow-up prompt", () => {
     const out = selectCenterContent({
       ...base("awaiting_input"),
       transcript: "rust tauri",
-      actionText: "Awaiting input: What should I search on GitHub?",
+      actionText: "Searching docs...",
     });
     expect(out).toEqual({ kind: "transcript", text: "rust tauri" });
+  });
+
+  it("normalizes follow-up prompt action text", () => {
+    const out = selectCenterContent({
+      ...base("awaiting_input"),
+      actionText: "Awaiting input: What should I search on GitHub?",
+    });
+    expect(out).toEqual({ kind: "action", text: "follow up" });
   });
 });
 
 describe("selectPhaseLabel", () => {
-  it("hides listening and awaiting labels, keeps execution labels", () => {
+  it("hides all status labels in HUD corner", () => {
     expect(selectPhaseLabel("listening")).toBeNull();
-    expect(selectPhaseLabel("matched")).toBe("Matched");
+    expect(selectPhaseLabel("matched")).toBeNull();
     expect(selectPhaseLabel("awaiting_input")).toBeNull();
-    expect(selectPhaseLabel("executing")).toBe("Executing");
-    expect(selectPhaseLabel("done")).toBe("Done");
-    expect(selectPhaseLabel("stopped")).toBe("Stopped");
+    expect(selectPhaseLabel("executing")).toBeNull();
+    expect(selectPhaseLabel("done")).toBeNull();
+    expect(selectPhaseLabel("stopped")).toBeNull();
   });
 });

@@ -360,7 +360,7 @@ fn await_follow_up_input(
     audio: &SharedAudioPipeline,
     expected_session_id: u64,
     cancel_flag: &Arc<AtomicBool>,
-    prompt: &str,
+    _prompt: &str,
 ) -> Result<String, String> {
     {
         let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
@@ -376,7 +376,7 @@ fn await_follow_up_input(
     emit_hud_phase(app, HudPhase::AwaitingInput);
     let _ = app.emit(
         "action-status",
-        serde_json::json!({ "text": format!("Awaiting input: {prompt}") }),
+        serde_json::json!({ "text": "follow up" }),
     );
     try_start_listening_audio(app, audio, expected_session_id);
 

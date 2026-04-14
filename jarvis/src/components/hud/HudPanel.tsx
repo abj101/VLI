@@ -19,11 +19,7 @@ function isActiveHudPhase(phase: HudPhase): boolean {
 
 /** Shimmer + pulse while Rust is running matched command chain (not during done fade). */
 function useShowAgentPulse(phase: HudPhase): boolean {
-  return (
-    phase === "matched" ||
-    phase === "executing" ||
-    phase === "awaiting_input"
-  );
+  return phase === "matched" || phase === "executing";
 }
 
 function WaveformBars() {
@@ -136,6 +132,8 @@ type CenterSelectorResult =
 export function selectCenterContent(
   input: CenterSelectorInput,
 ): CenterSelectorResult {
+  const normalizedActionText = normalizeActionText(input.actionText);
+
   if (
     (input.phase === "listening" || input.phase === "awaiting_input") &&
     input.audioError
@@ -145,6 +143,10 @@ export function selectCenterContent(
 
   if (input.actionError) {
     return { kind: "error", text: input.actionError };
+  }
+
+  if (normalizedActionText === "follow up") {
+    return { kind: "action", text: normalizedActionText };
   }
 
   if (input.match) {
@@ -157,13 +159,13 @@ export function selectCenterContent(
   }
 
   if (
-    input.actionText &&
+    normalizedActionText &&
     (input.phase === "matched" ||
       input.phase === "executing" ||
       input.phase === "awaiting_input" ||
       input.phase === "done")
   ) {
-    return { kind: "action", text: input.actionText };
+    return { kind: "action", text: normalizedActionText };
   }
 
   if (transcript.length > 0) {
@@ -173,23 +175,23 @@ export function selectCenterContent(
   return { kind: "placeholder" };
 }
 
-export function selectPhaseLabel(phase: HudPhase): string | null {
-  switch (phase) {
-    case "listening":
-      return null;
-    case "matched":
-      return "Matched";
-    case "awaiting_input":
-      return null;
-    case "executing":
-      return "Executing";
-    case "done":
-      return "Done";
-    case "stopped":
-      return "Stopped";
-    default:
-      return null;
+function normalizeActionText(actionText: string | null): string | null {
+  if (!actionText) return null;
+  const text = actionText.trim();
+  const lowered = text.toLowerCase();
+  if (
+    lowered === "follow up" ||
+    lowered.startsWith("awaiting input:") ||
+    lowered.startsWith("awaiting follow-up:")
+  ) {
+    return "follow up";
   }
+  return text;
+}
+
+export function selectPhaseLabel(phase: HudPhase): string | null {
+  void phase;
+  return null;
 }
 
 function CenterContent() {
@@ -220,7 +222,6 @@ function CenterContent() {
     case "action":
       return (
         <div className="hud-line hud-line-action">
-          <span className="hud-app-tag">JARVIS</span>
           <span>{selected.text}</span>
         </div>
       );

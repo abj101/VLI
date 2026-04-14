@@ -268,7 +268,7 @@ fn execute_one_action(action: &Action, runtime: &impl ActionRuntime) -> Result<S
         }
         Action::SubPrompt { prompt } => {
             validate_sub_prompt(prompt)?;
-            Ok(format!("Awaiting follow-up: {prompt}"))
+            Ok("follow up".to_string())
         }
     }
 }
@@ -820,6 +820,19 @@ mod tests {
         assert_eq!(s.follow_up_prompts, vec!["Which page should I open?".to_string()]);
         assert_eq!(s.speak_calls, vec!["Which page should I open?".to_string()]);
         assert_eq!(s.url_calls, vec!["https://example.com/docs".to_string()]);
+        assert!(s.errors.is_empty());
+    }
+
+    #[test]
+    fn sub_prompt_emits_plain_follow_up_status_text() {
+        let runtime = MockRuntime::with_follow_up_answers(vec!["docs"]);
+        let node = node_with_actions(vec![Action::SubPrompt {
+            prompt: "Which page should I open?".into(),
+        }]);
+
+        execute_command(&node, &runtime);
+        let s = runtime.snapshot();
+        assert!(s.statuses.iter().any(|status| status == "follow up"));
         assert!(s.errors.is_empty());
     }
 
