@@ -12,7 +12,7 @@ Implement the MVP slice from [SPEC.md](../SPEC.md): a **Tauri 2** app under `**j
 
 **Layout:** All app code under `jarvis/`. Run `npm` / `tauri` from `jarvis/`; raw `cargo` from `jarvis/src-tauri/`.
 
-> **Note:** `BrainStorm.md` is not currently in the repo. Critical HUD measurements are inlined into Task 6 below. Restore the file from git history or the original spec session before Phase 2 editor work.
+> **Note:** `BrainStorm.md` is at the repo root (Phase 3 T3-8). Task 6 below still inlines HUD measurements for Phase 1 self-containment.
 
 ---
 
