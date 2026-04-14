@@ -89,7 +89,7 @@ See [plan.md](./plan.md) for full task descriptions. All `npm`/`tauri` commands 
 - Stop/Esc same code path; click-through phase changes wired to Rust
 - **Verify:** manual mock-event demo cycling all 6 phases
 
-### Task 7 — Executor
+### Task 7 — Executor ✅ (2026-04-13)
 
 - `src/commands/executor.rs`: `OpenApp` via `cmd /C start`; `OpenUrl` via `tauri-plugin-shell`
 - Emit `action-status { text }` after each action
