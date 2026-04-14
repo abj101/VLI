@@ -32,7 +32,7 @@ See [plan.md](./plan.md) for full task descriptions. All `npm`/`tauri` commands 
 - Note: `update_command` deferred to Phase 2
 - **Verify:** `cargo test db::` (insert/list/get/delete + Action serde + seed idempotency)
 
-### Task 3 — Hotkey + HUD window + click-through
+### Task 3 — Hotkey + HUD window + click-through ✅ (2026-04-13)
 
 - Register `Ctrl+Shift+J` global shortcut (Tauri shortcut plugin)
 - Toggle `WebviewWindow`: transparent, `decorations: false`, `always_on_top: true`, skip taskbar, 480px wide, min 120px height

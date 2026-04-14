@@ -12,9 +12,20 @@
   "app": {
     "windows": [
       {
-        "title": "jarvis",
-        "width": 800,
-        "height": 600
+        "label": "hud",
+        "title": "JARVIS",
+        "width": 480,
+        "height": 160,
+        "minWidth": 480,
+        "maxWidth": 480,
+        "minHeight": 120,
+        "resizable": true,
+        "visible": false,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false
       }
     ],
     "security": {

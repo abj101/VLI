@@ -1,51 +1,73 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import type { HudPhase } from "./types";
 import "./App.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+export default function App() {
+  const [phase, setPhase] = useState<HudPhase>("idle");
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const p = await invoke<HudPhase>("hud_get_phase");
+        if (!cancelled) setPhase(p);
+      } catch {
+        // Web-only `npm run dev` without Tauri — ignore.
+      }
+    })();
+
+    let unlisten: (() => void) | undefined;
+    void listen<{ phase: HudPhase }>("hud-phase", (e) => {
+      setPhase(e.payload.phase);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      void invoke("hud_dismiss").catch(() => {});
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+    <div className="hud-root">
+      <div className="hud-title">JARVIS</div>
+      <div className="hud-phase">{phase}</div>
+      <p className="hud-hint">Toggle: Ctrl+Shift+J · Esc stops</p>
+      <div className="hud-actions">
+        <button
+          type="button"
+          onClick={() => void invoke("hud_set_phase", { phase: "idle" })}
+        >
+          Idle (click-through)
+        </button>
+        <button
+          type="button"
+          onClick={() => void invoke("hud_set_phase", { phase: "listening" })}
+        >
+          Listening
+        </button>
+        <button
+          type="button"
+          className="btn-stop"
+          onClick={() => void invoke("hud_dismiss")}
+        >
+          Stop
+        </button>
       </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    </div>
   );
 }
-
-export default App;
