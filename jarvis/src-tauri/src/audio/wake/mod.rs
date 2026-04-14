@@ -10,14 +10,25 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 use tauri::{AppHandle, Manager};
 
-/// ONNX wake classifier filename under `resource_root/oww/` (keep aligned with `oww.rs`).
-const OWW_MARKER_ONNX: &str = "hey_jarvis_v0.1.onnx";
+/// OpenWakeWord ONNX assets under `resource_root/oww/` (keep aligned with `oww.rs`).
+const OWW_MELSPEC_ONNX: &str = "melspectrogram.onnx";
+const OWW_EMBEDDING_ONNX: &str = "embedding_model.onnx";
+const OWW_WAKE_ONNX: &str = "hey_jarvis_v0.1.onnx";
+
+fn oww_wake_bundle_complete(dir: &Path) -> bool {
+    let oww = dir.join("oww");
+    oww.join(OWW_MELSPEC_ONNX).is_file()
+        && oww.join(OWW_EMBEDDING_ONNX).is_file()
+        && oww.join(OWW_WAKE_ONNX).is_file()
+}
 /// Bundled Porcupine keyword file under `resource_root/porcupine/`.
 const PORCUPINE_MARKER_PPN: &str = "porcupine_windows.ppn";
 
 fn tauri_resource_dir_ready_for_engine(dir: &Path, wake_engine: &str) -> bool {
     match wake_engine {
-        "oww" => dir.join("oww").join(OWW_MARKER_ONNX).is_file(),
+        // Require all ONNX files: dev `target/debug` can contain only the classifier from an
+        // older/partial copy; a lone marker must not block fallback to `src-tauri/resources`.
+        "oww" => oww_wake_bundle_complete(dir),
         "porcupine" => dir.join("porcupine").join(PORCUPINE_MARKER_PPN).is_file(),
         _ => false,
     }
@@ -214,14 +225,31 @@ mod tests {
     }
 
     #[test]
-    fn wake_resource_root_prefers_tauri_dir_when_oww_marker_present() {
+    fn wake_resource_root_prefers_tauri_dir_when_oww_bundle_complete() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let oww_dir = tmp.path().join("oww");
         std::fs::create_dir_all(&oww_dir).expect("mkdir");
-        std::fs::write(oww_dir.join(OWW_MARKER_ONNX), b"x").expect("write");
+        for name in [OWW_MELSPEC_ONNX, OWW_EMBEDDING_ONNX, OWW_WAKE_ONNX] {
+            std::fs::write(oww_dir.join(name), b"x").expect("write");
+        }
         let manifest = PathBuf::from("/nonexistent/manifest/resources");
         let picked = wake_resource_root_from_candidates("oww", Some(tmp.path()), &manifest);
         assert_eq!(picked, tmp.path());
+    }
+
+    #[test]
+    fn wake_resource_root_ignores_tauri_dir_when_oww_bundle_incomplete() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let oww_dir = tmp.path().join("oww");
+        std::fs::create_dir_all(&oww_dir).expect("mkdir");
+        std::fs::write(oww_dir.join(OWW_WAKE_ONNX), b"x").expect("write");
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let picked = wake_resource_root_from_candidates("oww", Some(tmp.path()), &manifest);
+        if cfg!(debug_assertions) {
+            assert_eq!(picked, manifest);
+        } else {
+            assert_eq!(picked, tmp.path());
+        }
     }
 
     #[test]
