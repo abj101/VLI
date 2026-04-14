@@ -96,29 +96,29 @@ Before continuing to T3-5 / T3-6, confirm all of the following:
 - [x] Create `SettingsPanel.tsx` with three sections: Hotkey, Default fuzzy threshold, Theme
 - [x] Theme selector applies CSS class to `<html>` in editor window immediately; persists to settings
 - [x] Add gear icon in editor header that toggles settings panel
-- [ ] **Verify:** Change hotkey → close app → reopen → new hotkey works
-- [ ] **Verify:** Invalid hotkey (empty) → inline error, old hotkey still active
-- [ ] **Verify:** Light/dark theme toggle → immediate re-render → persists on reopen
-- [ ] **Verify:** Default threshold change → persists → used by matcher when node has no override
+- [X] **Verify:** Change hotkey → close app → reopen → new hotkey works
+- [X] **Verify:** Invalid hotkey (empty) → inline error, old hotkey still active
+- [X] **Verify:** Light/dark theme toggle → immediate re-render → persists on reopen
+- [X] **Verify:** Default threshold change → persists → used by matcher when node has no override
 - [x] **Verify:** `cargo test db::settings`
 
 ---
 
 ## Task 3-6: Drag-and-Drop Node Reorder in NodeList
 
-- [ ] Write `MIGRATIONS.md` at `jarvis/src-tauri/` documenting migration log format
-- [ ] Add `sort_order INTEGER DEFAULT 0` column: `ALTER TABLE command_nodes ADD COLUMN sort_order INTEGER DEFAULT 0` — idempotent (check column exists first)
-- [ ] Update `list_commands` to `ORDER BY sort_order ASC, id ASC`
-- [ ] Implement `reorder_commands(ordered_ids: Vec<i64>)` in `db/mod.rs` — bulk update `sort_order`
-- [ ] Add `cargo test db::reorder`
-- [ ] Register `reorder_commands` IPC command in `lib.rs`
-- [ ] Add drag handles (⠿) to `NodeList.tsx` rows — visible on hover, `@dnd-kit` integration
-- [ ] Up/down arrow button fallback per row (keyboard accessible)
-- [ ] On drag end: call `invoke("reorder_commands", { orderedIds: [...] })`; optimistic store update
-- [ ] **Verify:** Drag nodes → close editor → reopen → order preserved
-- [ ] **Verify:** Pipeline still matches commands correctly after reorder (sort_order does not affect matching)
-- [ ] **Verify:** `cargo test db::reorder`
-- [ ] **Verify:** Migration runs cleanly on a pre-Phase-3 DB file (test with a copied Phase 2 DB)
+- [x] Write `MIGRATIONS.md` at `jarvis/src-tauri/` documenting migration log format
+- [x] Add `sort_order INTEGER DEFAULT 0` column: `ALTER TABLE command_nodes ADD COLUMN sort_order INTEGER DEFAULT 0` — idempotent (check column exists first)
+- [x] Update `list_commands` to `ORDER BY sort_order ASC, id ASC`
+- [x] Implement `reorder_commands(ordered_ids: Vec<i64>)` in `db/mod.rs` — bulk update `sort_order`
+- [x] Add `cargo test db::reorder`
+- [x] Register `reorder_commands` IPC command in `lib.rs`
+- [x] Add drag handles (⠿) to `NodeList.tsx` rows — visible on hover, `@dnd-kit` integration
+- [x] Up/down arrow button fallback per row (keyboard accessible)
+- [x] On drag end: call `invoke("reorder_commands", { payload: { orderedIds: [...] } })`; optimistic store update
+- [X] **Verify:** Drag nodes → close editor → reopen → order preserved
+- [X] **Verify:** Pipeline still matches commands correctly after reorder (sort_order does not affect matching)
+- [x] **Verify:** `cargo test db::reorder`
+- [x] **Verify:** Migration runs cleanly on a pre-Phase-3 DB file (test with a copied Phase 2 DB)
 
 ---
 
@@ -199,4 +199,3 @@ Once Phase 3 is signed off, Phase 4 will cover:
 - Full `ai_mode` settings UI (API key entry, model selector)
 - App auto-detection for `open_app` (enumerate running / installed apps)
 
-Restore and review `BrainStorm.md` before starting Phase 4.

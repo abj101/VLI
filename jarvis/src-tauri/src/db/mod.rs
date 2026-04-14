@@ -596,6 +596,7 @@ mod settings_tests {
 mod reorder {
     use super::*;
     use rusqlite::Connection;
+    use std::fs;
     use tempfile::tempdir;
 
     fn open_temp() -> (tempfile::TempDir, Connection) {
@@ -677,5 +678,66 @@ mod reorder {
             .map(|node| node.id)
             .collect();
         assert_eq!(ids, vec![third, first, second]);
+    }
+
+    #[test]
+    fn migration_runs_on_copied_pre_phase_three_db_file() {
+        let dir = tempdir().expect("tempdir");
+        let source_path = dir.path().join("phase2.db");
+        let copied_path = dir.path().join("phase2-copy.db");
+
+        let source = Connection::open(&source_path).expect("open source db");
+        source
+            .execute_batch(
+                r"
+                CREATE TABLE command_nodes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    trigger_phrases TEXT NOT NULL,
+                    actions TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    fuzzy_threshold_pct INTEGER NOT NULL DEFAULT 80,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                ",
+            )
+            .expect("create phase2 schema");
+        source
+            .execute(
+                "INSERT INTO command_nodes (name, trigger_phrases, actions, enabled, fuzzy_threshold_pct) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    "Legacy Node",
+                    r#"["legacy trigger"]"#,
+                    r#"[{"wait":{"ms":50}}]"#,
+                    1,
+                    80
+                ],
+            )
+            .expect("insert legacy row");
+        drop(source);
+
+        fs::copy(&source_path, &copied_path).expect("copy phase2 db file");
+        init_db(&copied_path).expect("migrate copied db");
+
+        let migrated = Connection::open(&copied_path).expect("open migrated db");
+        let rows = get_all_commands(&migrated).expect("load commands after migration");
+        assert!(
+            rows.iter().any(|node| node.name == "Legacy Node"),
+            "legacy row should remain after migration"
+        );
+
+        let mut stmt = migrated
+            .prepare("PRAGMA table_info(command_nodes)")
+            .expect("prepare table info");
+        let mut pragma_rows = stmt.query([]).expect("query table info");
+        let mut has_sort_order = false;
+        while let Some(row) = pragma_rows.next().expect("next row") {
+            let column_name: String = row.get(1).expect("column name");
+            if column_name == "sort_order" {
+                has_sort_order = true;
+                break;
+            }
+        }
+        assert!(has_sort_order, "sort_order column should exist after migration");
     }
 }

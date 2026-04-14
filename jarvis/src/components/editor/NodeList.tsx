@@ -109,7 +109,7 @@ export function NodeList() {
   const persistReorder = (orderedIds: number[]) => {
     const previousNodes = useEditorStore.getState().nodes;
     reorderNodes(orderedIds);
-    void invoke("reorder_commands", { orderedIds }).catch((err: unknown) => {
+    void invoke("reorder_commands", { payload: { orderedIds } }).catch((err: unknown) => {
       setNodes(previousNodes);
       showError(`Failed to reorder commands: ${String(err)}`);
     });
