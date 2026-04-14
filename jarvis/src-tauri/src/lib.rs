@@ -54,8 +54,10 @@ fn load_all_commands(app: &AppHandle) -> Result<Vec<db::CommandNode>, String> {
     db::get_all_commands(&conn).map_err(|e| e.to_string())
 }
 
-fn should_process_final_transcript(rt: &HudRuntime, is_final: bool) -> bool {
-    is_final && rt.visible && rt.phase == HudPhase::Listening
+/// Live STT emits partial `transcript-update` (`is_final: false`). `is_final` is only set when the
+/// mic pipeline stops, so matching must run on partials while listening — otherwise commands never fire.
+fn should_attempt_command_match(rt: &HudRuntime) -> bool {
+    rt.visible && rt.phase == HudPhase::Listening
 }
 
 fn should_fire_no_match_timeout(rt: &HudRuntime, expected_session_id: u64) -> bool {
@@ -186,11 +188,14 @@ fn process_transcript_update(
         .map_err(|e| format!("invalid transcript-update payload: {e}"))?;
     touch_speech_on_transcript(rt, &update.text);
 
-    let should_process = {
+    let can_match = {
         let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
-        should_process_final_transcript(&s, update.is_final)
+        should_attempt_command_match(&s)
     };
-    if !should_process {
+    if !can_match {
+        return Ok(());
+    }
+    if update.text.trim().is_empty() {
         return Ok(());
     }
 
@@ -199,6 +204,13 @@ fn process_transcript_update(
         Some(m) => m,
         None => return Ok(()),
     };
+
+    {
+        let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+        if s.phase != HudPhase::Listening || !s.visible {
+            return Ok(());
+        }
+    }
     let _ = app.emit("match-result", &matched);
     let _ = set_phase(app, rt, HudPhase::Matched)?;
 
@@ -430,10 +442,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn final_transcript_requires_listening_phase() {
+    fn command_match_requires_listening_visible() {
         let mut rt = HudRuntime::default();
+        rt.visible = true;
+        rt.phase = HudPhase::Listening;
+        assert!(should_attempt_command_match(&rt));
         rt.phase = HudPhase::Done;
-        assert!(!should_process_final_transcript(&rt, true));
+        assert!(!should_attempt_command_match(&rt));
+        rt.phase = HudPhase::Listening;
+        rt.visible = false;
+        assert!(!should_attempt_command_match(&rt));
     }
 
     #[test]
