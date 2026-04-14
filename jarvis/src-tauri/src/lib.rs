@@ -8,6 +8,7 @@ use audio::SharedAudioPipeline;
 use commands::TauriActionRuntime;
 use hud::{sync_hud_window, HudPhase, HUD_WINDOW_LABEL};
 use log::{debug, info, warn};
+use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -27,6 +28,61 @@ const SPEECH_AMPLITUDE_THRESHOLD: f64 = 0.02;
 const FOLLOW_UP_TIMEOUT: Duration = Duration::from_secs(8);
 const FOLLOW_UP_TIMEOUT_MSG: &str = "Follow-up input timed out";
 const ACTION_RUN_CANCELLED_MSG: &str = "Action run cancelled";
+
+type ActionPayload = db::Action;
+
+#[derive(Debug, Clone, Deserialize)]
+struct CommandNodePayload {
+    name: String,
+    trigger_phrases: Vec<String>,
+    actions: Vec<ActionPayload>,
+    enabled: bool,
+    fuzzy_threshold_pct: i64,
+}
+
+impl CommandNodePayload {
+    fn try_into_new_command_node(&self) -> Result<db::NewCommandNode, String> {
+        validate_command_node_payload(self)?;
+        let name = self.name.trim().to_string();
+        let trigger_phrases = self
+            .trigger_phrases
+            .iter()
+            .map(|phrase| phrase.trim())
+            .filter(|phrase| !phrase.is_empty())
+            .map(ToString::to_string)
+            .collect();
+        Ok(db::NewCommandNode {
+            name,
+            trigger_phrases,
+            actions: self.actions.clone(),
+            enabled: self.enabled,
+            fuzzy_threshold_pct: self.fuzzy_threshold_pct as u16,
+        })
+    }
+}
+
+fn validate_command_node_payload(payload: &CommandNodePayload) -> Result<(), String> {
+    if payload.name.trim().is_empty() {
+        return Err("name is required".to_string());
+    }
+    let has_any_trigger = payload
+        .trigger_phrases
+        .iter()
+        .any(|phrase| !phrase.trim().is_empty());
+    if !has_any_trigger {
+        return Err("at least one trigger phrase is required".to_string());
+    }
+    if !(0..=100).contains(&payload.fuzzy_threshold_pct) {
+        return Err("fuzzy threshold must be between 0 and 100".to_string());
+    }
+    Ok(())
+}
+
+fn open_db_connection(app: &AppHandle) -> Result<rusqlite::Connection, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let db_path = dir.join("jarvis.db");
+    rusqlite::Connection::open(db_path).map_err(|e| e.to_string())
+}
 
 #[derive(Debug, Default)]
 struct HudRuntime {
@@ -86,9 +142,7 @@ fn emit_hud_phase(app: &AppHandle, phase: HudPhase) {
 }
 
 fn load_all_commands(app: &AppHandle) -> Result<Vec<db::CommandNode>, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let db_path = dir.join("jarvis.db");
-    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_db_connection(app)?;
     db::get_all_commands(&conn).map_err(|e| e.to_string())
 }
 
@@ -787,6 +841,51 @@ fn open_editor(app: AppHandle) -> Result<(), String> {
     open_or_create_editor_window(&app)
 }
 
+#[tauri::command]
+fn list_commands(app: AppHandle) -> Result<Vec<db::CommandNode>, String> {
+    let conn = open_db_connection(&app)?;
+    db::get_all_commands(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_command(app: AppHandle, id: i64) -> Result<Option<db::CommandNode>, String> {
+    let conn = open_db_connection(&app)?;
+    db::get_command_by_id(&conn, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_command(app: AppHandle, node: CommandNodePayload) -> Result<db::CommandNode, String> {
+    let conn = open_db_connection(&app)?;
+    let row = node.try_into_new_command_node()?;
+    let id = db::insert_command(&conn, &row).map_err(|e| e.to_string())?;
+    db::get_command_by_id(&conn, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("created node {id} was not found"))
+}
+
+#[tauri::command]
+fn update_command(
+    app: AppHandle,
+    id: i64,
+    node: CommandNodePayload,
+) -> Result<db::CommandNode, String> {
+    let conn = open_db_connection(&app)?;
+    let row = node.try_into_new_command_node()?;
+    let changed = db::update_command(&conn, id, &row).map_err(|e| e.to_string())?;
+    if !changed {
+        return Err(format!("command with id {id} was not found"));
+    }
+    db::get_command_by_id(&conn, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("updated node {id} was not found"))
+}
+
+#[tauri::command]
+fn delete_command(app: AppHandle, id: i64) -> Result<bool, String> {
+    let conn = open_db_connection(&app)?;
+    db::delete_command(&conn, id).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -887,7 +986,12 @@ pub fn run() {
             hud_get_phase,
             hud_set_phase,
             hud_dismiss,
-            open_editor
+            open_editor,
+            list_commands,
+            get_command,
+            create_command,
+            update_command,
+            delete_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -896,6 +1000,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use db::Action;
     use std::sync::atomic::Ordering;
 
     #[test]
@@ -1042,5 +1147,81 @@ mod tests {
         assert!(cancel.load(Ordering::Relaxed));
         assert!(rt.active_run_cancel.is_none());
         assert_eq!(rt.active_run_session_id, None);
+    }
+
+    #[test]
+    fn command_payload_validation_rejects_empty_name() {
+        let payload = CommandNodePayload {
+            name: "   ".into(),
+            trigger_phrases: vec!["open notepad".into()],
+            actions: vec![ActionPayload::OpenApp {
+                name: "notepad".into(),
+                path: "notepad.exe".into(),
+            }],
+            enabled: true,
+            fuzzy_threshold_pct: 80,
+        };
+        assert!(validate_command_node_payload(&payload).is_err());
+    }
+
+    #[test]
+    fn command_payload_validation_rejects_empty_trigger_list() {
+        let payload = CommandNodePayload {
+            name: "Open".into(),
+            trigger_phrases: vec![],
+            actions: vec![ActionPayload::OpenUrl {
+                url: "https://example.com".into(),
+            }],
+            enabled: true,
+            fuzzy_threshold_pct: 80,
+        };
+        assert!(validate_command_node_payload(&payload).is_err());
+    }
+
+    #[test]
+    fn command_payload_validation_rejects_out_of_range_threshold() {
+        let payload = CommandNodePayload {
+            name: "Open".into(),
+            trigger_phrases: vec!["open".into()],
+            actions: vec![ActionPayload::Speak {
+                text: "done".into(),
+            }],
+            enabled: true,
+            fuzzy_threshold_pct: 101,
+        };
+        assert!(validate_command_node_payload(&payload).is_err());
+    }
+
+    #[test]
+    fn command_payload_conversion_trims_and_round_trips() {
+        let payload = CommandNodePayload {
+            name: "  Open App  ".into(),
+            trigger_phrases: vec!["  open app ".into(), "launch app".into()],
+            actions: vec![
+                ActionPayload::Wait { ms: 250 },
+                ActionPayload::Speak {
+                    text: "done".into(),
+                },
+            ],
+            enabled: false,
+            fuzzy_threshold_pct: 90,
+        };
+        let node = payload.try_into_new_command_node().expect("valid payload");
+        assert_eq!(node.name, "Open App");
+        assert_eq!(
+            node.trigger_phrases,
+            vec!["open app".to_string(), "launch app".to_string()]
+        );
+        assert_eq!(node.enabled, false);
+        assert_eq!(node.fuzzy_threshold_pct, 90);
+        assert_eq!(
+            node.actions,
+            vec![
+                Action::Wait { ms: 250 },
+                Action::Speak {
+                    text: "done".into()
+                }
+            ]
+        );
     }
 }

@@ -36,12 +36,15 @@ export type CommandAction =
   | { speak: { text: string } }
   | { sub_prompt: { prompt: string } };
 
+export type ActionPayload = CommandAction;
+
 export interface CommandNodePayload {
   id: number;
   name: string;
   trigger_phrases: string[];
-  actions: CommandAction[];
+  actions: ActionPayload[];
   enabled: boolean;
+  fuzzy_threshold_pct: number;
   created_at: string;
 }
 

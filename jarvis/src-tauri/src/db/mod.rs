@@ -438,3 +438,70 @@ mod tests {
         }));
     }
 }
+
+#[cfg(test)]
+mod update {
+    use super::*;
+    use rusqlite::Connection;
+    use tempfile::tempdir;
+
+    fn open_temp() -> (tempfile::TempDir, Connection) {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("update-test.db");
+        init_db(&path).expect("init db");
+        let conn = Connection::open(&path).expect("open db");
+        (dir, conn)
+    }
+
+    #[test]
+    fn round_trip_update_command() {
+        let (_dir, conn) = open_temp();
+        let id = insert_command(
+            &conn,
+            &NewCommandNode {
+                name: "Original".into(),
+                trigger_phrases: vec!["do thing".into()],
+                actions: vec![Action::OpenUrl {
+                    url: "https://example.com".into(),
+                }],
+                enabled: true,
+                fuzzy_threshold_pct: 80,
+            },
+        )
+        .expect("insert");
+
+        let changed = update_command(
+            &conn,
+            id,
+            &NewCommandNode {
+                name: "Updated".into(),
+                trigger_phrases: vec!["do better thing".into()],
+                actions: vec![
+                    Action::Wait { ms: 1200 },
+                    Action::Speak {
+                        text: "done".into(),
+                    },
+                ],
+                enabled: false,
+                fuzzy_threshold_pct: 90,
+            },
+        )
+        .expect("update");
+        assert!(changed);
+
+        let one = get_command_by_id(&conn, id).expect("get").expect("row");
+        assert_eq!(one.name, "Updated");
+        assert_eq!(one.trigger_phrases, vec!["do better thing".to_string()]);
+        assert!(!one.enabled);
+        assert_eq!(one.fuzzy_threshold_pct, 90);
+        assert_eq!(
+            one.actions,
+            vec![
+                Action::Wait { ms: 1200 },
+                Action::Speak {
+                    text: "done".into()
+                }
+            ]
+        );
+    }
+}

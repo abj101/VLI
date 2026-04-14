@@ -21,14 +21,14 @@
 
 ## Task 3-2: IPC — `update_command` + Full CRUD Surface
 
-- [ ] Implement `update_command(id, node)` in `db/mod.rs`
-- [ ] Add `cargo test db::update` — round-trip update test
-- [ ] Register all 5 IPC commands in `lib.rs`: `list_commands`, `get_command`, `create_command`, `update_command`, `delete_command`
-- [ ] Add Rust-side payload validation (empty name, zero trigger phrases, threshold out of range → `Err(String)`)
-- [ ] Add `CommandNodePayload` and `ActionPayload` types to `src/types.ts` if not already present
-- [ ] **Verify:** `cd jarvis/src-tauri && cargo test db::`  — all green including new update test
-- [ ] **Verify:** Manual devtools `invoke("update_command", {...})` returns success
-- [ ] **Verify:** Invalid payloads return error strings (not panics)
+- [x] Implement `update_command(id, node)` in `db/mod.rs`
+- [x] Add `cargo test db::update` — round-trip update test
+- [x] Register all 5 IPC commands in `lib.rs`: `list_commands`, `get_command`, `create_command`, `update_command`, `delete_command`
+- [x] Add Rust-side payload validation (empty name, zero trigger phrases, threshold out of range → `Err(String)`)
+- [x] Add `CommandNodePayload` and `ActionPayload` types to `src/types.ts` if not already present
+- [x] **Verify:** `cd jarvis/src-tauri && cargo test db::`  — all green including new update test
+- [ ] **Verify:** Manual devtools `invoke("update_command", {...})` returns success *(deferred: requires interactive app/devtools session)*
+- [x] **Verify:** Invalid payloads return error strings (not panics)
 
 ---
 
