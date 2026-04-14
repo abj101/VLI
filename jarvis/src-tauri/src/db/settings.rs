@@ -2,11 +2,9 @@ use crate::db::DbError;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-pub const SETTING_ANTHROPIC_KEY_STORED: &str = "anthropic_key_stored";
 pub const SETTING_PORCUPINE_KEY_STORED: &str = "porcupine_key_stored";
 pub const SETTING_WAKE_ENGINE: &str = "wake_engine";
 pub const SETTING_OWW_THRESHOLD: &str = "oww_threshold";
-pub const SETTING_GLOBAL_AI_MODE: &str = "global_ai_mode";
 
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>, DbError> {
     let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
@@ -54,11 +52,9 @@ fn parse_oww_threshold(raw: Option<String>) -> f32 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    pub anthropic_key_stored: bool,
     pub porcupine_key_stored: bool,
     pub wake_engine: String,
     pub oww_threshold: f32,
-    pub global_ai_mode: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -66,16 +62,13 @@ pub struct AppSettings {
 pub struct SettingsPatch {
     pub wake_engine: Option<String>,
     pub oww_threshold: Option<f32>,
-    pub global_ai_mode: Option<bool>,
 }
 
 pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
     Ok(AppSettings {
-        anthropic_key_stored: bool_from_setting(get_setting(conn, SETTING_ANTHROPIC_KEY_STORED)?),
         porcupine_key_stored: bool_from_setting(get_setting(conn, SETTING_PORCUPINE_KEY_STORED)?),
         wake_engine: parse_wake_engine(get_setting(conn, SETTING_WAKE_ENGINE)?),
         oww_threshold: parse_oww_threshold(get_setting(conn, SETTING_OWW_THRESHOLD)?),
-        global_ai_mode: bool_from_setting(get_setting(conn, SETTING_GLOBAL_AI_MODE)?),
     })
 }
 
@@ -97,15 +90,11 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
         }
         set_setting(conn, SETTING_OWW_THRESHOLD, &format!("{t}"))?;
     }
-    if let Some(on) = patch.global_ai_mode {
-        set_setting(conn, SETTING_GLOBAL_AI_MODE, if on { "1" } else { "0" })?;
-    }
     Ok(())
 }
 
 pub fn set_key_stored_flag(conn: &Connection, service: &str, stored: bool) -> Result<(), DbError> {
     let key = match service {
-        "anthropic" => SETTING_ANTHROPIC_KEY_STORED,
         "porcupine" => SETTING_PORCUPINE_KEY_STORED,
         _ => {
             return Err(DbError::Validation(format!(
@@ -153,29 +142,25 @@ mod tests {
     fn get_app_settings_defaults_when_empty() {
         let (_dir, conn) = open_temp();
         let s = get_app_settings(&conn).expect("get_app_settings");
-        assert!(!s.anthropic_key_stored);
         assert!(!s.porcupine_key_stored);
         assert_eq!(s.wake_engine, "hotkey");
         assert!((s.oww_threshold - 0.5).abs() < f32::EPSILON);
-        assert!(!s.global_ai_mode);
     }
 
     #[test]
-    fn apply_settings_patch_persists_wake_and_ai_mode() {
+    fn apply_settings_patch_persists_wake_and_oww() {
         let (_dir, conn) = open_temp();
         apply_settings_patch(
             &conn,
             &SettingsPatch {
                 wake_engine: Some("oww".into()),
                 oww_threshold: Some(0.35),
-                global_ai_mode: Some(true),
             },
         )
         .expect("patch");
         let s = get_app_settings(&conn).expect("reload");
         assert_eq!(s.wake_engine, "oww");
         assert!((s.oww_threshold - 0.35).abs() < 0.0001);
-        assert!(s.global_ai_mode);
     }
 
     #[test]
@@ -186,7 +171,6 @@ mod tests {
             &SettingsPatch {
                 wake_engine: Some("bogus".into()),
                 oww_threshold: None,
-                global_ai_mode: None,
             },
         )
         .expect_err("expected validation error");

@@ -60,7 +60,6 @@ export function modelFromNode(node: CommandNodePayload | null): FormModel {
   if (!node) {
     return emptyFormModel();
   }
-  const normalizedSubPrompt = node.sub_prompt?.trim() ?? "";
   const subPromptIndex = node.actions.findIndex((action) => "sub_prompt" in action);
   if (subPromptIndex === -1) {
     return {
@@ -70,7 +69,7 @@ export function modelFromNode(node: CommandNodePayload | null): FormModel {
       threshold: clampThreshold(node.fuzzy_threshold_pct / 100),
       enabled: node.enabled,
       actions: [...node.actions],
-      subPromptText: normalizedSubPrompt,
+      subPromptText: "",
       subPromptActions: [],
     };
   }
@@ -101,8 +100,6 @@ export function toCommandPayload(model: FormModel): Omit<CommandNodePayload, "id
     actions: mergedActions,
     enabled: model.enabled,
     fuzzy_threshold_pct: Math.round(clampThreshold(model.threshold) * 100),
-    ai_mode: normalizedSubPrompt.length > 0,
-    sub_prompt: normalizedSubPrompt.length > 0 ? normalizedSubPrompt : null,
   };
 }
 

@@ -37,7 +37,6 @@ whisper-rs = "0.14"
 log = "0.4"
 env_logger = "0.11"
 rapidfuzz = "0.5.0"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 keyring = "2.3"
 libloading = { version = "0.8", optional = true }
 # ONNX Runtime via ort (OpenWakeWord); only linked when `oww` feature is enabled.
@@ -45,7 +44,5 @@ ort = { version = "2.0.0-rc.12", optional = true, default-features = true, featu
 ndarray = { version = "0.17", optional = true }
 
 [dev-dependencies]
-httpmock = "0.7"
 tempfile = "3"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 

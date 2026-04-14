@@ -194,8 +194,6 @@ mod tests {
             actions: vec![],
             enabled,
             fuzzy_threshold_pct,
-            ai_mode: false,
-            sub_prompt: None,
             created_at: "now".into(),
         }
     }
@@ -276,8 +274,6 @@ mod tests {
             }],
             enabled: true,
             fuzzy_threshold_pct: 80,
-            ai_mode: false,
-            sub_prompt: None,
             created_at: "x".into(),
         };
         let t = "OPEN NOTEPAD";

@@ -9,10 +9,6 @@ pub struct CommandNode {
     pub actions: Vec<Action>,
     pub enabled: bool,
     pub fuzzy_threshold_pct: u16,
-    #[serde(default)]
-    pub ai_mode: bool,
-    #[serde(default)]
-    pub sub_prompt: Option<String>,
     pub created_at: String,
 }
 
@@ -24,8 +20,6 @@ pub struct NewCommandNode {
     pub actions: Vec<Action>,
     pub enabled: bool,
     pub fuzzy_threshold_pct: u16,
-    pub ai_mode: bool,
-    pub sub_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

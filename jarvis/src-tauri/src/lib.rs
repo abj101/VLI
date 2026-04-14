@@ -1,4 +1,3 @@
-mod ai;
 mod audio;
 mod commands;
 mod db;
@@ -48,10 +47,6 @@ struct CommandNodePayload {
     actions: Vec<ActionPayload>,
     enabled: bool,
     fuzzy_threshold_pct: i64,
-    #[serde(default)]
-    ai_mode: bool,
-    #[serde(default)]
-    sub_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -77,12 +72,6 @@ impl CommandNodePayload {
             actions: self.actions.clone(),
             enabled: self.enabled,
             fuzzy_threshold_pct: self.fuzzy_threshold_pct as u16,
-            ai_mode: self.ai_mode,
-            sub_prompt: self
-                .sub_prompt
-                .as_ref()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty()),
         })
     }
 }
@@ -100,15 +89,6 @@ fn validate_command_node_payload(payload: &CommandNodePayload) -> Result<(), Str
     }
     if !(0..=100).contains(&payload.fuzzy_threshold_pct) {
         return Err("fuzzy threshold must be between 0 and 100".to_string());
-    }
-    if payload.ai_mode
-        && payload
-            .sub_prompt
-            .as_ref()
-            .map(|value| value.trim().is_empty())
-            .unwrap_or(true)
-    {
-        return Err("sub_prompt is required when ai_mode is enabled".to_string());
     }
     Ok(())
 }
@@ -1095,16 +1075,6 @@ fn set_hotkey(
     Ok(next_hotkey)
 }
 
-/// True when `ANTHROPIC_API_KEY` is set in the environment or an Anthropic key exists in the OS keychain.
-/// Never returns or logs the key value.
-#[tauri::command]
-fn anthropic_api_key_configured() -> bool {
-    std::env::var("ANTHROPIC_API_KEY")
-        .map(|raw| !raw.trim().is_empty())
-        .unwrap_or(false)
-        || keychain::anthropic_key_in_keychain()
-}
-
 #[tauri::command]
 fn get_settings(app: AppHandle) -> Result<db::AppSettings, String> {
     let conn = open_db_connection(&app)?;
@@ -1273,7 +1243,6 @@ pub fn run() {
             get_setting,
             set_setting,
             set_hotkey,
-            anthropic_api_key_configured,
             get_settings,
             update_settings,
             save_api_key,
@@ -1448,8 +1417,6 @@ mod tests {
             }],
             enabled: true,
             fuzzy_threshold_pct: 80,
-            ai_mode: false,
-            sub_prompt: None,
         };
         assert!(validate_command_node_payload(&payload).is_err());
     }
@@ -1464,8 +1431,6 @@ mod tests {
             }],
             enabled: true,
             fuzzy_threshold_pct: 80,
-            ai_mode: false,
-            sub_prompt: None,
         };
         assert!(validate_command_node_payload(&payload).is_err());
     }
@@ -1480,8 +1445,6 @@ mod tests {
             }],
             enabled: true,
             fuzzy_threshold_pct: 101,
-            ai_mode: false,
-            sub_prompt: None,
         };
         assert!(validate_command_node_payload(&payload).is_err());
     }
@@ -1499,8 +1462,6 @@ mod tests {
             ],
             enabled: false,
             fuzzy_threshold_pct: 90,
-            ai_mode: true,
-            sub_prompt: Some("Summarize".into()),
         };
         let node = payload.try_into_new_command_node().expect("valid payload");
         assert_eq!(node.name, "Open App");
@@ -1510,8 +1471,6 @@ mod tests {
         );
         assert_eq!(node.enabled, false);
         assert_eq!(node.fuzzy_threshold_pct, 90);
-        assert!(node.ai_mode);
-        assert_eq!(node.sub_prompt, Some("Summarize".to_string()));
         assert_eq!(
             node.actions,
             vec![
@@ -1544,8 +1503,6 @@ mod tests {
                 actions: vec![Action::Wait { ms: 25 }],
                 enabled: true,
                 fuzzy_threshold_pct: 80,
-                ai_mode: false,
-                sub_prompt: None,
             },
         )
         .expect("insert");

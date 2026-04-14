@@ -1,26 +1,30 @@
-# JARVIS Phase 4 — Task Checklist
+# JARVIS Phase 4 — Task Checklist (revised)
 
-> Phases 1–3 complete. This checklist covers Phase 4: Wake Word, `ai_mode`, App Auto-Detection.
-> Work each task to **Done** before moving to the next unless the dependency graph allows parallel tracks.
+> Phases 1–3 complete. **Phase 4 scope:** wake word, **transcription backend choice** (local / OS / online API), app auto-detection. **No** Haiku / LLM `ai_mode` — only “AI” is **speech-to-text** models/providers.  
+> Work each task to **Done** before the next unless the dependency graph allows parallel tracks.
 
 ---
 
-## Checkpoint A prerequisites (complete before T4-5/T4-6)
+## Checkpoint A prerequisites (before T4-5 / full orchestration)
 
-- [x] **T4-1** `WakeDetector` trait + Porcupine backend
-- [x] **T4-2** OpenWakeWord backend (feature-gated)
-- [x] **T4-3** Haiku `ai_mode` HTTP client
-- [x] **T4-4** API key storage + Settings IPC + Settings UI
+- [x] **T4-1** `WakeDetector` trait + Porcupine backend *(implemented; see checklist below)*
+- [x] **T4-2** OpenWakeWord backend (feature-gated) *(implemented)*
+- [ ] **T4-3** Transcription backend abstraction + local path + settings contract *(replaces old “Haiku client” milestone — STT only)*
+- [ ] **T4-4** Settings IPC + UI — wake, Porcupine, **STT provider**; **remove** Anthropic / global AI mode UI *(coordinate with T4-6)*
+
+### Legacy note (codebase today)
+
+Earlier Phase 4 work added **Haiku `ai_mode`** (`src/ai/`, Anthropic settings). That direction is **retired**. **T4-6** removes those artifacts after STT settings (T4-3/4) land.
 
 ---
 
 ## T4-1 · `WakeDetector` trait + Porcupine backend
 
-- [x] `audio/wake/mod.rs` created — `WakeDetector` trait with `process_frame` + `backend_name`
+- [x] `audio/wake/mod.rs` — `WakeDetector` trait with `process_frame` + `backend_name`
 - [x] `audio/wake/porcupine.rs` — `PorcupineBackend` implements trait
 - [x] Porcupine access key read from OS keychain at construction
-- [x] `.ppn` model file + Porcupine shared lib added to `bundle.resources` (`prebuild` runs `fetch-wake-models.mjs` so files exist before bundle)
-- [x] `scripts/download-wake-models.ps1` fetches binaries (not committed to git)
+- [x] `.ppn` model file + Porcupine shared lib in `bundle.resources` (`prebuild` / `fetch-wake-models.mjs`)
+- [x] `scripts/download-wake-models.ps1` fetches binaries (not committed)
 - [x] `.gitignore` covers `*.ppn`, `*.dll` model files
 - [x] Missing key or model → app starts in hotkey-only mode (no panic, warning logged)
 - [x] `cargo test audio::wake::` passes
@@ -32,63 +36,69 @@
 
 - [x] `audio/wake/oww.rs` — `OpenWakeWordBackend` implements `WakeDetector` trait
 - [x] ONNX runtime via `ort` crate; no Python dependency in bundled app
-- [ ] `oww_threshold` persisted in settings + passed into `try_new` (persisted in **T4-4**; wake thread wiring **T4-5**)
+- [ ] `oww_threshold` persisted in settings + passed into `try_new` (persisted in settings; wake thread wiring **T4-5**)
 - [x] Gated behind `feature = "oww"` in `Cargo.toml`
 - [x] Default build compiles without OWW symbols (`cargo build` — no `oww` feature)
-- [x] `scripts/download-oww-model.ps1` fetches `.onnx` (v0.5.1 release assets → `resources/oww/`)
+- [x] `scripts/download-oww-model.ps1` fetches `.onnx`
 - [x] `cargo test --features oww audio::wake::oww` passes
 - [x] `backend_name()` returns `"oww"`
 
 ---
 
-## T4-3 · Haiku `ai_mode` HTTP client
+## T4-3 · Transcription engine selection (local / OS / online API)
 
-- [x] `src/ai/mod.rs` created — `run_ai_mode(node, transcript, api_key)` async fn (+ `run_ai_mode_with_config` + `AiEndpointConfig` for Anthropic default, OpenAI-compatible, or Ollama local endpoints)
-- [x] `reqwest` with `rustls` added to `Cargo.toml` (`rustls-tls`)
-- [x] Calls `https://api.anthropic.com/v1/messages` with `claude-haiku-4-5` (default `AiEndpointConfig`)
-- [x] `sub_prompt` on `CommandNode` used as system prompt (fallback to default)
-- [x] Response parsed into `AiResponse { text, actions: Vec<Action> }`
-- [x] Malformed JSON → graceful degradation (raw text, no panic)
-- [x] 10-second hard timeout → `AiError::Timeout` returned
-- [x] API key does not appear in any log line (`ai` module has no `log!`/`debug!` of key; `--nocapture` clean)
-- [x] `httpmock` used in tests — no real network calls in CI
-- [x] `cargo test ai::` passes
+**Replaces obsolete milestone “Haiku HTTP client” — product has no command LLM.**
+
+- [ ] `TranscriptionBackend` (or equivalent) trait / enum: **local on-device**, **OS speech API**, **remote HTTP STT**
+- [ ] Settings row / keys for `stt_provider` + remote endpoint metadata (secrets via keychain, not SQLite)
+- [ ] **Local** path: current Whisper (or bundled) pipeline selected by default; behavior matches Phase 1–3 when chosen
+- [ ] **OS** path: Windows implementation or documented stub + `cfg` for other OSes
+- [ ] **Remote** path: HTTP contract documented; timeout; errors surfaced to HUD/status (no key in logs)
+- [ ] `cargo test` for transcription module(s)
+- [ ] `cargo clippy -- -D warnings` on touched modules
 
 ---
 
-## T4-4 · API key storage + Settings IPC + Settings UI
+## T4-4 · Settings + IPC + Settings UI (revised)
 
 ### Rust / DB
-- [x] `settings` table created (single-row upsert pattern; schema in `plan4.md`)
-- [x] `keyring` crate added to `Cargo.toml`
-- [x] `save_api_key(service, key)` writes to OS keychain — not SQLite
-- [x] `delete_api_key(service)` removes from keychain, flips stored flag
-- [x] `get_settings()` returns flag only (`anthropic_key_stored: bool`) — never key value
-- [x] `update_settings(patch)` persists wake engine + threshold changes
-- [x] `cargo test db::settings` passes
-- [x] Schema migration idempotent on existing Phase 3 DB
+
+- [ ] Settings include wake engine, Porcupine flag, **STT provider** fields; remove **`global_ai_mode`** / **`anthropic_key_stored`** when T4-6 lands (or single migration with T4-6)
+- [ ] Keychain: Porcupine + **remote STT** secrets only as needed — **no** Anthropic service
+- [ ] `get_settings()` / `update_settings()` reflect new fields; migrations idempotent
 
 ### React
-- [x] `SettingsPanel.tsx` created in `src/components/Settings/`
-- [x] `settingsStore.ts` Zustand store created
-- [x] Wake engine selector (hotkey / porcupine / oww) persists across restart
-- [x] Anthropic API key input: masked, Save / Clear buttons functional
-- [x] Porcupine access key input: masked, Save / Clear buttons functional
-- [x] Global `ai_mode` toggle visible and persists
-- [x] "App Index" status shows count from `app-index-ready` event
-- [x] Tray "Settings" menu item opens `SettingsPanel`
+
+- [ ] Wake engine selector (hotkey / porcupine / oww) persists
+- [ ] **Transcription provider** UI: local / OS / online (labels clear)
+- [ ] Remote STT: masked key + endpoint fields as required by T4-3 contract
+- [ ] **Remove** global `ai_mode` toggle and Anthropic key panel *(can defer to T4-6 if same PR)*
+- [ ] Porcupine access key: masked, Save / Clear
+- [ ] "App Index" status from `app-index-ready`
+- [ ] Tray "Settings" opens panel
+
+---
+
+## ~~T4-3 (obsolete) · Haiku `ai_mode` HTTP client~~ — **DO NOT EXTEND**
+
+*Retired. Removal tracked in **T4-6**.*
+
+---
+
+## ~~T4-4 (obsolete section) · Anthropic API for commands~~ — **DO NOT EXTEND**
+
+*Retired. Replaced by T4-3/T4-4 STT + T4-6 cleanup.*
 
 ---
 
 ## ✅ Checkpoint A
 
 - [x] `WakeDetector` trait + Porcupine unit tests green
-- [x] OWW compiles behind `oww` feature; feature isolation confirmed
-- [x] Haiku client unit tests green (mock server only)
-- [ ] OS keychain read/write works in bundled `.exe` on Windows
-- [x] Key never surfaces in logs
-- [x] Settings table persists across restart; UI shows correct flag state
-- [x] `cargo clippy -- -D warnings` clean across all new modules
+- [x] OWW compiles behind `oww` feature
+- [ ] Transcription abstraction + local path wired; settings keys defined
+- [ ] OS keychain read/write works in bundled `.exe` on Windows (Porcupine / STT secrets)
+- [ ] Key material never surfaces in logs
+- [ ] `cargo clippy -- -D warnings` clean on touched modules
 
 ---
 
@@ -96,104 +106,89 @@
 
 - [ ] On startup, read `settings.wake_engine`
 - [ ] If `porcupine` or `oww`: spawn dedicated wake thread
-- [ ] Wake thread feeds PCM frames from secondary mic channel (ring buffer / channel)
-- [ ] `Ok(true)` from `process_frame` → send message to main async runtime → `start_pipeline()`
-- [ ] `wake-detected { backend }` IPC event emitted to React
+- [ ] Wake thread feeds PCM from secondary mic channel (ring buffer / channel)
+- [ ] `Ok(true)` from `process_frame` → main runtime → `start_pipeline()`
+- [ ] `wake-detected { backend }` IPC to React
 - [ ] `is_paused = true` → wake thread discards frames, skips pipeline
-- [ ] If `wake_engine = "hotkey"`: no wake thread spawned (backward compatible)
-- [ ] Hotkey path unchanged — all Phase 1–3 E2E items still pass
-- [ ] CPU overhead < 2% additional when idle (verified via Task Manager)
+- [ ] `wake_engine = "hotkey"` → no wake thread (backward compatible)
+- [ ] Hotkey path unchanged — Phase 1–3 E2E still pass
+- [ ] CPU overhead < 2% idle (Task Manager spot check)
 - [ ] `cargo test` fully green
 
 ---
 
-## T4-6 · `ai_mode` executor branch
+## ~~T4-6 (obsolete) · `ai_mode` executor branch~~ — **REPLACED BY T4-6 CLEANUP**
 
-### DB / model
-- [ ] `ai_mode: bool` field added to `CommandNode` struct
-- [ ] `ALTER TABLE command_nodes ADD COLUMN ai_mode INTEGER NOT NULL DEFAULT 0` migration
-- [ ] Schema version bumped; migration runs automatically on startup
-- [ ] Existing seed commands preserved after migration
+*No LLM post-match. Matcher uses transcript string only.*
 
-### Orchestrator
-- [ ] Post-match: check `node.ai_mode`
-- [ ] `ai_mode: false` → existing executor path (no change)
-- [ ] `ai_mode: true`, key present → `ai-thinking` event → `run_ai_mode()` → `ai-response` event → executor runs returned actions
-- [ ] `ai_mode: true`, key absent → user-friendly `action-status` message, no panic, HUD → `done`
-- [ ] `ai-thinking` IPC event handled in `hudStore.ts`
-- [ ] `ai-response` IPC event handled in `hudStore.ts`
+---
 
-### HUD
-- [ ] Thinking sub-phase shows animated ellipsis / spinner in transcript area
-- [ ] AI response text shown before transitioning to `executing`
-- [ ] `cargo test commands::` still green (no regression)
+## T4-6 · Legacy AI removal — Haiku, `ai_mode`, `ai` module
+
+- [x] Delete or gut `src/ai/` (Anthropic / OpenAI-compatible LLM client used for **command** reasoning)
+- [x] Remove `ai_mode` from `CommandNode`, DB, migrations; update seeds / editor / IPC validation
+- [x] Remove `global_ai_mode`, `anthropic_key_stored` from settings + keychain helpers for Anthropic
+- [x] Remove executor `run_ai_mode` / preview HTTP calls to Anthropic; remove related tests
+- [x] Remove HUD / store handling for `ai-thinking` / `ai-response` if present *(none in codebase)*
+- [x] Settings UI: no Anthropic copy; no “AI mode” for commands
+- [x] `npm run test` + `cargo test` green; `rg` clean for `claude-haiku`, `run_ai_mode` (except changelog)
 
 ---
 
 ## T4-7 · App index — scan, cache, fuzzy resolve
 
-### Scanner
-- [ ] `apps/mod.rs` and `apps/scanner_windows.rs` created
-- [ ] Registry scan: `HKLM` + `HKCU` Uninstall keys, extracts name + exe path
-- [ ] Start Menu `.lnk` crawl (`%APPDATA%` + `%ProgramData%`) via `windows-rs` shell API
-- [ ] Deduplication by resolved path
-- [ ] In-memory `HashMap<String, PathBuf>` built after scan
-
-### Cache
-- [ ] `app_index` table in SQLite (name, exe_path, source, updated_at)
-- [ ] Cold start: read from cache if < 24h old (skip registry scan)
-- [ ] Stale cache (> 24h) → rebuild in background, then update cache
-- [ ] `app-index-ready { count }` IPC event emitted after build
-
-### Resolve
-- [ ] `resolve_app(name, index)` uses `rapidfuzz` threshold `0.75`
-- [ ] Returns `Some(PathBuf)` on match, `None` otherwise
-- [ ] `executor.rs` updated: `OpenApp` with empty path → `resolve_app` → fallback to `cmd /C start`
-- [ ] `cargo test apps::` passes (mock index for unit tests)
-- [ ] Windows integration test (real registry) behind `#[cfg(target_os = "windows")]`
+- [ ] `apps/mod.rs` + `apps/scanner_windows.rs`
+- [ ] Registry scan: `HKLM` + `HKCU` Uninstall keys → name + exe path
+- [ ] Start Menu `.lnk` crawl via `windows-rs`
+- [ ] Deduplicate by resolved path; in-memory map
+- [ ] `app_index` SQLite table; cold start < 24h uses cache
+- [ ] Stale cache → background rebuild → `app-index-ready`
+- [ ] `resolve_app(name, index)` — `rapidfuzz` threshold `0.75`
+- [ ] `executor.rs`: `OpenApp` empty path → `resolve_app` → `cmd /C start` fallback
+- [ ] `cargo test apps::` passes
 
 ---
 
 ## ✅ Checkpoint B
 
-- [ ] Wake thread running; `wake-detected` event visible in DevTools
-- [ ] `ai_mode` branch: `ai-thinking` + `ai-response` fire with live Anthropic key
-- [ ] App index built on startup; count > 0 on Windows dev machine shown in Settings
-- [ ] Schema migration idempotent on existing Phase 3 DB
-- [ ] All unit tests green
-- [ ] `cargo clippy -- -D warnings` clean
+- [ ] Wake thread; `wake-detected` in DevTools
+- [ ] STT provider saved and applied (local verified)
+- [ ] T4-6 complete before release candidate
+- [ ] App index built; count > 0 on Windows dev box
+- [ ] Schema migrations idempotent
+- [ ] All unit tests green; `cargo clippy -- -D warnings` clean
 
 ---
 
 ## T4-8 · End-to-end Phase 4 integration
 
-### HUD updates
-- [ ] `wake-detected` → HUD appears from idle, enters `listening`, shows backend badge
-- [ ] `ai-thinking` → spinner / "Thinking…" visible in transcript area
-- [ ] `ai-response` → AI text displayed before `executing` phase
+### HUD
 
-### Tray updates
-- [x] "Settings" tray item opens `SettingsPanel`
-- [ ] Tray tooltip reflects active wake engine (e.g. "JARVIS — Porcupine active")
+- [ ] `wake-detected` → HUD from idle, `listening`, backend badge
+- [ ] **No** LLM “Thinking…” state (transcript only)
 
-### Startup sequencing (`lib.rs`)
-- [ ] Order: DB init (migration) → load settings → app index build (async, non-blocking) → wake engine init → hotkey register
-- [ ] Each step logs outcome; failures are non-fatal with clear warning
+### Tray
 
-### Degradation matrix — manual verification
-- [ ] hotkey + no key + fresh index → Phase 1–3 behavior unchanged ✓
-- [ ] porcupine + no key + cached index → wake works; `ai_mode` shows key-missing message ✓
-- [ ] porcupine + key present + cached index → full Phase 4 path ✓
-- [ ] hotkey + key present + fresh index → hotkey trigger + `ai_mode` works ✓
+- [x] "Settings" opens `SettingsPanel`
+- [ ] Tooltip reflects wake engine (e.g. "JARVIS — Porcupine active")
+
+### Startup (`lib.rs`)
+
+- [ ] DB init → settings → app index (async) → wake init → hotkey
+- [ ] Failures non-fatal with clear warnings
+
+### Degradation matrix (manual)
+
+- [ ] hotkey + local STT + index → baseline Phase 1–3 ✓
+- [ ] porcupine + local STT + cached index → wake + commands ✓
+- [ ] remote STT misconfigured → clear error, no panic ✓
 
 ### Regression
-- [ ] Phase 1–3 E2E checklist: hotkey → "open notepad" → Notepad opens ✓
-- [ ] Phase 1–3 E2E checklist: hotkey → "open github" → browser opens ✓
-- [ ] Phase 1–3 E2E checklist: nonsense for 5s → graceful dismiss ✓
-- [ ] Phase 1–3 E2E checklist: stop button cancels pipeline ✓
-- [ ] Phase 1–3 E2E checklist: tray pause suppresses hotkey ✓
+
+- [ ] Phase 1–3 E2E checklist passes
 
 ### Build
+
 - [ ] `cargo test` green
 - [ ] `npm run build` green
 
@@ -201,29 +196,23 @@
 
 ## T4-9 · Quality gates + docs
 
-- [ ] `cargo fmt --check` clean across all Phase 4 modules
+- [ ] `cargo fmt --check` clean
 - [ ] `cargo clippy -- -D warnings` clean
 - [ ] `npm run lint` clean
-- [ ] `npm run test` (Vitest) — `settingsStore` Phase 4 event test added
-- [ ] `npm run test` (Vitest) — `hudStore` `ai-thinking` / `ai-response` event test added
-- [ ] `npm run tauri build` produces `.exe` with Phase 4 features
-- [ ] `.gitignore` confirmed: `*.ppn`, `*.onnx`, `*.bin` excluded
-- [ ] `README.md` "Phase 4 features" section added:
-  - [ ] Porcupine setup (access key, `.ppn` download script)
-  - [ ] OWW opt-in build flag (`--features oww`)
-  - [ ] Anthropic BYOK instructions
-  - [ ] App index behavior and known gaps documented
-- [ ] `scripts/download-wake-models.ps1` listed in README prereqs
+- [ ] Vitest: `settingsStore` — STT / wake events (not LLM)
+- [ ] `npm run tauri build` produces `.exe`
+- [ ] `.gitignore`: `*.ppn`, `*.onnx`, `*.bin` excluded
+- [ ] README "Phase 4 features": Porcupine, OWW flag, **STT providers**, app index — **not** Anthropic command AI
+- [ ] `scripts/download-wake-models.ps1` in README prereqs
 
 ---
 
 ## ✅ Checkpoint C — Phase 4 complete
 
-- [ ] Wake word (Porcupine): speak → HUD appears → command executes — end-to-end ✓
-- [ ] `ai_mode`: speak trigger → thinking indicator → AI response → action executes ✓
-- [ ] `OpenApp("Discord")` with no path hint → resolved via app index ✓
-- [ ] No regression on Phase 1–3 E2E checklist ✓
-- [ ] Quality gates: `cargo fmt`, `cargo clippy`, `npm run lint`, `npm run test`, `npm run tauri build` all pass ✓
-- [ ] README Phase 4 section complete ✓
-- [ ] Wake engine decision documented in release notes ✓
-- [ ] **Human sign-off** — proceed to Phase 5 (code signing, auto-updater, macOS DMG) ✓
+- [ ] Wake word E2E: speak → HUD → command executes ✓
+- [ ] Transcription provider choice works (local + at least one alternate path or documented roadmap) ✓
+- [ ] `OpenApp("Discord")` without path resolves via index ✓
+- [ ] No regression on Phase 1–3 ✓
+- [ ] Quality gates pass ✓
+- [ ] README updated ✓
+- [ ] **Human sign-off** — Phase 5 (signing, updater, macOS DMG) ✓

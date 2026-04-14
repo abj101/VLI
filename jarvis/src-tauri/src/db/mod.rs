@@ -36,8 +36,6 @@ pub fn init_db(path: &Path) -> Result<(), DbError> {
             actions TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1,
             fuzzy_threshold_pct INTEGER NOT NULL DEFAULT 80,
-            ai_mode INTEGER NOT NULL DEFAULT 0,
-            sub_prompt TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         CREATE TABLE IF NOT EXISTS settings (
@@ -47,8 +45,8 @@ pub fn init_db(path: &Path) -> Result<(), DbError> {
         ",
     )?;
     ensure_fuzzy_threshold_column(&conn)?;
-    ensure_ai_mode_columns(&conn)?;
     ensure_sort_order_column(&conn)?;
+    drop_legacy_ai_command_columns(&conn)?;
     reconcile_default_commands(&conn)?;
     Ok(())
 }
@@ -93,7 +91,8 @@ fn ensure_sort_order_column(conn: &Connection) -> Result<(), DbError> {
     Ok(())
 }
 
-fn ensure_ai_mode_columns(conn: &Connection) -> Result<(), DbError> {
+/// Phase 4: remove Haiku / `ai_mode` columns (SQLite 3.35+ `DROP COLUMN`).
+fn drop_legacy_ai_command_columns(conn: &Connection) -> Result<(), DbError> {
     let mut stmt = conn.prepare("PRAGMA table_info(command_nodes)")?;
     let mut rows = stmt.query([])?;
     let mut has_ai_mode = false;
@@ -106,14 +105,11 @@ fn ensure_ai_mode_columns(conn: &Connection) -> Result<(), DbError> {
             has_sub_prompt = true;
         }
     }
-    if !has_ai_mode {
-        conn.execute(
-            "ALTER TABLE command_nodes ADD COLUMN ai_mode INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
+    if has_ai_mode {
+        conn.execute("ALTER TABLE command_nodes DROP COLUMN ai_mode", [])?;
     }
-    if !has_sub_prompt {
-        conn.execute("ALTER TABLE command_nodes ADD COLUMN sub_prompt TEXT", [])?;
+    if has_sub_prompt {
+        conn.execute("ALTER TABLE command_nodes DROP COLUMN sub_prompt", [])?;
     }
     Ok(())
 }
@@ -145,8 +141,6 @@ fn default_command_specs() -> Vec<DefaultCommandSpec> {
                 ],
                 enabled: true,
                 fuzzy_threshold_pct: 80,
-                ai_mode: false,
-                sub_prompt: None,
             },
         },
         DefaultCommandSpec {
@@ -161,8 +155,6 @@ fn default_command_specs() -> Vec<DefaultCommandSpec> {
                 }],
                 enabled: true,
                 fuzzy_threshold_pct: 80,
-                ai_mode: false,
-                sub_prompt: None,
             },
         },
         DefaultCommandSpec {
@@ -176,8 +168,6 @@ fn default_command_specs() -> Vec<DefaultCommandSpec> {
                 }],
                 enabled: true,
                 fuzzy_threshold_pct: 80,
-                ai_mode: false,
-                sub_prompt: None,
             },
         },
         DefaultCommandSpec {
@@ -196,8 +186,6 @@ fn default_command_specs() -> Vec<DefaultCommandSpec> {
                 ],
                 enabled: true,
                 fuzzy_threshold_pct: 80,
-                ai_mode: false,
-                sub_prompt: None,
             },
         },
     ]
@@ -247,8 +235,6 @@ fn reconcile_default_commands(conn: &Connection) -> Result<(), DbError> {
                 actions: current.actions.clone(),
                 enabled: should_enable,
                 fuzzy_threshold_pct: current.fuzzy_threshold_pct,
-                ai_mode: current.ai_mode,
-                sub_prompt: current.sub_prompt.clone(),
             },
         )?;
     }
@@ -261,30 +247,16 @@ pub fn insert_command(conn: &Connection, row: &NewCommandNode) -> Result<i64, Db
     let actions = serde_json::to_string(&row.actions)?;
     let enabled = i32::from(row.enabled);
     let fuzzy_threshold_pct = i64::from(row.fuzzy_threshold_pct.min(100));
-    let ai_mode = i32::from(row.ai_mode);
-    let sub_prompt = row
-        .sub_prompt
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty());
     conn.execute(
-        "INSERT INTO command_nodes (name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, ai_mode, sub_prompt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        rusqlite::params![
-            row.name,
-            trigger_phrases,
-            actions,
-            enabled,
-            fuzzy_threshold_pct,
-            ai_mode,
-            sub_prompt
-        ],
+        "INSERT INTO command_nodes (name, trigger_phrases, actions, enabled, fuzzy_threshold_pct) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![row.name, trigger_phrases, actions, enabled, fuzzy_threshold_pct,],
     )?;
     Ok(conn.last_insert_rowid())
 }
 
 pub fn get_all_commands(conn: &Connection) -> Result<Vec<CommandNode>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, ai_mode, sub_prompt, created_at FROM command_nodes ORDER BY sort_order ASC, id ASC",
+        "SELECT id, name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, created_at FROM command_nodes ORDER BY sort_order ASC, id ASC",
     )?;
     let mut rows = stmt.query([])?;
     let mut out = Vec::new();
@@ -301,17 +273,8 @@ pub fn update_command(conn: &Connection, id: i64, row: &NewCommandNode) -> Resul
     let enabled = i32::from(row.enabled);
     let fuzzy_threshold_pct = i64::from(row.fuzzy_threshold_pct.min(100));
     let n = conn.execute(
-        "UPDATE command_nodes SET name = ?1, trigger_phrases = ?2, actions = ?3, enabled = ?4, fuzzy_threshold_pct = ?5, ai_mode = ?6, sub_prompt = ?7 WHERE id = ?8",
-        rusqlite::params![
-            row.name,
-            trigger_phrases,
-            actions,
-            enabled,
-            fuzzy_threshold_pct,
-            i32::from(row.ai_mode),
-            row.sub_prompt.as_deref().map(str::trim).filter(|v| !v.is_empty()),
-            id
-        ],
+        "UPDATE command_nodes SET name = ?1, trigger_phrases = ?2, actions = ?3, enabled = ?4, fuzzy_threshold_pct = ?5 WHERE id = ?6",
+        rusqlite::params![row.name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, id],
     )?;
     Ok(n > 0)
 }
@@ -319,7 +282,7 @@ pub fn update_command(conn: &Connection, id: i64, row: &NewCommandNode) -> Resul
 #[allow(dead_code)] // used in tests and upcoming editor APIs
 pub fn get_command_by_id(conn: &Connection, id: i64) -> Result<Option<CommandNode>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, ai_mode, sub_prompt, created_at FROM command_nodes WHERE id = ?1",
+        "SELECT id, name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, created_at FROM command_nodes WHERE id = ?1",
     )?;
     let mut rows = stmt.query(rusqlite::params![id])?;
     if let Some(row) = rows.next()? {
@@ -364,8 +327,6 @@ fn row_to_command(row: &rusqlite::Row<'_>) -> Result<CommandNode, DbError> {
     let actions: String = row.get(3)?;
     let enabled_i: i32 = row.get(4)?;
     let fuzzy_threshold_pct: i64 = row.get(5)?;
-    let ai_mode_i: i32 = row.get(6)?;
-    let sub_prompt: Option<String> = row.get(7)?;
     Ok(CommandNode {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -373,11 +334,7 @@ fn row_to_command(row: &rusqlite::Row<'_>) -> Result<CommandNode, DbError> {
         actions: serde_json::from_str(&actions)?,
         enabled: enabled_i != 0,
         fuzzy_threshold_pct: fuzzy_threshold_pct.clamp(0, 100) as u16,
-        ai_mode: ai_mode_i != 0,
-        sub_prompt: sub_prompt
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty()),
-        created_at: row.get(8)?,
+        created_at: row.get(6)?,
     })
 }
 
@@ -456,8 +413,6 @@ mod tests {
                 }],
                 enabled: false,
                 fuzzy_threshold_pct: 80,
-                ai_mode: false,
-                sub_prompt: None,
             },
         )
         .unwrap();
@@ -487,8 +442,6 @@ mod tests {
                 }],
                 enabled: true,
                 fuzzy_threshold_pct: 80,
-                ai_mode: false,
-                sub_prompt: None,
             },
         )
         .unwrap();
@@ -507,8 +460,6 @@ mod tests {
                 ],
                 enabled: false,
                 fuzzy_threshold_pct: 90,
-                ai_mode: false,
-                sub_prompt: None,
             },
         )
         .unwrap();
@@ -584,8 +535,6 @@ mod update {
                 }],
                 enabled: true,
                 fuzzy_threshold_pct: 80,
-                ai_mode: false,
-                sub_prompt: None,
             },
         )
         .expect("insert");
@@ -604,8 +553,6 @@ mod update {
                 ],
                 enabled: false,
                 fuzzy_threshold_pct: 90,
-                ai_mode: false,
-                sub_prompt: None,
             },
         )
         .expect("update");
@@ -652,8 +599,6 @@ mod reorder {
                 actions: vec![Action::Wait { ms: 10 }],
                 enabled: true,
                 fuzzy_threshold_pct: 80,
-                ai_mode: false,
-                sub_prompt: None,
             },
         )
         .expect("insert")
