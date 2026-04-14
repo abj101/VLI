@@ -4,8 +4,6 @@ pub mod capture;
 pub mod stt;
 pub mod transcription;
 pub mod tts;
-// Wake path wired in T4-5; keep module compiled without orchestrator references.
-#[allow(dead_code)]
 pub mod wake;
 
 use log::debug;

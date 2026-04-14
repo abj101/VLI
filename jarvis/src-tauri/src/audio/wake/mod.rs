@@ -18,6 +18,11 @@ pub trait WakeDetector: Send + 'static {
     /// Feed one chunk of PCM (16 kHz, i16, mono). Returns `true` when the wake phrase is detected.
     fn process_frame(&mut self, pcm: &[i16]) -> Result<bool, WakeError>;
     fn backend_name(&self) -> &'static str;
+    /// `Some(n)` → caller must pass exactly `n` i16 samples per [`process_frame`] (Porcupine).
+    /// `None` → variable-sized chunks (OpenWakeWord accumulates internally).
+    fn fixed_input_frame_len(&self) -> Option<usize> {
+        None
+    }
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -40,12 +45,51 @@ pub(crate) fn expect_pcm_frame_len(actual: usize, expected: usize) -> Result<(),
     }
 }
 
+pub mod thread;
+
+/// Build a wake detector for `wake_engine` (`porcupine` / `oww`). Returns `Err` if models/keys missing.
+pub(crate) fn build_wake_detector(
+    engine: &str,
+    resource_dir: &std::path::Path,
+    settings: &crate::db::AppSettings,
+) -> Result<Box<dyn WakeDetector>, String> {
+    match engine {
+        "porcupine" => {
+            #[cfg(feature = "porcupine")]
+            {
+                use crate::audio::wake::porcupine::PorcupineBackend;
+                PorcupineBackend::try_new(resource_dir)
+                    .map(|d| Box::new(d) as Box<dyn WakeDetector>)
+                    .map_err(|e| e.to_string())
+            }
+            #[cfg(not(feature = "porcupine"))]
+            {
+                let _ = (resource_dir, settings);
+                Err("porcupine feature disabled in this build".into())
+            }
+        }
+        "oww" => {
+            #[cfg(feature = "oww")]
+            {
+                try_open_wake_word_oww(resource_dir, settings)
+                    .map(|d| Box::new(d) as Box<dyn WakeDetector>)
+                    .map_err(|e| e.to_string())
+            }
+            #[cfg(not(feature = "oww"))]
+            {
+                let _ = (resource_dir, settings);
+                Err("oww feature disabled in this build".into())
+            }
+        }
+        other => Err(format!("unknown wake_engine `{other}`")),
+    }
+}
+
 /// OpenWakeWord backend using persisted [`crate::db::AppSettings::oww_threshold`].
 ///
-/// Call this from the wake orchestrator (T4-5) instead of [`oww::OpenWakeWordBackend::try_new`]
-/// directly so the SQLite value is always applied.
+/// Prefer [`build_wake_detector`] from the wake orchestrator so SQLite threshold is always applied.
 #[cfg(feature = "oww")]
-#[allow(dead_code)] // Used when wake thread lands (T4-5).
+#[allow(dead_code)]
 pub fn try_open_wake_word_oww(
     resource_dir: &std::path::Path,
     settings: &crate::db::AppSettings,
@@ -85,6 +129,10 @@ mod tests {
         fn backend_name(&self) -> &'static str {
             "mock"
         }
+
+        fn fixed_input_frame_len(&self) -> Option<usize> {
+            Some(self.frame_len)
+        }
     }
 
     #[test]
@@ -110,5 +158,22 @@ mod tests {
     fn mock_wake_detector_rejects_wrong_length() {
         let mut d = MockWakeDetector::new(4, 0);
         assert!(d.process_frame(&[0i16; 3]).is_err());
+    }
+
+    #[test]
+    fn build_wake_detector_rejects_unknown_engine() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let s = crate::db::AppSettings {
+            porcupine_key_stored: false,
+            wake_engine: "hotkey".into(),
+            oww_threshold: 0.5,
+            stt_provider: "local".into(),
+            remote_stt_url: String::new(),
+            remote_stt_model: None,
+            remote_stt_timeout_secs: 30,
+            remote_stt_key_stored: false,
+        };
+        let r = build_wake_detector("hotkey", tmp.path(), &s);
+        assert!(r.is_err());
     }
 }

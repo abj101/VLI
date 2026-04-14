@@ -172,6 +172,10 @@ impl Drop for PorcupineBackend {
 }
 
 impl WakeDetector for PorcupineBackend {
+    fn fixed_input_frame_len(&self) -> Option<usize> {
+        Some(self.frame_len)
+    }
+
     fn process_frame(&mut self, pcm: &[i16]) -> Result<bool, WakeError> {
         expect_pcm_frame_len(pcm.len(), self.frame_len)?;
         let mut idx: i32 = -1;

@@ -334,6 +334,32 @@ fn cancel_active_run_in_state(s: &mut HudRuntime) {
     s.active_run_session_id = None;
 }
 
+fn prepare_hud_listening_session(s: &mut HudRuntime) -> u64 {
+    s.visible = true;
+    s.phase = HudPhase::Listening;
+    s.session_id = s.session_id.wrapping_add(1);
+    s.last_speech_activity = Some(Instant::now());
+    s.pending_transcript.clear();
+    s.transcript_revision = 0;
+    s.pending_follow_up_response = None;
+    s.pending_follow_up_candidate = None;
+    s.pending_follow_up_candidate_at = None;
+    cancel_active_run_in_state(s);
+    s.session_id
+}
+
+fn prepare_hud_close_session(s: &mut HudRuntime) {
+    s.phase = HudPhase::Stopped;
+    s.visible = false;
+    s.session_id = s.session_id.wrapping_add(1);
+    s.pending_transcript.clear();
+    s.transcript_revision = 0;
+    s.pending_follow_up_response = None;
+    s.pending_follow_up_candidate = None;
+    s.pending_follow_up_candidate_at = None;
+    cancel_active_run_in_state(s);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FollowUpAbortReason {
     Cancelled,
@@ -840,30 +866,13 @@ fn show_hud_from_hotkey(
 
     let mut listening_session_id: Option<u64> = None;
     if !s.visible {
-        s.visible = true;
-        s.phase = HudPhase::Listening;
-        s.session_id = s.session_id.wrapping_add(1);
-        s.last_speech_activity = Some(Instant::now());
-        s.pending_transcript.clear();
-        s.transcript_revision = 0;
-        s.pending_follow_up_response = None;
-        s.pending_follow_up_candidate = None;
-        s.pending_follow_up_candidate_at = None;
-        cancel_active_run_in_state(&mut s);
-        listening_session_id = Some(s.session_id);
+        let sid = prepare_hud_listening_session(&mut s);
+        listening_session_id = Some(sid);
         window.center().map_err(|e| e.to_string())?;
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
     } else {
-        s.phase = HudPhase::Stopped;
-        s.visible = false;
-        s.session_id = s.session_id.wrapping_add(1);
-        s.pending_transcript.clear();
-        s.transcript_revision = 0;
-        s.pending_follow_up_response = None;
-        s.pending_follow_up_candidate = None;
-        s.pending_follow_up_candidate_at = None;
-        cancel_active_run_in_state(&mut s);
+        prepare_hud_close_session(&mut s);
         window.hide().map_err(|e| e.to_string())?;
     }
 
@@ -883,6 +892,37 @@ fn show_hud_from_hotkey(
         audio::stop_shared_pipeline(audio);
     }
 
+    Ok(())
+}
+
+/// Wake word: open HUD + listening when hidden; never toggles closed (unlike hotkey).
+fn wake_request_hud(
+    app: &AppHandle,
+    rt: &SharedHud,
+    audio: &SharedAudioPipeline,
+    is_paused: &Arc<AtomicBool>,
+) -> Result<(), String> {
+    let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+    if s.visible {
+        return Ok(());
+    }
+    let window = app
+        .get_webview_window(HUD_WINDOW_LABEL)
+        .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
+
+    let session_id = prepare_hud_listening_session(&mut s);
+    window.center().map_err(|e| e.to_string())?;
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
+    drop(s);
+
+    sync_hud_window(app, HudPhase::Listening)?;
+    emit_hud_phase(app, HudPhase::Listening);
+
+    if tray::mic_start_allowed(is_paused, HudPhase::Listening) {
+        try_start_listening_audio(app, audio, session_id);
+        spawn_no_match_watchdog(app.clone(), Arc::clone(rt), audio.clone(), session_id);
+    }
     Ok(())
 }
 
@@ -1168,6 +1208,43 @@ pub fn run() {
                     .emit(APP_INDEX_READY_EVENT, serde_json::json!({ "count": 0 }));
                 refresh_command_cache(app.handle(), &command_cache_for_setup)?;
                 let conn = open_db_connection(app.handle())?;
+                let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+                let app_settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
+                if matches!(
+                    app_settings.wake_engine.as_str(),
+                    "porcupine" | "oww"
+                ) {
+                    let wake_app = app.handle().clone();
+                    let wake_hud = Arc::clone(&hud_state);
+                    let wake_audio = audio_for_shortcut.clone();
+                    let wake_paused = Arc::clone(&is_paused_for_shortcut);
+                    let engine = app_settings.wake_engine.clone();
+                    if let Err(e) = audio::wake::thread::spawn_wake_thread(
+                        wake_app.clone(),
+                        resource_dir,
+                        engine.as_str(),
+                        &app_settings,
+                        wake_paused.clone(),
+                        Arc::new(move || {
+                            let app = wake_app.clone();
+                            let hud = Arc::clone(&wake_hud);
+                            let aud = wake_audio.clone();
+                            let p = Arc::clone(&wake_paused);
+                            let app_for_inner = app.clone();
+                            if let Err(err) = app.run_on_main_thread(move || {
+                                if let Err(e) =
+                                    wake_request_hud(&app_for_inner, &hud, &aud, &p)
+                                {
+                                    warn!("wake_request_hud: {e}");
+                                }
+                            }) {
+                                warn!("wake main-thread dispatch: {err:?}");
+                            }
+                        }),
+                    ) {
+                        warn!("wake thread not started: {e}");
+                    }
+                }
                 let configured_hotkey =
                     match db::get_setting(&conn, SETTING_KEY_HOTKEY).map_err(|e| e.to_string())? {
                         Some(value) if !value.trim().is_empty() => value.trim().to_string(),

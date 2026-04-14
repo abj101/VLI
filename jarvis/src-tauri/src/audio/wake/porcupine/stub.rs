@@ -15,6 +15,10 @@ impl PorcupineBackend {
 }
 
 impl WakeDetector for PorcupineBackend {
+    fn fixed_input_frame_len(&self) -> Option<usize> {
+        Some(512)
+    }
+
     fn process_frame(&mut self, _pcm: &[i16]) -> Result<bool, WakeError> {
         Err(WakeError::Process(
             "Porcupine backend is unavailable on this platform".into(),
