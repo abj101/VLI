@@ -24,7 +24,7 @@ See [plan.md](./plan.md) for full task descriptions. All `npm`/`tauri` commands 
 - **Verify:** `cd jarvis/src-tauri && cargo test && cargo clippy -- -D warnings`
 - **Verify:** `cd jarvis && npm run build`
 
-### Task 2 — SQLite + Action enum + CRUD + seeds
+### Task 2 — SQLite + Action enum + CRUD + seeds ✅ (2026-04-13)
 
 - `src-tauri/src/db/models.rs`: `CommandNode`, `Action::OpenApp`, `Action::OpenUrl` (serde round-trip)
 - `src-tauri/src/db/mod.rs`: `init_db`, `insert_command`, `get_all_commands`, `get_command_by_id`, `delete_command`
