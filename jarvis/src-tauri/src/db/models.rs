@@ -25,11 +25,47 @@ pub struct NewCommandNode {
 pub enum Action {
     OpenApp { name: String, path: String },
     OpenUrl { url: String },
+    RunScript { script: String, args: Vec<String> },
+    SendKeys { keys: String },
+    Wait { ms: u64 },
+    Speak { text: String },
+    SubPrompt { prompt: String },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn action_variants_round_trip() {
+        let actions = vec![
+            Action::OpenApp {
+                name: "notepad".into(),
+                path: "notepad.exe".into(),
+            },
+            Action::OpenUrl {
+                url: "https://github.com".into(),
+            },
+            Action::RunScript {
+                script: "echo".into(),
+                args: vec!["hello".into()],
+            },
+            Action::SendKeys {
+                keys: "ctrl+shift+n".into(),
+            },
+            Action::Wait { ms: 500 },
+            Action::Speak {
+                text: "done".into(),
+            },
+            Action::SubPrompt {
+                prompt: "what next".into(),
+            },
+        ];
+
+        let encoded = serde_json::to_string(&actions).unwrap();
+        let decoded: Vec<Action> = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(actions, decoded);
+    }
 
     #[test]
     fn action_open_app_round_trip() {

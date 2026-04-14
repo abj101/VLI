@@ -109,6 +109,11 @@ fn execute_one_action(action: &Action, runtime: &impl ActionRuntime) -> Result<S
             runtime.open_url(url)?;
             Ok(format!("Opening {url}..."))
         }
+        Action::RunScript { .. } => Err("RunScript is not implemented yet".to_string()),
+        Action::SendKeys { .. } => Err("SendKeys is not implemented yet".to_string()),
+        Action::Wait { .. } => Err("Wait is not implemented yet".to_string()),
+        Action::Speak { .. } => Err("Speak is not implemented yet".to_string()),
+        Action::SubPrompt { .. } => Err("SubPrompt is not implemented yet".to_string()),
     }
 }
 

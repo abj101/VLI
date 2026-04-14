@@ -89,7 +89,23 @@ pub fn get_all_commands(conn: &Connection) -> Result<Vec<CommandNode>, DbError> 
     Ok(out)
 }
 
-#[allow(dead_code)] // used in unit tests; reserved for Phase 3 editor
+#[allow(dead_code)] // reserved for Phase 2+ editor flows
+pub fn update_command(
+    conn: &Connection,
+    id: i64,
+    row: &NewCommandNode,
+) -> Result<bool, DbError> {
+    let trigger_phrases = serde_json::to_string(&row.trigger_phrases)?;
+    let actions = serde_json::to_string(&row.actions)?;
+    let enabled = i32::from(row.enabled);
+    let n = conn.execute(
+        "UPDATE command_nodes SET name = ?1, trigger_phrases = ?2, actions = ?3, enabled = ?4 WHERE id = ?5",
+        rusqlite::params![row.name, trigger_phrases, actions, enabled, id],
+    )?;
+    Ok(n > 0)
+}
+
+#[allow(dead_code)] // used in tests and upcoming editor APIs
 pub fn get_command_by_id(conn: &Connection, id: i64) -> Result<Option<CommandNode>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT id, name, trigger_phrases, actions, enabled, created_at FROM command_nodes WHERE id = ?1",
@@ -195,5 +211,79 @@ mod tests {
         assert!(delete_command(&conn, id).unwrap());
         assert!(get_command_by_id(&conn, id).unwrap().is_none());
         assert!(!delete_command(&conn, id).unwrap());
+    }
+
+    #[test]
+    fn update_command_replaces_existing_values() {
+        let (_dir, conn) = open_temp();
+        let id = insert_command(
+            &conn,
+            &NewCommandNode {
+                name: "Original".into(),
+                trigger_phrases: vec!["do thing".into()],
+                actions: vec![Action::OpenUrl {
+                    url: "https://example.com".into(),
+                }],
+                enabled: true,
+            },
+        )
+        .unwrap();
+
+        let changed = update_command(
+            &conn,
+            id,
+            &NewCommandNode {
+                name: "Updated".into(),
+                trigger_phrases: vec!["do better thing".into()],
+                actions: vec![
+                    Action::Wait { ms: 1200 },
+                    Action::Speak {
+                        text: "done".into(),
+                    },
+                ],
+                enabled: false,
+            },
+        )
+        .unwrap();
+        assert!(changed);
+
+        let one = get_command_by_id(&conn, id).unwrap().expect("row");
+        assert_eq!(one.name, "Updated");
+        assert_eq!(one.trigger_phrases, vec!["do better thing".to_string()]);
+        assert!(!one.enabled);
+        assert_eq!(
+            one.actions,
+            vec![
+                Action::Wait { ms: 1200 },
+                Action::Speak {
+                    text: "done".into()
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn can_read_pre_phase_two_actions_json_payload() {
+        let (_dir, conn) = open_temp();
+        conn.execute(
+            "INSERT INTO command_nodes (name, trigger_phrases, actions, enabled) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                "Legacy",
+                r#"["legacy phrase"]"#,
+                r#"[{"open_app":{"name":"notepad","path":"notepad.exe"}}]"#,
+                1
+            ],
+        )
+        .unwrap();
+
+        let all = get_all_commands(&conn).unwrap();
+        assert!(all.iter().any(|node| {
+            node.name == "Legacy"
+                && node.actions
+                    == vec![Action::OpenApp {
+                        name: "notepad".into(),
+                        path: "notepad.exe".into(),
+                    }]
+        }));
     }
 }

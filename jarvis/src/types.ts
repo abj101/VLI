@@ -27,6 +27,24 @@ export interface ActionStatus {
   text: string;
 }
 
+export type CommandAction =
+  | { open_app: { name: string; path: string } }
+  | { open_url: { url: string } }
+  | { run_script: { script: string; args: string[] } }
+  | { send_keys: { keys: string } }
+  | { wait: { ms: number } }
+  | { speak: { text: string } }
+  | { sub_prompt: { prompt: string } };
+
+export interface CommandNodePayload {
+  id: number;
+  name: string;
+  trigger_phrases: string[];
+  actions: CommandAction[];
+  enabled: boolean;
+  created_at: string;
+}
+
 /** Mic level 0..1 from `amplitude-update` (Task 4a). */
 export interface AmplitudeUpdate {
   amplitude: number;
