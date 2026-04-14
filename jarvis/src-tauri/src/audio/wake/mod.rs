@@ -15,20 +15,29 @@ const OWW_MARKER_ONNX: &str = "hey_jarvis_v0.1.onnx";
 /// Bundled Porcupine keyword file under `resource_root/porcupine/`.
 const PORCUPINE_MARKER_PPN: &str = "porcupine_windows.ppn";
 
-/// Pick `resource_root` containing `oww/` and/or `porcupine/` trees.
+fn tauri_resource_dir_ready_for_engine(dir: &Path, wake_engine: &str) -> bool {
+    match wake_engine {
+        "oww" => dir.join("oww").join(OWW_MARKER_ONNX).is_file(),
+        "porcupine" => dir.join("porcupine").join(PORCUPINE_MARKER_PPN).is_file(),
+        _ => false,
+    }
+}
+
+/// Pick `resource_root` for the active [`wake_engine`](crate::db::AppSettings::wake_engine).
 ///
 /// In `tauri dev`, [`AppHandle::path().resource_dir`] often resolves next to the exe
-/// (`target/debug/`) where wake assets are not copied; when markers are missing there,
-/// **debug** builds fall back to `src-tauri/resources`. **Release** builds use the Tauri
-/// path even if empty so errors refer to the install layout, not the build machine.
+/// (`target/debug/`) where wake assets are not copied. We only accept that directory if
+/// it already contains the **engine-specific** marker files — otherwise Porcupine DLLs
+/// beside the exe could wrongly hide missing `oww/` trees. **Debug** builds then fall back
+/// to `src-tauri/resources`. **Release** uses the Tauri path when markers are absent so
+/// errors refer to the install layout.
 fn wake_resource_root_from_candidates(
+    wake_engine: &str,
     tauri_dir: Option<&Path>,
     manifest_resources: &Path,
 ) -> PathBuf {
     if let Some(dir) = tauri_dir {
-        let has_wake_assets = dir.join("oww").join(OWW_MARKER_ONNX).is_file()
-            || dir.join("porcupine").join(PORCUPINE_MARKER_PPN).is_file();
-        if has_wake_assets {
+        if tauri_resource_dir_ready_for_engine(dir, wake_engine) {
             return dir.to_path_buf();
         }
     }
@@ -42,9 +51,10 @@ fn wake_resource_root_from_candidates(
 }
 
 /// Root directory passed to [`build_wake_detector`] (`porcupine/` + `oww/` live underneath).
-pub(crate) fn resolve_wake_resource_root(app: &AppHandle) -> PathBuf {
+pub(crate) fn resolve_wake_resource_root(app: &AppHandle, wake_engine: &str) -> PathBuf {
     let manifest_res = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
     wake_resource_root_from_candidates(
+        wake_engine,
         app.path().resource_dir().ok().as_deref(),
         &manifest_res,
     )
@@ -210,7 +220,7 @@ mod tests {
         std::fs::create_dir_all(&oww_dir).expect("mkdir");
         std::fs::write(oww_dir.join(OWW_MARKER_ONNX), b"x").expect("write");
         let manifest = PathBuf::from("/nonexistent/manifest/resources");
-        let picked = wake_resource_root_from_candidates(Some(tmp.path()), &manifest);
+        let picked = wake_resource_root_from_candidates("oww", Some(tmp.path()), &manifest);
         assert_eq!(picked, tmp.path());
     }
 
@@ -218,7 +228,22 @@ mod tests {
     fn wake_resource_root_falls_back_to_manifest_in_debug_when_tauri_dir_empty() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let manifest = tmp.path().join("resources");
-        let picked = wake_resource_root_from_candidates(Some(tmp.path()), &manifest);
+        let picked = wake_resource_root_from_candidates("oww", Some(tmp.path()), &manifest);
+        if cfg!(debug_assertions) {
+            assert_eq!(picked, manifest);
+        } else {
+            assert_eq!(picked, tmp.path());
+        }
+    }
+
+    #[test]
+    fn wake_resource_root_does_not_use_tauri_dir_when_only_porcupine_present_but_engine_oww() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let porc = tmp.path().join("porcupine");
+        std::fs::create_dir_all(&porc).expect("mkdir");
+        std::fs::write(porc.join(PORCUPINE_MARKER_PPN), b"x").expect("write");
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let picked = wake_resource_root_from_candidates("oww", Some(tmp.path()), &manifest);
         if cfg!(debug_assertions) {
             assert_eq!(picked, manifest);
         } else {
