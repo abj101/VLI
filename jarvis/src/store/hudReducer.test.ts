@@ -41,6 +41,25 @@ describe("reduceHudState", () => {
     expect(next.audioError).toBeNull();
   });
 
+  it("on awaiting_input, clears stale match and transcript", () => {
+    const dirty = {
+      ...initialHudState,
+      phase: "executing" as const,
+      transcript: "open github",
+      transcriptFinal: true,
+      match: {
+        node_id: "n1",
+        matched_phrase: "open github",
+        span_start: 0,
+        span_end: 11,
+      },
+    };
+    const next = reduceHudState(dirty, "hud-phase", { phase: "awaiting_input" });
+    expect(next.match).toBeNull();
+    expect(next.transcript).toBe("");
+    expect(next.transcriptFinal).toBe(false);
+  });
+
   it("applies transcript-update text and is_final", () => {
     let s = reduceHudState(initialHudState, "transcript-update", {
       text: "open",

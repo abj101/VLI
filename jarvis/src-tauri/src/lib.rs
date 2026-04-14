@@ -44,6 +44,10 @@ struct HudRuntime {
     active_run_session_id: Option<u64>,
     /// Final transcript captured while waiting in `AwaitingInput`.
     pending_follow_up_response: Option<String>,
+    /// Latest non-empty follow-up candidate captured from streaming STT updates.
+    pending_follow_up_candidate: Option<String>,
+    /// Last update timestamp for candidate debounce.
+    pending_follow_up_candidate_at: Option<Instant>,
 }
 
 type SharedHud = Arc<Mutex<HudRuntime>>;
@@ -114,7 +118,9 @@ fn update_pending_transcript(rt: &SharedHud, text: &str) -> Option<(u64, u64)> {
     }
     s.pending_transcript = trimmed.to_string();
     s.transcript_revision = s.transcript_revision.wrapping_add(1);
-        s.pending_follow_up_response = None;
+    s.pending_follow_up_response = None;
+    s.pending_follow_up_candidate = None;
+    s.pending_follow_up_candidate_at = None;
     Some((s.session_id, s.transcript_revision))
 }
 
@@ -136,6 +142,22 @@ fn take_follow_up_response(rt: &mut HudRuntime, expected_session_id: u64) -> Opt
         return rt.pending_follow_up_response.take();
     }
     None
+}
+
+fn maybe_promote_follow_up_candidate(rt: &mut HudRuntime, now: Instant) {
+    if rt.pending_follow_up_response.is_some() {
+        return;
+    }
+    let Some(updated_at) = rt.pending_follow_up_candidate_at else {
+        return;
+    };
+    if now.duration_since(updated_at) < SILENCE_BEFORE_MATCH {
+        return;
+    }
+    if let Some(candidate) = rt.pending_follow_up_candidate.take() {
+        rt.pending_follow_up_response = Some(candidate);
+        rt.pending_follow_up_candidate_at = None;
+    }
 }
 
 fn should_abort_follow_up_wait(
@@ -171,8 +193,12 @@ fn capture_follow_up_from_update(rt: &SharedHud, update: &audio::stt::Transcript
         return false;
     }
     s.pending_transcript = trimmed.to_string();
+    s.pending_follow_up_candidate = Some(trimmed.to_string());
+    s.pending_follow_up_candidate_at = Some(Instant::now());
     if update.is_final {
         s.pending_follow_up_response = Some(trimmed.to_string());
+        s.pending_follow_up_candidate = None;
+        s.pending_follow_up_candidate_at = None;
     }
     true
 }
@@ -343,6 +369,8 @@ fn await_follow_up_input(
         }
         s.phase = HudPhase::AwaitingInput;
         s.pending_follow_up_response = None;
+        s.pending_follow_up_candidate = None;
+        s.pending_follow_up_candidate_at = None;
     }
     sync_hud_window(app, HudPhase::AwaitingInput)?;
     emit_hud_phase(app, HudPhase::AwaitingInput);
@@ -358,6 +386,7 @@ fn await_follow_up_input(
         std::thread::sleep(POLL);
         let state = {
             let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+            maybe_promote_follow_up_candidate(&mut s, Instant::now());
             if let Some(response) = take_follow_up_response(&mut s, expected_session_id) {
                 return Ok(response);
             }
@@ -382,6 +411,9 @@ fn await_follow_up_input(
                     if s.session_id == expected_session_id {
                         s.active_run_cancel = None;
                         s.active_run_session_id = None;
+                        s.pending_follow_up_response = None;
+                        s.pending_follow_up_candidate = None;
+                        s.pending_follow_up_candidate_at = None;
                     }
                 }
                 let _ = set_phase(app, rt, HudPhase::Done)?;
@@ -452,6 +484,8 @@ fn try_match_and_execute(
             s.active_run_cancel = Some(cancel_flag.clone());
             s.active_run_session_id = Some(executing_session_id);
             s.pending_follow_up_response = None;
+            s.pending_follow_up_candidate = None;
+            s.pending_follow_up_candidate_at = None;
         }
         info!("flow: spawn execute_command for node_id={}", node.id);
         std::thread::spawn(move || {
@@ -597,6 +631,8 @@ fn show_hud_from_hotkey(
         s.pending_transcript.clear();
         s.transcript_revision = 0;
         s.pending_follow_up_response = None;
+        s.pending_follow_up_candidate = None;
+        s.pending_follow_up_candidate_at = None;
         cancel_active_run_in_state(&mut s);
         listening_session_id = Some(s.session_id);
         window.center().map_err(|e| e.to_string())?;
@@ -609,6 +645,8 @@ fn show_hud_from_hotkey(
         s.pending_transcript.clear();
         s.transcript_revision = 0;
         s.pending_follow_up_response = None;
+        s.pending_follow_up_candidate = None;
+        s.pending_follow_up_candidate_at = None;
         cancel_active_run_in_state(&mut s);
         window.hide().map_err(|e| e.to_string())?;
     }
@@ -644,6 +682,8 @@ fn dismiss_hud(app: &AppHandle, rt: &SharedHud) -> Result<(), String> {
     s.pending_transcript.clear();
     s.transcript_revision = 0;
     s.pending_follow_up_response = None;
+    s.pending_follow_up_candidate = None;
+    s.pending_follow_up_candidate_at = None;
     cancel_active_run_in_state(&mut s);
     window.hide().map_err(|e| e.to_string())?;
 
@@ -678,6 +718,8 @@ fn hud_set_phase(
                 s.pending_transcript.clear();
                 s.transcript_revision = 0;
                 s.pending_follow_up_response = None;
+                s.pending_follow_up_candidate = None;
+                s.pending_follow_up_candidate_at = None;
                 cancel_active_run_in_state(&mut s);
             }
             HudPhase::Stopped => {
@@ -686,6 +728,8 @@ fn hud_set_phase(
                 s.pending_transcript.clear();
                 s.transcript_revision = 0;
                 s.pending_follow_up_response = None;
+                s.pending_follow_up_candidate = None;
+                s.pending_follow_up_candidate_at = None;
                 cancel_active_run_in_state(&mut s);
             }
             _ => {}
@@ -882,6 +926,19 @@ mod tests {
         let response = take_follow_up_response(&mut rt, 42);
         assert_eq!(response, Some("open docs".to_string()));
         assert_eq!(rt.pending_follow_up_response, None);
+    }
+
+    #[test]
+    fn follow_up_candidate_promotes_after_stable_silence() {
+        let mut rt = HudRuntime::default();
+        rt.pending_follow_up_candidate = Some("rust tauri".to_string());
+        rt.pending_follow_up_candidate_at = Some(Instant::now() - SILENCE_BEFORE_MATCH);
+        maybe_promote_follow_up_candidate(&mut rt, Instant::now());
+        assert_eq!(
+            rt.pending_follow_up_response,
+            Some("rust tauri".to_string())
+        );
+        assert_eq!(rt.pending_follow_up_candidate, None);
     }
 
     #[test]

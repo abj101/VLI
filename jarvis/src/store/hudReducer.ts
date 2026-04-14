@@ -84,6 +84,12 @@ export function reduceHudState(
         next.amplitude = 0;
         next.audioError = null;
       }
+      if (phase === "awaiting_input") {
+        // Drop previous command highlight so follow-up prompt/transcript can render.
+        next.match = null;
+        next.transcript = "";
+        next.transcriptFinal = false;
+      }
       return next;
     }
     case "transcript-update": {
