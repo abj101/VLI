@@ -2,6 +2,8 @@ use crate::db::{Action, CommandNode};
 use log::debug;
 use serde::Serialize;
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_opener::OpenerExt;
 
@@ -16,6 +18,9 @@ pub struct ActionStatus {
 pub trait ActionRuntime {
     fn open_app(&self, path: &str) -> Result<(), String>;
     fn open_url(&self, url: &str) -> Result<(), String>;
+    fn run_script(&self, script: &str, args: &[String]) -> Result<(), String>;
+    fn send_keys(&self, keys: &str) -> Result<(), String>;
+    fn wait_ms(&self, ms: u64) -> Result<(), String>;
     fn emit_status(&self, text: &str);
     fn emit_error(&self, message: &str);
 }
@@ -55,6 +60,49 @@ impl ActionRuntime for TauriActionRuntime<'_> {
             .opener()
             .open_url(url, None::<&str>)
             .map_err(|e| format!("failed to open url `{url}`: {e}"))
+    }
+
+    fn run_script(&self, script: &str, args: &[String]) -> Result<(), String> {
+        debug!("executor: run_script script={script:?} args={args:?}");
+        let status = Command::new(script)
+            .args(args)
+            .status()
+            .map_err(|e| format!("failed to run script `{script}`: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "failed to run script `{script}`: command exited with {status}"
+            ))
+        }
+    }
+
+    fn send_keys(&self, keys: &str) -> Result<(), String> {
+        debug!("executor: send_keys keys={keys:?}");
+        let escaped = keys.replace('\'', "''");
+        let command = format!(
+            "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('{escaped}')"
+        );
+        let status = Command::new("powershell")
+            .arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-Command")
+            .arg(command)
+            .status()
+            .map_err(|e| format!("failed to send keys `{keys}`: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "failed to send keys `{keys}`: powershell exited with {status}"
+            ))
+        }
+    }
+
+    fn wait_ms(&self, ms: u64) -> Result<(), String> {
+        debug!("executor: wait_ms ms={ms}");
+        thread::sleep(Duration::from_millis(ms));
+        Ok(())
     }
 
     fn emit_status(&self, text: &str) {
@@ -109,9 +157,21 @@ fn execute_one_action(action: &Action, runtime: &impl ActionRuntime) -> Result<S
             runtime.open_url(url)?;
             Ok(format!("Opening {url}..."))
         }
-        Action::RunScript { .. } => Err("RunScript is not implemented yet".to_string()),
-        Action::SendKeys { .. } => Err("SendKeys is not implemented yet".to_string()),
-        Action::Wait { .. } => Err("Wait is not implemented yet".to_string()),
+        Action::RunScript { script, args } => {
+            validate_run_script(script, args)?;
+            runtime.run_script(script, args)?;
+            Ok(format!("Ran script {script}"))
+        }
+        Action::SendKeys { keys } => {
+            validate_send_keys(keys)?;
+            runtime.send_keys(keys)?;
+            Ok("Sent key sequence".to_string())
+        }
+        Action::Wait { ms } => {
+            validate_wait_ms(*ms)?;
+            runtime.wait_ms(*ms)?;
+            Ok(format!("Waiting {ms}ms..."))
+        }
         Action::Speak { .. } => Err("Speak is not implemented yet".to_string()),
         Action::SubPrompt { .. } => Err("SubPrompt is not implemented yet".to_string()),
     }
@@ -139,6 +199,59 @@ fn validate_open_url(url: &str) -> Result<(), String> {
             "OpenUrl only supports http:// or https:// URLs: `{trimmed}`"
         ))
     }
+}
+
+fn validate_run_script(script: &str, args: &[String]) -> Result<(), String> {
+    let trimmed = script.trim();
+    if trimmed.is_empty() {
+        return Err("RunScript script cannot be empty".to_string());
+    }
+    if trimmed.chars().any(is_shell_metachar) {
+        return Err(format!(
+            "RunScript script contains forbidden shell metacharacters: `{trimmed}`"
+        ));
+    }
+    for arg in args {
+        let arg_trimmed = arg.trim();
+        if arg_trimmed.is_empty() {
+            return Err("RunScript args cannot contain empty values".to_string());
+        }
+        if arg_trimmed.chars().any(is_shell_metachar) {
+            return Err(format!(
+                "RunScript arg contains forbidden shell metacharacters: `{arg_trimmed}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_send_keys(keys: &str) -> Result<(), String> {
+    let trimmed = keys.trim();
+    if trimmed.is_empty() {
+        return Err("SendKeys keys cannot be empty".to_string());
+    }
+    if trimmed.len() > 128 {
+        return Err("SendKeys keys exceeds max length of 128".to_string());
+    }
+    if trimmed.chars().any(is_shell_metachar) {
+        return Err(format!(
+            "SendKeys contains forbidden shell metacharacters: `{trimmed}`"
+        ));
+    }
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Err("SendKeys cannot contain control characters".to_string());
+    }
+    Ok(())
+}
+
+fn validate_wait_ms(ms: u64) -> Result<(), String> {
+    if ms == 0 {
+        return Err("Wait duration must be greater than 0ms".to_string());
+    }
+    if ms > 60_000 {
+        return Err("Wait duration exceeds max of 60000ms".to_string());
+    }
+    Ok(())
 }
 
 fn is_shell_metachar(c: char) -> bool {
@@ -169,10 +282,15 @@ mod tests {
     struct MockState {
         app_calls: Vec<String>,
         url_calls: Vec<String>,
+        script_calls: Vec<(String, Vec<String>)>,
+        key_calls: Vec<String>,
+        wait_calls: Vec<u64>,
         statuses: Vec<String>,
         errors: Vec<String>,
         fail_app_paths: Vec<String>,
         fail_urls: Vec<String>,
+        fail_scripts: Vec<String>,
+        fail_keys: Vec<String>,
     }
 
     #[derive(Clone, Default, Debug)]
@@ -190,6 +308,15 @@ mod tests {
             }
         }
 
+        fn with_action_failures(fail_scripts: Vec<&str>, fail_keys: Vec<&str>) -> Self {
+            let mut s = MockState::default();
+            s.fail_scripts = fail_scripts.into_iter().map(str::to_string).collect();
+            s.fail_keys = fail_keys.into_iter().map(str::to_string).collect();
+            Self {
+                state: Arc::new(Mutex::new(s)),
+            }
+        }
+
         fn snapshot(&self) -> MockState {
             self.state.lock().unwrap().clone()
         }
@@ -200,10 +327,15 @@ mod tests {
             Self {
                 app_calls: self.app_calls.clone(),
                 url_calls: self.url_calls.clone(),
+                script_calls: self.script_calls.clone(),
+                key_calls: self.key_calls.clone(),
+                wait_calls: self.wait_calls.clone(),
                 statuses: self.statuses.clone(),
                 errors: self.errors.clone(),
                 fail_app_paths: self.fail_app_paths.clone(),
                 fail_urls: self.fail_urls.clone(),
+                fail_scripts: self.fail_scripts.clone(),
+                fail_keys: self.fail_keys.clone(),
             }
         }
     }
@@ -224,6 +356,29 @@ mod tests {
             if s.fail_urls.iter().any(|u| u == url) {
                 return Err(format!("mock url open failed: {url}"));
             }
+            Ok(())
+        }
+
+        fn run_script(&self, script: &str, args: &[String]) -> Result<(), String> {
+            let mut s = self.state.lock().unwrap();
+            s.script_calls.push((script.to_string(), args.to_vec()));
+            if s.fail_scripts.iter().any(|p| p == script) {
+                return Err(format!("mock script failed: {script}"));
+            }
+            Ok(())
+        }
+
+        fn send_keys(&self, keys: &str) -> Result<(), String> {
+            let mut s = self.state.lock().unwrap();
+            s.key_calls.push(keys.to_string());
+            if s.fail_keys.iter().any(|k| k == keys) {
+                return Err(format!("mock send_keys failed: {keys}"));
+            }
+            Ok(())
+        }
+
+        fn wait_ms(&self, ms: u64) -> Result<(), String> {
+            self.state.lock().unwrap().wait_calls.push(ms);
             Ok(())
         }
 
@@ -310,6 +465,80 @@ mod tests {
                 "Opening https://github.com...".to_string(),
             ]
         );
+        assert!(s.errors.is_empty());
+    }
+
+    #[test]
+    fn executes_phase2_non_interactive_actions_in_declared_order() {
+        let runtime = MockRuntime::default();
+        let node = node_with_actions(vec![
+            Action::RunScript {
+                script: "echo".into(),
+                args: vec!["hello".into()],
+            },
+            Action::Wait { ms: 250 },
+            Action::SendKeys {
+                keys: "CTRL+SHIFT+N".into(),
+            },
+            Action::OpenUrl {
+                url: "https://example.com".into(),
+            },
+        ]);
+
+        execute_command(&node, &runtime);
+        let s = runtime.snapshot();
+        assert_eq!(s.script_calls, vec![("echo".to_string(), vec!["hello".to_string()])]);
+        assert_eq!(s.wait_calls, vec![250]);
+        assert_eq!(s.key_calls, vec!["CTRL+SHIFT+N".to_string()]);
+        assert_eq!(s.url_calls, vec!["https://example.com".to_string()]);
+        assert!(s.errors.is_empty());
+    }
+
+    #[test]
+    fn rejects_unsafe_run_script_payloads() {
+        let runtime = MockRuntime::default();
+        let node = node_with_actions(vec![Action::RunScript {
+            script: "whoami && del C:\\temp\\*".into(),
+            args: vec![],
+        }]);
+
+        execute_command(&node, &runtime);
+        let s = runtime.snapshot();
+        assert!(s.script_calls.is_empty());
+        assert_eq!(s.errors.len(), 1);
+        assert!(s.errors[0].contains("RunScript script contains forbidden shell metacharacters"));
+    }
+
+    #[test]
+    fn rejects_unsafe_send_keys_payloads() {
+        let runtime = MockRuntime::default();
+        let node = node_with_actions(vec![Action::SendKeys {
+            keys: "CTRL+ALT+DEL;shutdown".into(),
+        }]);
+
+        execute_command(&node, &runtime);
+        let s = runtime.snapshot();
+        assert!(s.key_calls.is_empty());
+        assert_eq!(s.errors.len(), 1);
+        assert!(s.errors[0].contains("SendKeys contains forbidden shell metacharacters"));
+    }
+
+    #[test]
+    fn wait_action_reports_status_and_allows_chain_to_continue() {
+        let runtime = MockRuntime::with_action_failures(vec![], vec![]);
+        let node = node_with_actions(vec![
+            Action::Wait { ms: 10 },
+            Action::RunScript {
+                script: "echo".into(),
+                args: vec!["done".into()],
+            },
+        ]);
+
+        execute_command(&node, &runtime);
+        let s = runtime.snapshot();
+        assert_eq!(s.wait_calls, vec![10]);
+        assert_eq!(s.script_calls, vec![("echo".to_string(), vec!["done".to_string()])]);
+        assert!(s.statuses.iter().any(|status| status.contains("Waiting 10ms")));
         assert!(s.errors.is_empty());
     }
 }

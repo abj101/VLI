@@ -77,12 +77,12 @@ flowchart TD
 **Description:** Implement non-interactive chain actions first (`RunScript`, `SendKeys`, `Wait`) in executor with strict validation/guardrails.
 
 **Acceptance criteria:**
-- [ ] Actions run in declared order.
-- [ ] Validation rejects unsafe script/keys payloads with error events.
-- [ ] `Wait` pauses chain without blocking HUD event loop.
+- [x] Actions run in declared order.
+- [x] Validation rejects unsafe script/keys payloads with error events.
+- [x] `Wait` pauses chain without blocking HUD event loop.
 
 **Verification:**
-- [ ] `cargo test commands::executor`
+- [x] `cargo test commands::executor`
 - [ ] Manual smoke command chain: `open_app -> wait -> open_url`.
 
 **Dependencies:** Task 1.
