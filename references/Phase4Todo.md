@@ -10,7 +10,7 @@
 - [x] **T4-1** `WakeDetector` trait + Porcupine backend *(implemented; see checklist below)*
 - [x] **T4-2** OpenWakeWord backend (feature-gated) *(implemented)*
 - [x] **T4-3** Transcription backend abstraction + local path + settings contract *(replaces old “Haiku client” milestone — STT only)*
-- [ ] **T4-4** Settings IPC + UI — wake, Porcupine, **STT provider**; **remove** Anthropic / global AI mode UI *(coordinate with T4-6)*
+- [x] **T4-4** Settings IPC + UI — wake, Porcupine, **STT provider**; **remove** Anthropic / global AI mode UI *(coordinate with T4-6)*
 
 ### Legacy note (codebase today)
 
@@ -63,19 +63,19 @@ Earlier Phase 4 work added **Haiku `ai_mode`** (`src/ai/`, Anthropic settings). 
 
 ### Rust / DB
 
-- [ ] Settings include wake engine, Porcupine flag, **STT provider** fields; remove **`global_ai_mode`** / **`anthropic_key_stored`** when T4-6 lands (or single migration with T4-6)
-- [ ] Keychain: Porcupine + **remote STT** secrets only as needed — **no** Anthropic service
-- [ ] `get_settings()` / `update_settings()` reflect new fields; migrations idempotent
+- [x] Settings include wake engine, Porcupine flag, **STT provider** fields; remove **`global_ai_mode`** / **`anthropic_key_stored`** when T4-6 lands (or single migration with T4-6) *(T4-6 complete; legacy keys removed)*
+- [x] Keychain: Porcupine + **remote STT** secrets only as needed — **no** Anthropic service
+- [x] `get_settings()` / `update_settings()` reflect new fields; migrations idempotent
 
 ### React
 
-- [ ] Wake engine selector (hotkey / porcupine / oww) persists
+- [x] Wake engine selector (hotkey / porcupine / oww) persists
 - [x] **Transcription provider** UI: local / OS / online (labels clear)
 - [x] Remote STT: masked key + endpoint fields as required by T4-3 contract
-- [ ] **Remove** global `ai_mode` toggle and Anthropic key panel *(can defer to T4-6 if same PR)*
-- [ ] Porcupine access key: masked, Save / Clear
-- [ ] "App Index" status from `app-index-ready`
-- [ ] Tray "Settings" opens panel
+- [x] **Remove** global `ai_mode` toggle and Anthropic key panel *(T4-6)*
+- [x] Porcupine access key: masked, Save / Clear
+- [x] "App Index" status from `app-index-ready`
+- [x] Tray "Settings" opens panel
 
 ---
 
