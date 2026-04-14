@@ -46,13 +46,22 @@ describe("selectCenterContent", () => {
     });
     expect(out).toEqual({ kind: "error", text: "Microphone unavailable" });
   });
+
+  it("shows live transcript during awaiting_input even when prompt text exists", () => {
+    const out = selectCenterContent({
+      ...base("awaiting_input"),
+      transcript: "rust tauri",
+      actionText: "Awaiting input: What should I search on GitHub?",
+    });
+    expect(out).toEqual({ kind: "transcript", text: "rust tauri" });
+  });
 });
 
 describe("selectPhaseLabel", () => {
-  it("maps each active HUD phase to a distinct user-facing label", () => {
-    expect(selectPhaseLabel("listening")).toBe("Listening");
+  it("hides listening and awaiting labels, keeps execution labels", () => {
+    expect(selectPhaseLabel("listening")).toBeNull();
     expect(selectPhaseLabel("matched")).toBe("Matched");
-    expect(selectPhaseLabel("awaiting_input")).toBe("Awaiting input");
+    expect(selectPhaseLabel("awaiting_input")).toBeNull();
     expect(selectPhaseLabel("executing")).toBe("Executing");
     expect(selectPhaseLabel("done")).toBe("Done");
     expect(selectPhaseLabel("stopped")).toBe("Stopped");

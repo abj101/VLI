@@ -210,6 +210,11 @@ fn execute_actions(actions: &[Action], runtime: &impl ActionRuntime) {
             }
         }
         if let Action::SubPrompt { prompt } = &resolved {
+            if let Err(err) = runtime.speak(prompt) {
+                runtime.emit_status(&format!(
+                    "Follow-up prompt voice unavailable ({err}); showing text prompt"
+                ));
+            }
             match runtime.request_follow_up(prompt) {
                 Ok(response) => {
                     follow_up_response = Some(response);
@@ -813,6 +818,7 @@ mod tests {
         execute_command(&node, &runtime);
         let s = runtime.snapshot();
         assert_eq!(s.follow_up_prompts, vec!["Which page should I open?".to_string()]);
+        assert_eq!(s.speak_calls, vec!["Which page should I open?".to_string()]);
         assert_eq!(s.url_calls, vec!["https://example.com/docs".to_string()]);
         assert!(s.errors.is_empty());
     }

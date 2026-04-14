@@ -151,6 +151,11 @@ export function selectCenterContent(
     return { kind: "match" };
   }
 
+  const transcript = input.transcript.trim();
+  if (input.phase === "awaiting_input" && transcript.length > 0) {
+    return { kind: "transcript", text: input.transcript };
+  }
+
   if (
     input.actionText &&
     (input.phase === "matched" ||
@@ -161,13 +166,8 @@ export function selectCenterContent(
     return { kind: "action", text: input.actionText };
   }
 
-  const transcript = input.transcript.trim();
   if (transcript.length > 0) {
     return { kind: "transcript", text: input.transcript };
-  }
-
-  if (input.phase === "awaiting_input") {
-    return { kind: "action", text: "Awaiting follow-up input..." };
   }
 
   return { kind: "placeholder" };
@@ -176,11 +176,11 @@ export function selectCenterContent(
 export function selectPhaseLabel(phase: HudPhase): string | null {
   switch (phase) {
     case "listening":
-      return "Listening";
+      return null;
     case "matched":
       return "Matched";
     case "awaiting_input":
-      return "Awaiting input";
+      return null;
     case "executing":
       return "Executing";
     case "done":
@@ -218,7 +218,12 @@ function CenterContent() {
     case "match":
       return <RecognizedPhrase />;
     case "action":
-      return <div className="hud-line hud-line-action">{selected.text}</div>;
+      return (
+        <div className="hud-line hud-line-action">
+          <span className="hud-app-tag">JARVIS</span>
+          <span>{selected.text}</span>
+        </div>
+      );
     case "transcript":
       return <div className="hud-line hud-line-transcript">{selected.text}</div>;
     default:
