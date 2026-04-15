@@ -1,22 +1,17 @@
 /* --- Theme tokens: resolved palette on `html[data-theme="light"|"dark"]` --- */
 
-/* Frameless editor: one radius token — paired with `DWMWCP_ROUNDSMALL` in `editor_window_win.rs`. */
+/* Frameless editor: square client — opaque fill so transparent WebView2 corners do not show the host. */
 html {
   /* Default until theme sync sets `data-theme` */
   --editor-bg: #0f1116;
-  --editor-shell-radius: 8px;
   box-sizing: border-box;
   height: 100%;
   min-height: 100%;
   min-height: 100dvh;
   width: 100%;
   margin: 0;
-  border-radius: var(--editor-shell-radius);
   overflow: hidden;
-  /* Must be opaque: a transparent `html` under rounded corners shows the Win32 host as a hairline. */
   background: var(--editor-bg);
-  /* Subpixel fringe between DWM curve and CSS clip — pull background 1px inward on the mask. */
-  box-shadow: inset 0 0 0 1px var(--editor-bg);
 }
 
 body {
@@ -35,10 +30,8 @@ body {
   width: 100%;
   margin: 0;
   box-sizing: border-box;
-  border-radius: var(--editor-shell-radius);
   overflow: hidden;
   background: var(--editor-bg);
-  box-shadow: inset 0 0 0 1px var(--editor-bg);
 }
 
 html[data-theme="dark"] {
@@ -180,16 +173,6 @@ html[data-theme="light"] {
     --editor-settings-bg: #ffffff;
   }
 
-  html {
-    --editor-shell-radius: 0px;
-    border-radius: 0;
-    box-shadow: none;
-  }
-
-  #root {
-    box-shadow: none;
-  }
-
   .editor-glass-panel,
   .editor-app-shell,
   .editor-settings-panel,
@@ -215,7 +198,6 @@ html[data-theme="light"] {
   flex-direction: column;
   min-height: 0;
   padding: 0;
-  border-radius: inherit;
   background: transparent;
   color: var(--editor-text);
   font-family: system-ui, -apple-system, "BlinkMacSystemFont", "SF Pro Text", "SF Pro Display", "Work Sans",
@@ -229,14 +211,11 @@ html[data-theme="light"] {
   grid-template-columns: 212px minmax(0, 1fr);
   grid-template-rows: 34px minmax(0, 1fr);
   overflow: hidden;
-  border-radius: var(--editor-shell-radius);
 }
 
 /* Outer drop shadow removed on the main shell: Win32 host is still rectangular; heavy blur reads as square corners. */
 .editor-app-shell.editor-glass-panel {
-  border-radius: var(--editor-shell-radius);
   box-shadow: var(--editor-glass-inset), inset 0 0 0 1px var(--editor-glass-hairline);
-  /* Clip backdrop-filter / layers to the rounded rect (reduces corner fringe vs DWM). */
   isolation: isolate;
   transform: translateZ(0);
 }
@@ -1239,6 +1218,18 @@ html[data-theme="light"] {
 
 /* --- Commands tab (formula rows) --- */
 
+.editor-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .editor-commands-tab {
   flex: 1;
   min-height: 0;
@@ -1252,25 +1243,15 @@ html[data-theme="light"] {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px 12px;
+  gap: 8px 10px;
   padding: 10px 14px 9px;
   border-bottom: 1px solid color-mix(in oklch, var(--editor-header-border) 65%, transparent);
 }
 
-.editor-commands-title {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--editor-settings-heading);
-  flex: 1 1 120px;
-  min-width: 0;
-}
-
 .editor-commands-search {
-  flex: 2 1 200px;
+  flex: 1 1 200px;
   min-width: 0;
-  max-width: 360px;
+  max-width: 420px;
 }
 
 .editor-commands-add {
@@ -1306,7 +1287,8 @@ html[data-theme="light"] {
 
 .editor-commands-search-hint {
   margin: 0;
-  padding: 8px 16px 0;
+  padding: 6px 14px 0;
+  font-size: 12px;
 }
 
 .editor-command-list {
@@ -1322,28 +1304,22 @@ html[data-theme="light"] {
 .editor-command-item {
   list-style: none;
   border-bottom: 1px solid color-mix(in oklch, var(--editor-header-border) 55%, transparent);
+  padding: 10px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .editor-command-item:last-child {
   border-bottom: none;
 }
 
-.editor-command-card {
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  padding: 10px 14px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.editor-command-item:hover {
+  background: color-mix(in oklch, var(--editor-control-bg) 22%, transparent);
 }
 
-.editor-command-card:hover {
-  background: color-mix(in oklch, var(--editor-control-bg) 26%, transparent);
-}
-
-.editor-command-card.is-expanded {
-  background: color-mix(in oklch, var(--editor-control-bg) 18%, transparent);
+.editor-command-item.is-expanded {
+  background: color-mix(in oklch, var(--editor-control-bg) 14%, transparent);
 }
 
 .editor-command-formula {

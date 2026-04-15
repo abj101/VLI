@@ -2,8 +2,6 @@ mod apps;
 mod audio;
 mod commands;
 mod db;
-#[cfg(windows)]
-mod editor_window_win;
 mod hud;
 mod keychain;
 mod tray;
@@ -359,8 +357,6 @@ pub(crate) fn open_or_create_editor_window(app: &AppHandle) -> Result<(), String
     .map_err(|e| e.to_string())?;
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
-    #[cfg(windows)]
-    editor_window_win::configure_editor_frame(app);
     Ok(())
 }
 
@@ -1613,8 +1609,6 @@ pub fn run() {
 
                 sync_hud_window(app.handle(), HudPhase::Idle).map_err(|e| e.to_string())?;
                 emit_hud_phase(app.handle(), HudPhase::Idle);
-                #[cfg(windows)]
-                editor_window_win::configure_editor_frame(app.handle());
                 Ok(())
             }
         })
