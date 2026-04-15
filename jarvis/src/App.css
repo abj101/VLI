@@ -16,6 +16,59 @@ body,
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  --hud-shell-radius: 14px;
+  --hud-window-bg: oklch(0.14 0.012 268);
+  --app-scrollbar-thumb: rgb(143 156 176 / 45%);
+  --app-scrollbar-thumb-hover: rgb(143 156 176 / 58%);
+  --app-scrollbar-thumb-active: rgb(143 156 176 / 68%);
+}
+
+html {
+  border-radius: var(--hud-shell-radius);
+  overflow: hidden;
+  /* Keep host corners opaque so Win32 frame does not leak as square pixels. */
+  background: var(--hud-window-bg);
+  box-shadow: inset 0 0 0 1px var(--hud-window-bg);
+}
+
+body {
+  background: transparent;
+}
+
+#root {
+  border-radius: inherit;
+  overflow: hidden;
+  background: var(--hud-window-bg);
+  box-shadow: inset 0 0 0 1px var(--hud-window-bg);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-scrollbar-thumb) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  background-color: var(--app-scrollbar-thumb);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--app-scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background-color: var(--app-scrollbar-thumb-active);
 }
 
 /* HUD tokens: scoped so system light/dark can swap without touching the editor shell. */
@@ -53,6 +106,10 @@ body,
 }
 
 @media (prefers-color-scheme: light) {
+  :root {
+    --hud-window-bg: oklch(0.985 0.006 268);
+  }
+
   .hud-panel-fill {
     color-scheme: light;
 
@@ -107,7 +164,9 @@ body,
     var(--hud-glass-inset),
     inset 0 0 0 1px var(--hud-glass-hairline);
   border: 1px solid var(--hud-border);
-  border-radius: 14px;
+  border-radius: var(--hud-shell-radius);
+  isolation: isolate;
+  transform: translateZ(0);
 }
 
 @media (prefers-contrast: more) {

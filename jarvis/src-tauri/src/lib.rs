@@ -5,6 +5,8 @@ mod db;
 #[cfg(windows)]
 mod editor_window_win;
 mod hud;
+#[cfg(windows)]
+mod hud_window_win;
 mod keychain;
 mod tray;
 
@@ -1615,6 +1617,8 @@ pub fn run() {
                 emit_hud_phase(app.handle(), HudPhase::Idle);
                 #[cfg(windows)]
                 editor_window_win::configure_editor_frame(app.handle());
+                #[cfg(windows)]
+                hud_window_win::configure_hud_frame(app.handle());
                 Ok(())
             }
         })
