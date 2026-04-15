@@ -17,6 +17,10 @@ body,
   overflow: hidden;
 }
 
+#root {
+  border-radius: 14px;
+}
+
 html[data-theme="dark"] {
   color-scheme: dark;
   --editor-bg: #0f1116;
@@ -69,7 +73,8 @@ html[data-theme="dark"] {
   --editor-glass-veil: 20%;
   --editor-glass-blur: 52px;
   --editor-glass-saturate: 1.32;
-  --editor-glass-shadow: 0 14px 44px oklch(0.04 0.03 268 / 0.62);
+  /* Tighter than before: large outer blur reads as a square halo on transparent Win32 hosts. */
+  --editor-glass-shadow: 0 8px 28px oklch(0.04 0.03 268 / 0.32);
   --editor-glass-inset: inset 0 1px 0 oklch(0.97 0.012 268 / 0.22);
   --editor-glass-hairline: oklch(0.94 0.014 268 / 0.32);
   --editor-sidebar-tint: oklch(0.17 0.014 268 / 0.55);
@@ -128,7 +133,7 @@ html[data-theme="light"] {
   --editor-glass-veil: 14%;
   --editor-glass-blur: 56px;
   --editor-glass-saturate: 1.2;
-  --editor-glass-shadow: 0 14px 40px oklch(0.32 0.035 268 / 0.16);
+  --editor-glass-shadow: 0 6px 22px oklch(0.32 0.035 268 / 0.1);
   --editor-glass-inset: inset 0 1px 0 oklch(1 0.008 268 / 0.78);
   --editor-glass-hairline: oklch(1 0.006 268 / 0.58);
   --editor-sidebar-tint: oklch(0.97 0.01 268 / 0.72);
@@ -200,8 +205,10 @@ html[data-theme="light"] {
   border-radius: 14px;
 }
 
+/* Outer drop shadow removed on the main shell: Win32 host is still rectangular; heavy blur reads as square corners. */
 .editor-app-shell.editor-glass-panel {
   border-radius: 14px;
+  box-shadow: var(--editor-glass-inset), inset 0 0 0 1px var(--editor-glass-hairline);
 }
 
 .editor-window-chrome {
