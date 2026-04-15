@@ -23,7 +23,7 @@ pub(crate) fn configure_editor_frame(app: &AppHandle) {
     };
     let hwnd = HWND(hwnd_isize as *mut core::ffi::c_void);
 
-    // Pairs with `--editor-shell-radius` in EditorRoot.css: `ROUND` is a larger system arc than our clip.
+    // Pairs with `--editor-shell-radius` on `html` in EditorRoot.css (8px + `DWMWCP_ROUNDSMALL`).
     let pref = DWMWCP_ROUNDSMALL;
     unsafe {
         let _ = DwmSetWindowAttribute(

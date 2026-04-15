@@ -1,15 +1,16 @@
 /* --- Theme tokens: resolved palette on `html[data-theme="light"|"dark"]` --- */
 
-/* Frameless transparent editor: one radius token — keep in sync with Win DWM in `editor_window_win.rs` (ROUNDSMALL). */
+/* Frameless editor: one radius token — paired with `DWMWCP_ROUNDSMALL` in `editor_window_win.rs`. */
 html {
-  --editor-shell-radius: 10px;
+  /* Default until theme sync sets `data-theme` */
+  --editor-bg: #0f1116;
+  --editor-shell-radius: 8px;
   border-radius: var(--editor-shell-radius);
   overflow: hidden;
 }
 
 html,
-body,
-#root {
+body {
   height: 100%;
   width: 100%;
   margin: 0;
@@ -19,7 +20,14 @@ body,
 }
 
 #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  box-sizing: border-box;
   border-radius: var(--editor-shell-radius);
+  overflow: hidden;
+  /* Opaque fill under the glass shell — transparent corners were showing the host (square vs DWM curve). */
+  background: var(--editor-bg);
 }
 
 html[data-theme="dark"] {
@@ -191,6 +199,7 @@ html[data-theme="light"] {
   flex-direction: column;
   min-height: 0;
   padding: 0;
+  border-radius: inherit;
   background: transparent;
   color: var(--editor-text);
   font-family: system-ui, -apple-system, "BlinkMacSystemFont", "SF Pro Text", "SF Pro Display", "Work Sans",
@@ -211,6 +220,9 @@ html[data-theme="light"] {
 .editor-app-shell.editor-glass-panel {
   border-radius: var(--editor-shell-radius);
   box-shadow: var(--editor-glass-inset), inset 0 0 0 1px var(--editor-glass-hairline);
+  /* Clip backdrop-filter / layers to the rounded rect (reduces corner fringe vs DWM). */
+  isolation: isolate;
+  transform: translateZ(0);
 }
 
 .editor-window-chrome {
@@ -373,7 +385,7 @@ html[data-theme="light"] {
 .editor-app-nav-btn {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   width: 100%;
   margin: 0;
@@ -395,28 +407,6 @@ html[data-theme="light"] {
 .editor-app-nav-btn.is-active {
   background: color-mix(in oklch, var(--editor-accent) 16%, transparent);
   font-weight: 600;
-}
-
-.editor-app-nav-label-inline {
-  flex: 1;
-  min-width: 0;
-}
-
-.editor-app-badge {
-  flex-shrink: 0;
-  min-width: 22px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  border: 1px solid var(--editor-control-border);
-  background: var(--editor-control-bg);
-  color: var(--editor-muted);
-}
-
-.editor-app-nav-btn.is-active .editor-app-badge {
-  border-color: color-mix(in oklch, var(--editor-accent-soft-solid) 35%, var(--editor-control-border));
-  color: var(--editor-text);
 }
 
 .editor-app-main {

@@ -10,7 +10,6 @@ import {
   applyEditorThemeToDocument,
   normalizeThemePreference,
 } from "./components/editor/SettingsPanel.logic";
-import { useEditorStore } from "./store/editorStore";
 import { useSettingsStore } from "./store/settingsStore";
 
 type ShellSection = "commands" | EditorSettingsNavId;
@@ -55,7 +54,6 @@ function CaptionCloseIcon() {
 }
 
 export default function EditorRoot() {
-  const nodes = useEditorStore((s) => s.nodes);
   const setAppIndexCount = useSettingsStore((s) => s.setAppIndexCount);
   const [section, setSection] = useState<ShellSection>("commands");
   const [isMaximized, setIsMaximized] = useState(false);
@@ -179,10 +177,7 @@ export default function EditorRoot() {
               className={`editor-app-nav-btn${section === "commands" ? " is-active" : ""}`}
               onClick={() => setSection("commands")}
             >
-              <span className="editor-app-nav-label-inline">Commands</span>
-              <span className="editor-app-badge" aria-label={`${nodes.length} commands`}>
-                {nodes.length}
-              </span>
+              Commands
             </button>
           </div>
 
