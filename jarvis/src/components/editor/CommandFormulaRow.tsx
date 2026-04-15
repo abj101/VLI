@@ -22,8 +22,6 @@ export type AppIndexEntry = {
 
 type CommandFormulaRowProps = {
   node: CommandNodePayload;
-  expanded: boolean;
-  onToggleExpand: () => void;
   onToggleEnabled: () => void;
   onDelete: () => void;
   errorText?: string | null;
@@ -31,8 +29,6 @@ type CommandFormulaRowProps = {
 
 export function CommandFormulaRow({
   node,
-  expanded,
-  onToggleExpand,
   onToggleEnabled,
   onDelete,
   errorText,
@@ -109,13 +105,6 @@ export function CommandFormulaRow({
     }));
   };
 
-  const syncNameFromPhrase = () => {
-    if (model.name.trim().length > 0) return;
-    const p = (model.triggerPhrases[0] ?? "").trim();
-    if (!p) return;
-    updateModel((prev) => ({ ...prev, name: p.slice(0, 72) }));
-  };
-
   const addActionSegment = () => {
     updateModel((prev) => ({
       ...prev,
@@ -142,7 +131,7 @@ export function CommandFormulaRow({
 
   return (
     <li className="editor-command-item">
-      <div className={`editor-command-card${expanded ? " is-expanded" : ""}`}>
+      <div className="editor-command-card">
         {toastText && (
           <div className="editor-inline-toast editor-command-row-toast" role="status">
             {toastText}
@@ -160,7 +149,6 @@ export function CommandFormulaRow({
             className="editor-formula-input"
             value={primaryPhrase}
             onChange={(e) => setPrimaryPhrase(e.target.value)}
-            onBlur={() => syncNameFromPhrase()}
             placeholder="Trigger phrase"
             aria-label="Trigger phrase"
           />
@@ -212,62 +200,21 @@ export function CommandFormulaRow({
             </button>
             <button
               type="button"
-              className="editor-expand-chevron"
-              aria-expanded={expanded}
-              onClick={onToggleExpand}
-              aria-label={expanded ? "Hide details" : "Show details"}
-            >
-              {expanded ? "⌄" : "›"}
-            </button>
-            <button
-              type="button"
               className="editor-command-delete"
               onClick={onDelete}
-              aria-label={`Delete ${model.name.trim() || primaryPhrase.trim() || "command"}`}
+              aria-label={`Delete ${primaryPhrase.trim() || "command"}`}
             >
               ×
             </button>
           </div>
         </div>
 
-        {expanded && (
-          <div className="editor-command-advanced">
-            <div className="editor-form-grid">
-              <label>
-                Display name
-                <input
-                  value={model.name}
-                  onChange={(e) => updateModel((p) => ({ ...p, name: e.target.value }))}
-                  placeholder="Shown in lists"
-                />
-              </label>
-              {model.triggerPhrases.length > 1 && (
-                <p className="editor-settings-help">
-                  Multiple trigger phrases are stored; the formula line edits the first phrase only.
-                </p>
-              )}
-              <label>
-                Fuzzy threshold: {model.threshold.toFixed(2)}
-                <input
-                  type="range"
-                  min={0.5}
-                  max={1}
-                  step={0.01}
-                  value={model.threshold}
-                  onChange={(e) =>
-                    updateModel((p) => ({ ...p, threshold: Number(e.target.value) }))
-                  }
-                />
-              </label>
-            </div>
-            {(errors.actions || errors.triggerPhrases || errors.name || Object.keys(errors.actionErrors).length > 0) && (
-              <p className="editor-field-error">
-                {[errors.name, errors.triggerPhrases, errors.actions, ...Object.values(errors.actionErrors)]
-                  .filter(Boolean)
-                  .join(" ")}
-              </p>
-            )}
-          </div>
+        {(errors.actions || errors.triggerPhrases || Object.keys(errors.actionErrors).length > 0) && (
+          <p className="editor-field-error editor-command-row-errors">
+            {[errors.triggerPhrases, errors.actions, ...Object.values(errors.actionErrors)]
+              .filter(Boolean)
+              .join(" ")}
+          </p>
         )}
       </div>
     </li>
@@ -282,7 +229,6 @@ type DraftRowProps = {
 export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
   const [model, setModel] = useState<FormModel>(() => ({
     ...modelFromNode(null),
-    name: "",
     triggerPhrases: [],
     actions: [defaultActionForKind("open_app")],
   }));
@@ -300,23 +246,18 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
   };
 
   const onSave = async () => {
-    let m = model;
-    if (!m.name.trim() && (m.triggerPhrases[0] ?? "").trim()) {
-      m = { ...m, name: (m.triggerPhrases[0] ?? "").trim().slice(0, 72) };
-      setModel(m);
-    }
-    const errors = validateFormModel(m);
+    const errors = validateFormModel(model);
     if (hasBlockingErrors(errors)) {
       const actionErr = Object.values(errors.actionErrors)[0];
       setToastText(
-        errors.name ?? errors.triggerPhrases ?? errors.actions ?? actionErr ?? "Fix errors first.",
+        errors.triggerPhrases ?? errors.actions ?? actionErr ?? "Fix errors first.",
       );
       return;
     }
     setSaving(true);
     try {
       await invoke<CommandNodePayload>("create_command", {
-        node: toCommandPayload(m),
+        node: toCommandPayload(model),
       });
       onCreated();
     } catch (err: unknown) {
@@ -346,7 +287,7 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
 
   return (
     <li className="editor-command-item editor-command-item--draft">
-      <div className="editor-command-card is-expanded">
+      <div className="editor-command-card">
         {toastText && (
           <div className="editor-inline-toast editor-command-row-toast" role="alert">
             {toastText}

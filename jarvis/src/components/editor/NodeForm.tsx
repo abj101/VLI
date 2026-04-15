@@ -12,6 +12,7 @@ import {
   validateFormModel,
   type FormModel,
 } from "./NodeForm.logic";
+import { getPrimaryTriggerPhrase } from "./NodeList.logic";
 
 export function NodeForm() {
   const nodes = useEditorStore((s) => s.nodes);
@@ -109,7 +110,9 @@ export function NodeForm() {
   return (
     <section className="editor-panel editor-glass-panel editor-panel-right">
       <header className="editor-panel-header">
-        <h2>{model.id ? `Edit: ${selectedNode?.name ?? "Node"}` : "New Node"}</h2>
+        <h2>
+          {model.id && selectedNode ? `Edit: ${getPrimaryTriggerPhrase(selectedNode)}` : "New Node"}
+        </h2>
       </header>
 
       <div className="editor-form-scroll">
@@ -120,16 +123,6 @@ export function NodeForm() {
         )}
 
         <div className="editor-form-grid">
-          <label>
-            Name
-            <input
-              value={model.name}
-              onChange={(e) => updateModel((prev) => ({ ...prev, name: e.target.value }))}
-              placeholder="Open calculator"
-            />
-          </label>
-          {showErrors && errors.name && <p className="editor-field-error">{errors.name}</p>}
-
           <label>
             Trigger phrases
             <div className="editor-trigger-row">
@@ -170,19 +163,6 @@ export function NodeForm() {
             </div>
           )}
           {showErrors && errors.triggerPhrases && <p className="editor-field-error">{errors.triggerPhrases}</p>}
-
-          <label>
-            Fuzzy threshold: {model.threshold.toFixed(2)}
-            <input
-              type="range"
-              min={0.5}
-              max={1}
-              step={0.01}
-              value={model.threshold}
-              onChange={(e) => updateModel((prev) => ({ ...prev, threshold: Number(e.target.value) }))}
-            />
-          </label>
-          {showErrors && errors.threshold && <p className="editor-field-error">{errors.threshold}</p>}
 
           <label className="editor-checkbox-row">
             <input

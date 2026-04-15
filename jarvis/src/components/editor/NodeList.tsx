@@ -109,7 +109,7 @@ export function NodeList() {
     const node = useEditorStore.getState().nodes.find((entry) => entry.id === id);
     if (!node) return;
 
-    if (!window.confirm(`Delete "${node.name}"?`)) return;
+    if (!window.confirm(`Delete "${getPrimaryTriggerPhrase(node)}"?`)) return;
 
     void invoke<boolean>("delete_command", { id })
       .then((deleted) => {
@@ -257,8 +257,7 @@ function NodeRow({
       <div className={`editor-node-row${selected ? " is-selected" : ""}`}>
         <button type="button" className="editor-node-select" onClick={onSelect}>
           <span className="editor-node-main">
-            <span className="editor-node-name">{node.name}</span>
-            <span className="editor-node-trigger">{getPrimaryTriggerPhrase(node)}</span>
+            <span className="editor-node-name">{getPrimaryTriggerPhrase(node)}</span>
           </span>
         </button>
 
@@ -267,7 +266,7 @@ function NodeRow({
             type="button"
             className="editor-drag-handle editor-node-drag-handle"
             ref={setDragRef}
-            aria-label={`Drag to reorder ${node.name}`}
+            aria-label={`Drag to reorder ${getPrimaryTriggerPhrase(node)}`}
             onClick={(e) => e.stopPropagation()}
             {...listeners}
             {...attributes}
@@ -280,7 +279,7 @@ function NodeRow({
               className="editor-node-more-btn"
               aria-haspopup="menu"
               aria-expanded={menuOpen}
-              aria-label={`More actions for ${node.name}`}
+              aria-label={`More actions for ${getPrimaryTriggerPhrase(node)}`}
               onClick={(e) => {
                 e.stopPropagation();
                 setMenuOpen((o) => !o);

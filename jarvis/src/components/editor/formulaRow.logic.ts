@@ -4,11 +4,9 @@ import { getActionKind } from "./actionCatalog";
 export function fingerprintCommandNode(node: CommandNodePayload): string {
   return JSON.stringify({
     id: node.id,
-    name: node.name,
     trigger_phrases: node.trigger_phrases,
     actions: node.actions,
     enabled: node.enabled,
-    fuzzy_threshold_pct: node.fuzzy_threshold_pct,
   });
 }
 
@@ -24,7 +22,6 @@ function actionSnippet(action: ActionPayload): string {
 
 export function commandNodeSearchHaystack(node: CommandNodePayload): string {
   const bits = [
-    node.name,
     ...node.trigger_phrases,
     ...node.actions.map((a) => `${getActionKind(a)} ${actionSnippet(a)}`),
   ];

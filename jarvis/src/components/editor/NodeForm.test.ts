@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CommandNodePayload } from "../../types";
 import {
   defaultActionForKind,
+  derivedCommandName,
   hasBlockingErrors,
   modelFromNode,
   toCommandPayload,
@@ -25,33 +26,30 @@ function makeNode(): CommandNodePayload {
 }
 
 describe("NodeForm logic", () => {
-  it("loads all actions from the node in order", () => {
+  it("loads trigger phrases and actions from the node", () => {
     const model = modelFromNode(makeNode());
+    expect(model.triggerPhrases).toEqual(["search docs", "docs search"]);
     expect(model.actions).toEqual(makeNode().actions);
   });
 
-  it("round-trips command payload actions unchanged", () => {
+  it("derives stored name from first trigger and uses global fuzzy (0)", () => {
     const model = modelFromNode(makeNode());
     const payload = toCommandPayload(model);
-    expect(payload.name).toBe("Search docs");
+    expect(payload.name).toBe(derivedCommandName(model.triggerPhrases));
+    expect(payload.name).toBe("search docs");
     expect(payload.trigger_phrases).toEqual(["search docs", "docs search"]);
-    expect(payload.fuzzy_threshold_pct).toBe(82);
-    expect(payload.actions).toEqual(makeNode().actions);
+    expect(payload.fuzzy_threshold_pct).toBe(0);
   });
 
   it("validates required fields and blocks save", () => {
     const errors = validateFormModel({
       id: null,
-      name: "  ",
       triggerPhrases: [],
-      threshold: 0.45,
       enabled: true,
       actions: [],
     });
 
-    expect(errors.name).toBeTruthy();
     expect(errors.triggerPhrases).toBeTruthy();
-    expect(errors.threshold).toBeTruthy();
     expect(errors.actions).toBeTruthy();
     expect(hasBlockingErrors(errors)).toBe(true);
   });
@@ -59,9 +57,7 @@ describe("NodeForm logic", () => {
   it("validates open_url actions by index", () => {
     const errors = validateFormModel({
       id: null,
-      name: "Open stuff",
       triggerPhrases: ["open thing"],
-      threshold: 0.8,
       enabled: true,
       actions: [
         { open_url: { url: "not-a-url" } },
@@ -78,9 +74,7 @@ describe("NodeForm logic", () => {
   it("requires non-empty sub-prompt text on sub_prompt actions", () => {
     const errors = validateFormModel({
       id: null,
-      name: "Need follow-up",
       triggerPhrases: ["ask me"],
-      threshold: 0.75,
       enabled: true,
       actions: [{ wait: { ms: 100 } }, { sub_prompt: { prompt: "   " } }, { open_url: { url: "https://example.com" } }],
     });

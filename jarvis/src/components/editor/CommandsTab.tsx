@@ -6,7 +6,7 @@ import { useEditorStore } from "../../store/editorStore";
 import type { CommandNodePayload } from "../../types";
 import { CommandDraftRow, CommandFormulaRow } from "./CommandFormulaRow";
 import { commandNodeSearchHaystack } from "./formulaRow.logic";
-import { withEnabledValue } from "./NodeList.logic";
+import { getPrimaryTriggerPhrase, withEnabledValue } from "./NodeList.logic";
 
 export function CommandsTab() {
   const nodes = useEditorStore((s) => s.nodes);
@@ -16,7 +16,6 @@ export function CommandsTab() {
 
   const [errorText, setErrorText] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [expandedId, setExpandedId] = useState<number | null>(null);
   const [showDraft, setShowDraft] = useState(false);
   const errorTimeoutRef = useRef<number | null>(null);
 
@@ -86,12 +85,11 @@ export function CommandsTab() {
   const onDelete = (id: number) => {
     const node = useEditorStore.getState().nodes.find((e) => e.id === id);
     if (!node) return;
-    if (!window.confirm(`Delete "${node.name}"?`)) return;
+    if (!window.confirm(`Delete "${getPrimaryTriggerPhrase(node)}"?`)) return;
     void invoke<boolean>("delete_command", { id })
       .then((deleted) => {
         if (deleted) {
           deleteNode(id);
-          if (expandedId === id) setExpandedId(null);
           return;
         }
         showError("Delete failed.");
@@ -115,10 +113,7 @@ export function CommandsTab() {
         <button
           type="button"
           className="editor-commands-add"
-          onClick={() => {
-            setShowDraft(true);
-            setExpandedId(null);
-          }}
+          onClick={() => setShowDraft(true)}
           aria-label="Add command"
         >
           +
@@ -164,8 +159,6 @@ export function CommandsTab() {
               <CommandFormulaRow
                 key={node.id}
                 node={node}
-                expanded={expandedId === node.id}
-                onToggleExpand={() => setExpandedId((cur) => (cur === node.id ? null : node.id))}
                 onToggleEnabled={() => onToggleEnabled(node.id)}
                 onDelete={() => onDelete(node.id)}
               />

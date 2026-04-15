@@ -9,7 +9,7 @@ function makeNode(id: number, enabled = true): CommandNodePayload {
     trigger_phrases: [`trigger-${id}`],
     actions: [{ wait: { ms: 10 } }],
     enabled,
-    fuzzy_threshold_pct: 0.75,
+    fuzzy_threshold_pct: 75,
     created_at: "2026-01-01T00:00:00Z",
   };
 }

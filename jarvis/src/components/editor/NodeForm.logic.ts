@@ -11,24 +11,23 @@ export type ActionKind =
 
 export type FormModel = {
   id: number | null;
-  name: string;
   triggerPhrases: string[];
-  threshold: number;
   enabled: boolean;
   actions: ActionPayload[];
 };
 
 export type FormErrors = {
-  name?: string;
   triggerPhrases?: string;
-  threshold?: string;
   actions?: string;
   /** Per-index messages for any action row (URLs, sub-prompt text, etc.). */
   actionErrors: Record<number, string>;
 };
 
-const MIN_THRESHOLD = 0.5;
-const MAX_THRESHOLD = 1;
+/** Stored `name` + IPC validation: first trigger phrase, max 72 chars (matches backend trim). */
+export function derivedCommandName(triggerPhrases: string[]): string {
+  const first = normalizeTriggerPhrases(triggerPhrases)[0] ?? "";
+  return first.slice(0, 72);
+}
 
 export function defaultActionForKind(kind: ActionKind): ActionPayload {
   switch (kind) {
@@ -52,9 +51,7 @@ export function defaultActionForKind(kind: ActionKind): ActionPayload {
 export function emptyFormModel(): FormModel {
   return {
     id: null,
-    name: "",
     triggerPhrases: [],
-    threshold: 0.8,
     enabled: true,
     actions: [],
   };
@@ -66,21 +63,23 @@ export function modelFromNode(node: CommandNodePayload | null): FormModel {
   }
   return {
     id: node.id,
-    name: node.name,
     triggerPhrases: [...node.trigger_phrases],
-    threshold: clampThreshold(node.fuzzy_threshold_pct / 100),
     enabled: node.enabled,
     actions: [...node.actions],
   };
 }
 
+/**
+ * `fuzzy_threshold_pct: 0` means “use app default” (see Rust `resolve_fuzzy_threshold_pct`).
+ * `name` is always derived from the first trigger phrase.
+ */
 export function toCommandPayload(model: FormModel): Omit<CommandNodePayload, "id" | "created_at"> {
   return {
-    name: model.name.trim(),
+    name: derivedCommandName(model.triggerPhrases),
     trigger_phrases: normalizeTriggerPhrases(model.triggerPhrases),
     actions: [...model.actions],
     enabled: model.enabled,
-    fuzzy_threshold_pct: Math.round(clampThreshold(model.threshold) * 100),
+    fuzzy_threshold_pct: 0,
   };
 }
 
@@ -89,16 +88,8 @@ export function validateFormModel(model: FormModel): FormErrors {
     actionErrors: {},
   };
 
-  if (model.name.trim().length === 0) {
-    errors.name = "Name is required.";
-  }
-
   if (normalizeTriggerPhrases(model.triggerPhrases).length === 0) {
     errors.triggerPhrases = "At least one trigger phrase is required.";
-  }
-
-  if (model.threshold < MIN_THRESHOLD || model.threshold > MAX_THRESHOLD) {
-    errors.threshold = "Threshold must be between 0.50 and 1.00.";
   }
 
   if (model.actions.length === 0) {
@@ -124,11 +115,7 @@ export function validateFormModel(model: FormModel): FormErrors {
 
 export function hasBlockingErrors(errors: FormErrors): boolean {
   return Boolean(
-    errors.name ||
-      errors.triggerPhrases ||
-      errors.threshold ||
-      errors.actions ||
-      Object.keys(errors.actionErrors).length > 0,
+    errors.triggerPhrases || errors.actions || Object.keys(errors.actionErrors).length > 0,
   );
 }
 
@@ -141,10 +128,6 @@ export function parseTriggerPhraseInput(value: string): string[] {
 
 function normalizeTriggerPhrases(phrases: string[]): string[] {
   return phrases.map((phrase) => phrase.trim()).filter((phrase) => phrase.length > 0);
-}
-
-function clampThreshold(value: number): number {
-  return Math.min(MAX_THRESHOLD, Math.max(MIN_THRESHOLD, value));
 }
 
 function validateUrl(value: string): string | null {
