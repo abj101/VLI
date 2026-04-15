@@ -13,19 +13,14 @@ import {
 } from "../editor/SettingsPanel.logic";
 import { useSettingsStore } from "../../store/settingsStore";
 import { formatUserError } from "../../utils/userErrors";
+import { EDITOR_SETTINGS_NAV, type EditorSettingsNavId } from "./settingsNav";
 
 const HOTKEY_KEY = "hotkey";
 const THEME_KEY = "theme";
 const DEFAULT_THRESHOLD_KEY = "default_fuzzy_threshold_pct";
 
-type SettingsNavId = "general" | "speech" | "wake" | "about";
-
-const SETTINGS_NAV: { id: SettingsNavId; label: string }[] = [
-  { id: "general", label: "General" },
-  { id: "speech", label: "Speech" },
-  { id: "wake", label: "Wake word" },
-  { id: "about", label: "About" },
-];
+export type { EditorSettingsNavId } from "./settingsNav";
+export { EDITOR_SETTINGS_NAV } from "./settingsNav";
 
 type AppSettingsPayload = {
   porcupineKeyStored: boolean;
@@ -49,11 +44,20 @@ function settingsFocusables(root: HTMLElement): HTMLElement[] {
 }
 
 type SettingsPanelProps = {
-  onClose: () => void;
+  onClose?: () => void;
   returnFocusRef?: RefObject<HTMLElement | null>;
+  /** When set, panel is embedded in the editor main column (no overlay chrome). */
+  embedded?: boolean;
+  /** Which pane to show when `embedded` is true (controlled by parent sidebar). */
+  activeNav?: EditorSettingsNavId;
 };
 
-export function SettingsPanel({ onClose, returnFocusRef }: SettingsPanelProps) {
+export function SettingsPanel({
+  onClose,
+  returnFocusRef,
+  embedded = false,
+  activeNav,
+}: SettingsPanelProps) {
   const appIndexCount = useSettingsStore((s) => s.appIndexCount);
 
   const [loading, setLoading] = useState(true);
@@ -83,8 +87,15 @@ export function SettingsPanel({ onClose, returnFocusRef }: SettingsPanelProps) {
 
   const panelRef = useRef<HTMLElement | null>(null);
   const hotkeyInputRef = useRef<HTMLInputElement>(null);
-  const generalNavRef = useRef<HTMLButtonElement>(null);
-  const [settingsNav, setSettingsNav] = useState<SettingsNavId>("general");
+  const hotkeysNavRef = useRef<HTMLButtonElement>(null);
+  const [internalNav, setInternalNav] = useState<EditorSettingsNavId>("hotkeys");
+  const pane = embedded && activeNav != null ? activeNav : internalNav;
+
+  useEffect(() => {
+    if (embedded && activeNav) {
+      setInternalNav(activeNav);
+    }
+  }, [embedded, activeNav]);
 
   const refreshFromBackend = async () => {
     const [savedHotkey, savedThreshold, savedTheme, app, gpuSupported] = await Promise.all([
@@ -137,11 +148,12 @@ export function SettingsPanel({ onClose, returnFocusRef }: SettingsPanelProps) {
   }, []);
 
   useLayoutEffect(() => {
-    if (loading) return;
-    generalNavRef.current?.focus();
-  }, [loading]);
+    if (loading || embedded) return;
+    hotkeysNavRef.current?.focus();
+  }, [loading, embedded]);
 
   useEffect(() => {
+    if (!onClose || embedded) return;
     const onKey = (ev: Event) => {
       const e = ev as KeyboardEvent;
       if (e.key === "Escape") {
@@ -151,7 +163,7 @@ export function SettingsPanel({ onClose, returnFocusRef }: SettingsPanelProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, embedded]);
 
   useEffect(() => {
     const focusTarget = returnFocusRef?.current ?? null;
@@ -161,7 +173,7 @@ export function SettingsPanel({ onClose, returnFocusRef }: SettingsPanelProps) {
   }, [returnFocusRef]);
 
   const onPanelKeyDown = (e: ReactKeyboardEvent<HTMLElement>) => {
-    if (e.key !== "Tab" || !panelRef.current) return;
+    if (embedded || e.key !== "Tab" || !panelRef.current) return;
     const nodes = settingsFocusables(panelRef.current);
     if (nodes.length === 0) return;
     const first = nodes[0];
@@ -359,19 +371,28 @@ export function SettingsPanel({ onClose, returnFocusRef }: SettingsPanelProps) {
   return (
     <aside
       ref={panelRef}
-      className="editor-settings-panel"
-      role="dialog"
-      aria-modal="true"
+      className={embedded ? "editor-settings-embedded" : "editor-settings-panel"}
+      role={embedded ? undefined : "dialog"}
+      aria-modal={embedded ? undefined : true}
       aria-busy={loading}
-      aria-label="Settings"
+      aria-label={embedded ? undefined : "Settings"}
       onKeyDown={onPanelKeyDown}
     >
-      <header className="editor-settings-header">
-        <h2 id="settings-dialog-title">Settings</h2>
-        <button type="button" onClick={onClose} aria-label="Close settings">
-          Close
-        </button>
-      </header>
+      {!embedded && (
+        <header className="editor-settings-header">
+          <h2 id="settings-dialog-title">Settings</h2>
+          {onClose && (
+            <button type="button" onClick={onClose} aria-label="Close settings">
+              Close
+            </button>
+          )}
+        </header>
+      )}
+      {embedded && (
+        <header className="editor-settings-embedded-header">
+          <h2>{EDITOR_SETTINGS_NAV.find((n) => n.id === pane)?.label ?? "Settings"}</h2>
+        </header>
+      )}
 
       {loading ? (
         <p className="editor-settings-loading" aria-live="polite">
@@ -379,89 +400,80 @@ export function SettingsPanel({ onClose, returnFocusRef }: SettingsPanelProps) {
         </p>
       ) : (
         <div className="editor-settings-body">
-          <nav className="editor-settings-nav" aria-label="Settings categories">
-            {SETTINGS_NAV.map((item) => (
-              <button
-                key={item.id}
-                ref={item.id === "general" ? generalNavRef : undefined}
-                type="button"
-                className={`editor-settings-nav-btn${settingsNav === item.id ? " is-active" : ""}`}
-                aria-current={settingsNav === item.id ? "page" : undefined}
-                onClick={() => setSettingsNav(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </nav>
-          <div className="editor-settings-pane">
-            {settingsNav === "general" && (
-              <div className="editor-settings-content" aria-labelledby="settings-pane-general">
-                <h3 className="editor-settings-pane-heading" id="settings-pane-general">
-                  General
-                </h3>
-          <section className="editor-settings-section">
-            <h4>Hotkey</h4>
-            <label>
-              Global shortcut
-              <div className="editor-settings-inline">
-                <input
-                  ref={hotkeyInputRef}
-                  value={hotkey}
-                  onChange={(e) => setHotkey(e.target.value)}
-                  placeholder="ctrl+shift+j"
-                />
-                <button type="button" onClick={() => void saveHotkey()} disabled={savingHotkey}>
-                  {savingHotkey ? "Saving..." : "Save"}
+          {!embedded && (
+            <nav className="editor-settings-nav" aria-label="Settings categories">
+              {EDITOR_SETTINGS_NAV.map((item) => (
+                <button
+                  key={item.id}
+                  ref={item.id === "hotkeys" ? hotkeysNavRef : undefined}
+                  type="button"
+                  className={`editor-settings-nav-btn${internalNav === item.id ? " is-active" : ""}`}
+                  aria-current={internalNav === item.id ? "page" : undefined}
+                  onClick={() => setInternalNav(item.id)}
+                >
+                  {item.label}
                 </button>
+              ))}
+            </nav>
+          )}
+          <div className={`editor-settings-pane${embedded ? " editor-settings-pane--solo" : ""}`}>
+            {pane === "hotkeys" && (
+              <div className="editor-settings-content" aria-labelledby="settings-pane-hotkeys">
+                <h3 className="editor-settings-pane-heading" id="settings-pane-hotkeys">
+                  Hotkeys
+                </h3>
+                <section className="editor-settings-section">
+                  <h4>Global shortcut</h4>
+                  <label>
+                    Listening shortcut
+                    <div className="editor-settings-inline">
+                      <input
+                        ref={hotkeyInputRef}
+                        value={hotkey}
+                        onChange={(e) => setHotkey(e.target.value)}
+                        placeholder="ctrl+shift+j"
+                      />
+                      <button type="button" onClick={() => void saveHotkey()} disabled={savingHotkey}>
+                        {savingHotkey ? "Saving..." : "Save"}
+                      </button>
+                    </div>
+                  </label>
+                  {hotkeyError && <p className="editor-field-error">{hotkeyError}</p>}
+                </section>
               </div>
-            </label>
-            {hotkeyError && <p className="editor-field-error">{hotkeyError}</p>}
-          </section>
-
-          <section className="editor-settings-section">
-            <h4>Default fuzzy threshold</h4>
-            <label>
-              {threshold.toFixed(2)}
-              <input
-                type="range"
-                min={0.5}
-                max={1}
-                step={0.01}
-                value={threshold}
-                onChange={(e) => setThreshold(Number(e.target.value))}
-                onPointerUp={(e) => void saveThreshold(Number((e.target as HTMLInputElement).value))}
-                onKeyUp={(e) => {
-                  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-                  void saveThreshold(Number((e.target as HTMLInputElement).value));
-                }}
-              />
-            </label>
-            <p className="editor-settings-help">Default for new commands (you can override per command).</p>
-          </section>
-
-          <section className="editor-settings-section">
-            <h4>Appearance</h4>
-            <label htmlFor="editor-theme-select">
-              Color scheme
-              <select
-                id="editor-theme-select"
-                value={theme}
-                onChange={(e) => void saveTheme(normalizeThemePreference(e.target.value))}
-              >
-                <option value="system">System</option>
-                <option value="dark">Dark</option>
-                <option value="light">Light</option>
-              </select>
-            </label>
-          </section>
-                </div>
             )}
 
-            {settingsNav === "speech" && (
-              <div className="editor-settings-content" aria-labelledby="settings-pane-speech">
-                <h3 className="editor-settings-pane-heading" id="settings-pane-speech">
-                  Speech
+            {pane === "recognition" && (
+              <div className="editor-settings-content" aria-labelledby="settings-pane-recognition">
+                <h3 className="editor-settings-pane-heading" id="settings-pane-recognition">
+                  Recognition
                 </h3>
+                <section className="editor-settings-section">
+                  <h4>Default fuzzy threshold</h4>
+                  <label>
+                    {threshold.toFixed(2)}
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={1}
+                      step={0.01}
+                      value={threshold}
+                      onChange={(e) => setThreshold(Number(e.target.value))}
+                      onPointerUp={(e) =>
+                        void saveThreshold(Number((e.target as HTMLInputElement).value))
+                      }
+                      onKeyUp={(e) => {
+                        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                        void saveThreshold(Number((e.target as HTMLInputElement).value));
+                      }}
+                    />
+                  </label>
+                  <p className="editor-settings-help">
+                    Default match strictness for new commands (overridable per command in the command
+                    details).
+                  </p>
+                </section>
+
                 <section className="editor-settings-section">
                   <h4>Transcription</h4>
                   <label htmlFor="editor-stt-provider">
@@ -593,16 +605,9 @@ export function SettingsPanel({ onClose, returnFocusRef }: SettingsPanelProps) {
                     </>
                   )}
                 </section>
-              </div>
-            )}
 
-            {settingsNav === "wake" && (
-              <div className="editor-settings-content" aria-labelledby="settings-pane-wake">
-                <h3 className="editor-settings-pane-heading" id="settings-pane-wake">
-                  Wake word
-                </h3>
                 <section className="editor-settings-section">
-                  <h4>Wake engine</h4>
+                  <h4>Wake word</h4>
                   <label htmlFor="editor-wake-engine">
                     Engine
                     <select
@@ -700,7 +705,30 @@ export function SettingsPanel({ onClose, returnFocusRef }: SettingsPanelProps) {
               </div>
             )}
 
-            {settingsNav === "about" && (
+            {pane === "appearance" && (
+              <div className="editor-settings-content" aria-labelledby="settings-pane-appearance">
+                <h3 className="editor-settings-pane-heading" id="settings-pane-appearance">
+                  Appearance
+                </h3>
+                <section className="editor-settings-section">
+                  <h4>Color scheme</h4>
+                  <label htmlFor="editor-theme-select">
+                    Theme
+                    <select
+                      id="editor-theme-select"
+                      value={theme}
+                      onChange={(e) => void saveTheme(normalizeThemePreference(e.target.value))}
+                    >
+                      <option value="system">System</option>
+                      <option value="dark">Dark</option>
+                      <option value="light">Light</option>
+                    </select>
+                  </label>
+                </section>
+              </div>
+            )}
+
+            {pane === "about" && (
               <div className="editor-settings-content" aria-labelledby="settings-pane-about">
                 <h3 className="editor-settings-pane-heading" id="settings-pane-about">
                   About

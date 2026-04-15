@@ -347,7 +347,9 @@ pub(crate) fn open_or_create_editor_window(app: &AppHandle) -> Result<(), String
         WebviewUrl::App("editor.html".into()),
     )
     .title("JARVIS Editor")
-    .decorations(true)
+    .decorations(false)
+    .transparent(true)
+    .shadow(true)
     .resizable(true)
     .center()
     .min_inner_size(900.0, 600.0)
@@ -1323,6 +1325,38 @@ fn get_settings(app: AppHandle) -> Result<db::AppSettings, String> {
     db::get_app_settings(&conn).map_err(|e| e.to_string())
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchAppIndexPayload {
+    query: String,
+    limit: Option<usize>,
+}
+
+/// Prefix search for the installed-app index (editor autocomplete). Empty query returns the first `limit` rows.
+#[tauri::command]
+fn search_app_index(
+    payload: SearchAppIndexPayload,
+    store: State<'_, AppIndexStore>,
+) -> Result<Vec<apps::AppEntry>, String> {
+    let limit = payload.limit.unwrap_or(24).clamp(1, 80) as usize;
+    let entries = store
+        .read()
+        .map_err(|_| "app index store poisoned".to_string())?;
+    let q = payload.query.trim().to_lowercase();
+    if q.is_empty() {
+        return Ok(entries.iter().take(limit).cloned().collect());
+    }
+    Ok(entries
+        .iter()
+        .filter(|e| {
+            e.display_name.to_lowercase().contains(&q)
+                || e.exe_path.to_lowercase().contains(&q)
+        })
+        .take(limit)
+        .cloned()
+        .collect())
+}
+
 /// `true` when this binary was built with a Whisper GPU backend (Vulkan / CUDA / Metal).
 #[tauri::command]
 fn whisper_gpu_compile_supported() -> bool {
@@ -1593,6 +1627,7 @@ pub fn run() {
             set_setting,
             set_hotkey,
             get_settings,
+            search_app_index,
             whisper_gpu_compile_supported,
             update_settings,
             save_api_key,

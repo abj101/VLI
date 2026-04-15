@@ -9,7 +9,7 @@ use std::path::Path;
 /// Minimum [`fuzz::ratio`] (normalized 0..=1) for a display name / exe stem to count as a match (Phase 4: 0.75).
 pub const APP_RESOLVE_MIN_RATIO: f64 = 0.75;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct AppEntry {
     pub display_name: String,
     pub exe_path: String,
