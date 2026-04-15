@@ -5,11 +5,20 @@ html {
   /* Default until theme sync sets `data-theme` */
   --editor-bg: #0f1116;
   --editor-shell-radius: 8px;
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 100%;
+  min-height: 100dvh;
+  width: 100%;
+  margin: 0;
   border-radius: var(--editor-shell-radius);
   overflow: hidden;
+  /* Must be opaque: a transparent `html` under rounded corners shows the Win32 host as a hairline. */
+  background: var(--editor-bg);
+  /* Subpixel fringe between DWM curve and CSS clip — pull background 1px inward on the mask. */
+  box-shadow: inset 0 0 0 1px var(--editor-bg);
 }
 
-html,
 body {
   height: 100%;
   width: 100%;
@@ -21,13 +30,15 @@ body {
 
 #root {
   height: 100%;
+  min-height: 100%;
+  min-height: 100dvh;
   width: 100%;
   margin: 0;
   box-sizing: border-box;
   border-radius: var(--editor-shell-radius);
   overflow: hidden;
-  /* Opaque fill under the glass shell — transparent corners were showing the host (square vs DWM curve). */
   background: var(--editor-bg);
+  box-shadow: inset 0 0 0 1px var(--editor-bg);
 }
 
 html[data-theme="dark"] {
@@ -172,6 +183,11 @@ html[data-theme="light"] {
   html {
     --editor-shell-radius: 0px;
     border-radius: 0;
+    box-shadow: none;
+  }
+
+  #root {
+    box-shadow: none;
   }
 
   .editor-glass-panel,
