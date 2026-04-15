@@ -1,8 +1,9 @@
 /* --- Theme tokens: resolved palette on `html[data-theme="light"|"dark"]` --- */
 
-/* Frameless transparent editor window: clip to rounded rect so frosted shell matches window shape. */
+/* Frameless transparent editor: one radius token — keep in sync with Win DWM in `editor_window_win.rs` (ROUNDSMALL). */
 html {
-  border-radius: 14px;
+  --editor-shell-radius: 10px;
+  border-radius: var(--editor-shell-radius);
   overflow: hidden;
 }
 
@@ -18,7 +19,7 @@ body,
 }
 
 #root {
-  border-radius: 14px;
+  border-radius: var(--editor-shell-radius);
 }
 
 html[data-theme="dark"] {
@@ -161,6 +162,7 @@ html[data-theme="light"] {
   }
 
   html {
+    --editor-shell-radius: 0px;
     border-radius: 0;
   }
 
@@ -202,12 +204,12 @@ html[data-theme="light"] {
   grid-template-columns: 212px minmax(0, 1fr);
   grid-template-rows: 34px minmax(0, 1fr);
   overflow: hidden;
-  border-radius: 14px;
+  border-radius: var(--editor-shell-radius);
 }
 
 /* Outer drop shadow removed on the main shell: Win32 host is still rectangular; heavy blur reads as square corners. */
 .editor-app-shell.editor-glass-panel {
-  border-radius: 14px;
+  border-radius: var(--editor-shell-radius);
   box-shadow: var(--editor-glass-inset), inset 0 0 0 1px var(--editor-glass-hairline);
 }
 

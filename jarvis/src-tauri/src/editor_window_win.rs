@@ -5,7 +5,7 @@ use tauri::AppHandle;
 use tauri::Manager;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Dwm::{
-    DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+    DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUNDSMALL,
 };
 
 const EDITOR_LABEL: &str = "editor";
@@ -23,7 +23,8 @@ pub(crate) fn configure_editor_frame(app: &AppHandle) {
     };
     let hwnd = HWND(hwnd_isize as *mut core::ffi::c_void);
 
-    let pref = DWMWCP_ROUND;
+    // Pairs with `--editor-shell-radius` in EditorRoot.css: `ROUND` is a larger system arc than our clip.
+    let pref = DWMWCP_ROUNDSMALL;
     unsafe {
         let _ = DwmSetWindowAttribute(
             hwnd,
