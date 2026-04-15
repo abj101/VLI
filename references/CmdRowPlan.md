@@ -7,7 +7,7 @@ todos:
     status: completed
   - id: db-icon-migration
     content: Extend app_index persistence/schema to store icon payload with migration-safe upgrade path.
-    status: pending
+    status: completed
   - id: frontend-result-confirm
     content: Enhance open_app suggestions with icon + explicit found/not-found/searching feedback.
     status: pending
