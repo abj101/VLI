@@ -1,6 +1,6 @@
 /* --- Theme tokens: resolved palette on `html[data-theme="light"|"dark"]` --- */
 
-/* Frameless editor: square client — opaque fill so transparent WebView2 corners do not show the host. */
+/* Frameless editor: native window supplies rounding (DWM); keep client rect square so radii never fight. */
 html {
   /* Default until theme sync sets `data-theme` */
   --editor-bg: #0f1116;
@@ -10,6 +10,7 @@ html {
   min-height: 100dvh;
   width: 100%;
   margin: 0;
+  border-radius: 0;
   overflow: hidden;
   background: var(--editor-bg);
 }
@@ -30,6 +31,7 @@ body {
   width: 100%;
   margin: 0;
   box-sizing: border-box;
+  border-radius: 0;
   overflow: hidden;
   background: var(--editor-bg);
 }
@@ -211,10 +213,12 @@ html[data-theme="light"] {
   grid-template-columns: 212px minmax(0, 1fr);
   grid-template-rows: 34px minmax(0, 1fr);
   overflow: hidden;
+  border-radius: 0;
 }
 
-/* Outer drop shadow removed on the main shell: Win32 host is still rectangular; heavy blur reads as square corners. */
+/* Main shell: square rect; DWM rounds the HWND. Overrides .editor-glass-panel radius for this node only. */
 .editor-app-shell.editor-glass-panel {
+  border-radius: 0;
   box-shadow: var(--editor-glass-inset), inset 0 0 0 1px var(--editor-glass-hairline);
   isolation: isolate;
   transform: translateZ(0);
@@ -1218,18 +1222,6 @@ html[data-theme="light"] {
 
 /* --- Commands tab (formula rows) --- */
 
-.editor-sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 .editor-commands-tab {
   flex: 1;
   min-height: 0;
@@ -1243,15 +1235,25 @@ html[data-theme="light"] {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 10px;
+  gap: 10px 12px;
   padding: 10px 14px 9px;
   border-bottom: 1px solid color-mix(in oklch, var(--editor-header-border) 65%, transparent);
 }
 
-.editor-commands-search {
-  flex: 1 1 200px;
+.editor-commands-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--editor-settings-heading);
+  flex: 1 1 120px;
   min-width: 0;
-  max-width: 420px;
+}
+
+.editor-commands-search {
+  flex: 2 1 200px;
+  min-width: 0;
+  max-width: 360px;
 }
 
 .editor-commands-add {
@@ -1287,8 +1289,7 @@ html[data-theme="light"] {
 
 .editor-commands-search-hint {
   margin: 0;
-  padding: 6px 14px 0;
-  font-size: 12px;
+  padding: 8px 16px 0;
 }
 
 .editor-command-list {
@@ -1304,22 +1305,28 @@ html[data-theme="light"] {
 .editor-command-item {
   list-style: none;
   border-bottom: 1px solid color-mix(in oklch, var(--editor-header-border) 55%, transparent);
-  padding: 10px 14px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 .editor-command-item:last-child {
   border-bottom: none;
 }
 
-.editor-command-item:hover {
-  background: color-mix(in oklch, var(--editor-control-bg) 22%, transparent);
+.editor-command-card {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 10px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.editor-command-item.is-expanded {
-  background: color-mix(in oklch, var(--editor-control-bg) 14%, transparent);
+.editor-command-card:hover {
+  background: color-mix(in oklch, var(--editor-control-bg) 26%, transparent);
+}
+
+.editor-command-card.is-expanded {
+  background: color-mix(in oklch, var(--editor-control-bg) 18%, transparent);
 }
 
 .editor-command-formula {
