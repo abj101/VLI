@@ -75,6 +75,7 @@ export function ActionChain({ title, actions, onChange, errorByIndex }: ActionCh
             <ActionRow
               key={item.id}
               id={item.id}
+              chainTitle={title}
               index={item.index}
               action={item.action}
               onRemove={() => removeAction(item.index)}
@@ -96,6 +97,7 @@ export function ActionChain({ title, actions, onChange, errorByIndex }: ActionCh
 
 type ActionRowProps = {
   id: string;
+  chainTitle: string;
   index: number;
   action: ActionPayload;
   onChange: (next: ActionPayload) => void;
@@ -107,6 +109,7 @@ type ActionRowProps = {
 
 function ActionRow({
   id,
+  chainTitle,
   index,
   action,
   onChange,
@@ -123,7 +126,14 @@ function ActionRow({
   return (
     <li ref={setDropRef} className="editor-chain-row" style={style}>
       <div className="editor-chain-row-controls">
-        <button type="button" className="editor-drag-handle" ref={setDragRef} {...listeners} {...attributes}>
+        <button
+          type="button"
+          className="editor-drag-handle"
+          ref={setDragRef}
+          aria-label={`Drag to reorder ${chainTitle} step ${index + 1}`}
+          {...listeners}
+          {...attributes}
+        >
           ⠿
         </button>
         <button type="button" className="editor-move-btn" onClick={onMoveUp} aria-label="Move action up">

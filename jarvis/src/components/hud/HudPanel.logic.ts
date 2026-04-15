@@ -1,7 +1,7 @@
 import type { MatchResult } from "../../types";
 import type { HudPhase } from "../../types";
 
-type CenterSelectorInput = {
+export type CenterSelectorInput = {
   phase: HudPhase;
   transcript: string;
   match: MatchResult | null;
@@ -10,12 +10,31 @@ type CenterSelectorInput = {
   audioError: string | null;
 };
 
-type CenterSelectorResult =
+export type CenterSelectorResult =
   | { kind: "error"; text: string }
   | { kind: "match" }
   | { kind: "action"; text: string }
   | { kind: "transcript"; text: string }
   | { kind: "placeholder" };
+
+/** Plain string for assistive tech (debounced separately for streaming transcript). */
+export function announcableText(
+  input: CenterSelectorInput,
+  selected: CenterSelectorResult,
+): string {
+  switch (selected.kind) {
+    case "error":
+      return selected.text;
+    case "transcript":
+      return selected.text;
+    case "action":
+      return selected.text;
+    case "match":
+      return input.match?.matched_phrase ?? "";
+    case "placeholder":
+      return "";
+  }
+}
 
 export function selectCenterContent(
   input: CenterSelectorInput,

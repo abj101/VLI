@@ -1,9 +1,17 @@
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef } from "react";
+import { useShallow } from "zustand/react/shallow";
+import { useDebounced } from "../../hooks/useDebounced";
 import { useHudStore } from "../../store/hudStore";
 import type { HudPhase } from "../../types";
-import { selectCenterContent, selectPhaseLabel } from "./HudPanel.logic";
+import {
+  announcableText,
+  selectCenterContent,
+  selectPhaseLabel,
+  type CenterSelectorInput,
+  type CenterSelectorResult,
+} from "./HudPanel.logic";
 
 const LISTENING_PHASES: HudPhase[] = [
   "listening",
@@ -13,16 +21,36 @@ const LISTENING_PHASES: HudPhase[] = [
   "done",
 ];
 
+/** Trailing debounce (ms) for streaming transcript in the SR-only live region. */
+const TRANSCRIPT_ANNOUNCE_DEBOUNCE_MS = 380;
+
+/** Fixed sleeve height for bars — motion uses `scaleY` only (no layout thrash). */
+const WAVE_BAR_SLEEVE_PX = 28;
+
 function isActiveHudPhase(phase: HudPhase): boolean {
   return LISTENING_PHASES.includes(phase);
 }
 
-/** Shimmer + pulse while Rust is running matched command chain (not during done fade). */
+/** Opacity pulse while Rust runs matched command chain (not during done fade). */
 function useShowAgentPulse(phase: HudPhase): boolean {
   return phase === "matched" || phase === "executing";
 }
 
+function useHudCenterInput(): CenterSelectorInput {
+  return useHudStore(
+    useShallow((s) => ({
+      phase: s.phase,
+      transcript: s.transcript,
+      match: s.match,
+      actionText: s.actionText,
+      actionError: s.actionError,
+      audioError: s.audioError,
+    })),
+  );
+}
+
 function WaveformBars() {
+  const reduceMotion = useReducedMotion();
   const phase = useHudStore((s) => s.phase);
   const amplitude = useHudStore((s) => s.amplitude);
   const active = phase === "listening";
@@ -30,20 +58,37 @@ function WaveformBars() {
 
   const bars = useMemo(() => [0, 1, 2, 3, 4, 5, 6], []);
 
+  const barTransition = useMemo(
+    () =>
+      reduceMotion
+        ? { duration: 0.12, ease: "easeOut" as const }
+        : { duration: 0.22, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] },
+    [reduceMotion],
+  );
+
   return (
     <div className="hud-waveform" aria-hidden>
       {bars.map((i) => {
         const wave = 0.25 + 0.75 * Math.sin((i / 6) * Math.PI + level * 2.4);
-        const h = 6 + level * wave * 22;
+        const rawH = 6 + level * wave * 22;
+        const scaleY = active
+          ? Math.max(0.14, Math.min(1, rawH / WAVE_BAR_SLEEVE_PX))
+          : 0.14;
+
         return (
           <motion.div
             key={i}
             className="hud-waveform-bar"
+            style={{
+              height: WAVE_BAR_SLEEVE_PX,
+              transformOrigin: "bottom center",
+            }}
+            initial={false}
             animate={{
-              height: active ? h : 3,
+              scaleY,
               opacity: active ? 0.55 + level * 0.45 : 0.12,
             }}
-            transition={{ type: "spring", stiffness: 520, damping: 28 }}
+            transition={barTransition}
           />
         );
       })}
@@ -52,6 +97,7 @@ function WaveformBars() {
 }
 
 function StopHudButton() {
+  const reduceMotion = useReducedMotion();
   const phase = useHudStore((s) => s.phase);
   const listening = phase === "listening";
 
@@ -59,76 +105,69 @@ function StopHudButton() {
     void invoke("hud_dismiss").catch(() => {});
   };
 
+  const ringClass =
+    listening && !reduceMotion
+      ? "hud-stop-ring hud-stop-ring--pulse"
+      : "hud-stop-ring";
+
   return (
     <motion.button
       type="button"
       className="hud-stop"
-      aria-label="Stop"
+      aria-label="Stop listening. Same as Escape."
       onClick={onStop}
       animate={{ opacity: listening ? 1 : 0.25, scale: listening ? 1 : 0.92 }}
-      transition={{ duration: 0.18 }}
+      transition={{ duration: reduceMotion ? 0.08 : 0.18 }}
       disabled={!listening}
     >
-      <motion.span
-        className="hud-stop-ring"
-        animate={
-          listening
-            ? { borderColor: ["rgba(255,255,255,0.35)", "rgba(255,255,255,1)", "rgba(255,255,255,0.35)"] }
-            : { borderColor: "rgba(255,255,255,0.35)" }
-        }
-        transition={
-          listening
-            ? { duration: 1.5, repeat: Infinity, ease: "easeInOut" }
-            : { duration: 0.2 }
-        }
-      />
+      <span className={ringClass} />
       <span className="hud-stop-inner" />
     </motion.button>
   );
 }
 
-function RecognizedPhrase() {
-  const phase = useHudStore((s) => s.phase);
-  const match = useHudStore((s) => s.match);
+function RecognizedPhrase({
+  phrase,
+  phase,
+  motionKey,
+}: {
+  phrase: string;
+  phase: HudPhase;
+  motionKey: string;
+}) {
+  const reduceMotion = useReducedMotion();
   const pulse = useShowAgentPulse(phase);
-
-  if (!match) return null;
 
   return (
     <motion.div
-      key={`${match.node_id}-${match.matched_phrase}`}
+      key={motionKey}
       className="hud-recognized-wrap"
-      initial={{ opacity: 0, y: 8 }}
+      initial={reduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.38, ease: "easeOut" }}
+      transition={
+        reduceMotion
+          ? { duration: 0.01 }
+          : { duration: 0.38, ease: "easeOut" as const }
+      }
     >
       <span
         className={
           pulse ? "hud-recognized-text hud-recognized-text--pulse" : "hud-recognized-text"
         }
       >
-        {match.matched_phrase}
+        {phrase}
       </span>
     </motion.div>
   );
 }
 
-function CenterContent() {
-  const phase = useHudStore((s) => s.phase);
-  const transcript = useHudStore((s) => s.transcript);
-  const match = useHudStore((s) => s.match);
-  const actionText = useHudStore((s) => s.actionText);
-  const actionError = useHudStore((s) => s.actionError);
-  const audioError = useHudStore((s) => s.audioError);
-  const selected = selectCenterContent({
-    phase,
-    transcript,
-    match,
-    actionText,
-    actionError,
-    audioError,
-  });
-
+function CenterContent({
+  input,
+  selected,
+}: {
+  input: CenterSelectorInput;
+  selected: CenterSelectorResult;
+}) {
   switch (selected.kind) {
     case "error":
       return (
@@ -136,8 +175,18 @@ function CenterContent() {
           {selected.text}
         </div>
       );
-    case "match":
-      return <RecognizedPhrase />;
+    case "match": {
+      const m = input.match;
+      if (!m) return <div className="hud-center-placeholder" aria-hidden />;
+      const motionKey = `${m.node_id}-${m.matched_phrase}`;
+      return (
+        <RecognizedPhrase
+          phrase={m.matched_phrase}
+          phase={input.phase}
+          motionKey={motionKey}
+        />
+      );
+    }
     case "action":
       return (
         <div className="hud-line hud-line-action">
@@ -152,12 +201,27 @@ function CenterContent() {
 }
 
 function HudShell() {
-  const phase = useHudStore((s) => s.phase);
-  const match = useHudStore((s) => s.match);
+  const reduceMotion = useReducedMotion();
+  const centerInput = useHudCenterInput();
+  const selected = useMemo(
+    () => selectCenterContent(centerInput),
+    [centerInput],
+  );
+  const announceRaw = useMemo(
+    () => announcableText(centerInput, selected),
+    [centerInput, selected],
+  );
+
+  const srSource = selected.kind === "error" ? "" : announceRaw;
+  const debounceMs =
+    selected.kind === "transcript" ? TRANSCRIPT_ANNOUNCE_DEBOUNCE_MS : 0;
+  const srAnnounced = useDebounced(srSource, debounceMs);
+
+  const phase = centerInput.phase;
+  const match = centerInput.match;
   const phaseLabel = selectPhaseLabel(phase);
 
-  const showListeningChrome =
-    phase === "listening" && !match;
+  const showListeningChrome = phase === "listening" && !match;
 
   const rootOpacity =
     phase === "idle" || phase === "stopped"
@@ -167,6 +231,9 @@ function HudShell() {
         : 1;
 
   const transition = useMemo(() => {
+    if (reduceMotion) {
+      return { duration: 0.12, ease: "easeOut" as const };
+    }
     if (phase === "done") {
       return { duration: 0.55, ease: "easeInOut" as const };
     }
@@ -174,11 +241,15 @@ function HudShell() {
       return { duration: 0.14, ease: "easeOut" as const };
     }
     return { duration: 0.4, ease: "easeOut" as const };
-  }, [phase]);
+  }, [phase, reduceMotion]);
 
   return (
     <motion.div
       className="hud-root"
+      role="region"
+      {...(phaseLabel
+        ? { "aria-labelledby": "hud-phase-label" }
+        : { "aria-label": "Voice session" })}
       initial={{ opacity: 0 }}
       animate={{ opacity: rootOpacity }}
       transition={transition}
@@ -186,9 +257,13 @@ function HudShell() {
       {showListeningChrome && (
         <motion.div
           className="hud-title"
-          initial={{ opacity: 0 }}
+          initial={reduceMotion ? { opacity: 1 } : { opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: 0.35, delay: 0.05 }}
+          transition={
+            reduceMotion
+              ? { duration: 0.01 }
+              : { duration: 0.35, delay: 0.05 }
+          }
         >
           JARVIS
         </motion.div>
@@ -198,9 +273,18 @@ function HudShell() {
           showListeningChrome ? "hud-body" : "hud-body hud-body--solo"
         }
       >
-        {phaseLabel && <div className="hud-phase-label">{phaseLabel}</div>}
+        {phaseLabel && (
+          <div className="hud-phase-label" id="hud-phase-label">
+            {phaseLabel}
+          </div>
+        )}
         <div className="hud-transcript-wrap">
-          <CenterContent />
+          <span className="hud-sr-only" role="status" aria-live="polite" aria-atomic="true">
+            {srAnnounced}
+          </span>
+          <div className="hud-transcript-visual">
+            <CenterContent input={centerInput} selected={selected} />
+          </div>
         </div>
         {showListeningChrome && (
           <div className="hud-bottom-bar">

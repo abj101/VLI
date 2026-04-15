@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatUserError } from "../../utils/userErrors";
 import { useEditorStore } from "../../store/editorStore";
 import type { CommandNodePayload } from "../../types";
 import { ActionChain } from "./ActionChain";
@@ -91,7 +92,7 @@ export function NodeForm() {
       showToast("Saved");
       setSubmitAttempted(false);
     } catch (err) {
-      showToast(`Save failed: ${String(err)}`);
+      showToast(formatUserError(err, "Could not save this command."));
     } finally {
       setSaving(false);
     }
@@ -106,7 +107,7 @@ export function NodeForm() {
   const showErrors = submitAttempted;
 
   return (
-    <section className="editor-panel editor-panel-right">
+    <section className="editor-panel editor-glass-panel editor-panel-right">
       <header className="editor-panel-header">
         <h2>{model.id ? `Edit: ${selectedNode?.name ?? "Node"}` : "New Node"}</h2>
       </header>
@@ -135,7 +136,6 @@ export function NodeForm() {
               <input
                 value={triggerInput}
                 onChange={(e) => setTriggerInput(e.target.value)}
-                onBlur={commitTriggerInput}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === ",") {
                     e.preventDefault();

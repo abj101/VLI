@@ -13,3 +13,4 @@ target/
 
 # Tauri / Vite output (also per-package .gitignore under jarvis/)
 dist/
+/.agents

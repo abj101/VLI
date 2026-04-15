@@ -12,6 +12,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
+import { formatUserError } from "../../utils/userErrors";
 import { useEditorStore } from "../../store/editorStore";
 import type { CommandNodePayload } from "../../types";
 import {
@@ -56,7 +57,7 @@ export function NodeList() {
         setNodes(list);
       } catch (err: unknown) {
         if (!mounted) return;
-        showError(`Failed to load commands: ${String(err)}`);
+        showError(formatUserError(err, "Could not load commands. Try reopening the editor."));
       }
     };
     void loadNodes();
@@ -100,7 +101,7 @@ export function NodeList() {
       })
       .catch((err: unknown) => {
         toggleEnabled(id);
-        showError(`Failed to update command: ${String(err)}`);
+        showError(formatUserError(err, "Could not update that command."));
       });
   };
 
@@ -119,7 +120,7 @@ export function NodeList() {
         showError("Delete failed: command was not removed");
       })
       .catch((err: unknown) => {
-        showError(`Delete failed: ${String(err)}`);
+        showError(formatUserError(err, "Could not delete that command."));
       });
   };
 
@@ -128,7 +129,7 @@ export function NodeList() {
     reorderNodes(orderedIds);
     void invoke("reorder_commands", { payload: { orderedIds } }).catch((err: unknown) => {
       setNodes(previousNodes);
-      showError(`Failed to reorder commands: ${String(err)}`);
+      showError(formatUserError(err, "Could not reorder commands."));
     });
   };
 
@@ -150,9 +151,9 @@ export function NodeList() {
   };
 
   return (
-    <section className="editor-panel editor-panel-left">
+    <section className="editor-panel editor-glass-panel editor-panel-left">
       <header className="editor-panel-header">
-        <h2>Nodes</h2>
+        <h2>Commands</h2>
         <button
           type="button"
           className="editor-add-btn"
@@ -222,89 +223,134 @@ function NodeRow({
   onMoveUp,
   onMoveDown,
 }: NodeRowProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuWrapRef = useRef<HTMLDivElement>(null);
   const rowId = makeNodeRowId(node.id);
   const { setNodeRef: setDropRef } = useDroppable({ id: rowId });
   const { attributes, listeners, setNodeRef: setDragRef, transform } = useDraggable({
     id: rowId,
   });
   const style = { transform: CSS.Translate.toString(transform) };
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!menuWrapRef.current?.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("click", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
   return (
     <li ref={setDropRef} style={style}>
-      <div
-        className={`editor-node-row${selected ? " is-selected" : ""}`}
-        onClick={onSelect}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onSelect();
-          }
-        }}
-        role="button"
-        tabIndex={0}
-      >
-        <span className="editor-node-main">
-          <span className="editor-node-name">{node.name}</span>
-          <span className="editor-node-trigger">{getPrimaryTriggerPhrase(node)}</span>
-        </span>
+      <div className={`editor-node-row${selected ? " is-selected" : ""}`}>
+        <button type="button" className="editor-node-select" onClick={onSelect}>
+          <span className="editor-node-main">
+            <span className="editor-node-name">{node.name}</span>
+            <span className="editor-node-trigger">{getPrimaryTriggerPhrase(node)}</span>
+          </span>
+        </button>
 
-        <span className="editor-node-actions">
+        <div className="editor-node-actions">
           <button
             type="button"
             className="editor-drag-handle editor-node-drag-handle"
             ref={setDragRef}
-            aria-label={`Drag ${node.name}`}
+            aria-label={`Drag to reorder ${node.name}`}
             onClick={(e) => e.stopPropagation()}
             {...listeners}
             {...attributes}
           >
             ⠿
           </button>
-          <button
-            type="button"
-            className="editor-move-btn"
-            aria-label={`Move ${node.name} up`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onMoveUp();
-            }}
-          >
-            ↑
-          </button>
-          <button
-            type="button"
-            className="editor-move-btn"
-            aria-label={`Move ${node.name} down`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onMoveDown();
-            }}
-          >
-            ↓
-          </button>
-          <button
-            type="button"
-            className={`editor-toggle${node.enabled ? " is-on" : ""}`}
-            aria-pressed={node.enabled}
-            aria-label={node.enabled ? "Disable node" : "Enable node"}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggle();
-            }}
-          >
-            {node.enabled ? "On" : "Off"}
-          </button>
-          <button
-            type="button"
-            className="editor-delete-btn"
-            aria-label={`Delete ${node.name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-          >
-            Delete
-          </button>
-        </span>
+          <div className="editor-node-menu-wrap" ref={menuWrapRef}>
+            <button
+              type="button"
+              className="editor-node-more-btn"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label={`More actions for ${node.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen((o) => !o);
+              }}
+            >
+              ···
+            </button>
+            {menuOpen && (
+              <ul className="editor-node-menu" role="menu">
+                <li role="none">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="editor-node-menu-item"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMoveUp();
+                      setMenuOpen(false);
+                    }}
+                  >
+                    Move up
+                  </button>
+                </li>
+                <li role="none">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="editor-node-menu-item"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMoveDown();
+                      setMenuOpen(false);
+                    }}
+                  >
+                    Move down
+                  </button>
+                </li>
+                <li role="none">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="editor-node-menu-item"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggle();
+                      setMenuOpen(false);
+                    }}
+                  >
+                    {node.enabled ? "Turn off" : "Turn on"}
+                  </button>
+                </li>
+                <li role="separator" className="editor-node-menu-sep" />
+                <li role="none">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="editor-node-menu-item editor-node-menu-item--danger"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpen(false);
+                      onDelete();
+                    }}
+                  >
+                    Delete…
+                  </button>
+                </li>
+              </ul>
+            )}
+          </div>
+        </div>
       </div>
     </li>
   );

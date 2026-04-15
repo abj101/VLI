@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { HudPhase } from "../../types";
-import { selectCenterContent, selectPhaseLabel } from "./HudPanel.logic";
+import {
+  announcableText,
+  selectCenterContent,
+  selectPhaseLabel,
+} from "./HudPanel.logic";
 
 function base(phase: HudPhase) {
   return {
@@ -65,13 +69,38 @@ describe("selectCenterContent", () => {
   });
 });
 
+describe("announcableText", () => {
+  it("returns matched phrase for match kind", () => {
+    const input = {
+      ...base("matched"),
+      match: {
+        node_id: "n1",
+        matched_phrase: "open notepad",
+        span_start: 0,
+        span_end: 12,
+      },
+    };
+    const selected = selectCenterContent(input);
+    expect(selected.kind).toBe("match");
+    expect(announcableText(input, selected)).toBe("open notepad");
+  });
+
+  it("returns empty string for placeholder", () => {
+    const input = base("listening");
+    const selected = selectCenterContent(input);
+    expect(selected.kind).toBe("placeholder");
+    expect(announcableText(input, selected)).toBe("");
+  });
+});
+
 describe("selectPhaseLabel", () => {
-  it("hides all status labels in HUD corner", () => {
+  it("does not show a phase line label (state is conveyed by content + motion)", () => {
     expect(selectPhaseLabel("listening")).toBeNull();
     expect(selectPhaseLabel("matched")).toBeNull();
     expect(selectPhaseLabel("awaiting_input")).toBeNull();
     expect(selectPhaseLabel("executing")).toBeNull();
     expect(selectPhaseLabel("done")).toBeNull();
     expect(selectPhaseLabel("stopped")).toBeNull();
+    expect(selectPhaseLabel("idle")).toBeNull();
   });
 });
