@@ -60,3 +60,18 @@ export function deriveAppSearchMeta(input: DeriveAppSearchMetaInput): AppSearchM
     countText: `Found ${input.hitCount} app${input.hitCount === 1 ? "" : "s"}`,
   };
 }
+
+type DeriveOpenAppDisplayModeInput = {
+  isEditing: boolean;
+  selectedPath: string;
+};
+
+export function deriveOpenAppDisplayMode(input: DeriveOpenAppDisplayModeInput): "edit" | "confirmed" {
+  if (input.isEditing) {
+    return "edit";
+  }
+  if (input.selectedPath.trim().length === 0) {
+    return "edit";
+  }
+  return "confirmed";
+}

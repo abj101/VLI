@@ -4,7 +4,11 @@ import type { ActionPayload, CommandNodePayload } from "../../types";
 import { formatUserError } from "../../utils/userErrors";
 import { useEditorStore } from "../../store/editorStore";
 import { ACTION_KIND_OPTIONS, getActionKind } from "./actionCatalog";
-import { deriveAppSearchMeta, fingerprintCommandNode } from "./formulaRow.logic";
+import {
+  deriveAppSearchMeta,
+  deriveOpenAppDisplayMode,
+  fingerprintCommandNode,
+} from "./formulaRow.logic";
 import {
   defaultActionForKind,
   hasBlockingErrors,
@@ -362,11 +366,21 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   const [appOpen, setAppOpen] = useState(false);
   const [appLoading, setAppLoading] = useState(false);
   const [appHasSearched, setAppHasSearched] = useState(false);
+  const [appEditing, setAppEditing] = useState(
+    () => !("open_app" in action) || action.open_app.path.trim().length === 0,
+  );
+  const [selectedAppIcon, setSelectedAppIcon] = useState<string | null>(null);
   const appTimer = useRef<number | null>(null);
 
   useEffect(() => {
     if ("open_app" in action) {
       setAppQuery(action.open_app.name);
+      if (action.open_app.path.trim().length === 0) {
+        setAppEditing(true);
+      }
+    } else {
+      setAppEditing(true);
+      setSelectedAppIcon(null);
     }
   }, [action]);
 
@@ -401,6 +415,8 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
       setAppQuery("");
       setAppOpen(true);
       setAppHasSearched(false);
+      setAppEditing(true);
+      setSelectedAppIcon(null);
     }
   };
 
@@ -428,9 +444,44 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     hasSearched: appHasSearched,
     hitCount: appHits.length,
   });
+  const appDisplayMode =
+    "open_app" in action
+      ? deriveOpenAppDisplayMode({
+          isEditing: appEditing,
+          selectedPath: action.open_app.path,
+        })
+      : "edit";
 
   const renderArg = () => {
     if ("open_app" in action) {
+      if (appDisplayMode === "confirmed") {
+        return (
+          <button
+            type="button"
+            className="editor-formula-input editor-formula-input--arg editor-formula-confirmed-chip"
+            onClick={() => {
+              setAppEditing(true);
+              setAppOpen(false);
+              setAppHasSearched(false);
+            }}
+            aria-label={`Selected app ${action.open_app.name}. Click to edit.`}
+          >
+            {selectedAppIcon ? (
+              <img
+                src={selectedAppIcon}
+                alt=""
+                className="editor-formula-suggest-icon"
+                loading="lazy"
+              />
+            ) : (
+              <span className="editor-formula-suggest-icon editor-formula-suggest-icon--fallback" aria-hidden>
+                {action.open_app.name.trim().charAt(0).toUpperCase() || "A"}
+              </span>
+            )}
+            <span className="editor-formula-confirmed-chip-label">{action.open_app.name || "App"}</span>
+          </button>
+        );
+      }
       return (
         <div className="editor-formula-arg-wrap">
           <input
@@ -440,6 +491,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
             onChange={(e) => {
               setAppQuery(e.target.value);
               setAppHasSearched(false);
+              setAppEditing(true);
               onChange({
                 open_app: { name: e.target.value, path: "" },
               });
@@ -485,6 +537,8 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
                       onChange({ open_app: { name: h.display_name, path: h.exe_path } });
                       setAppQuery(h.display_name);
                       setAppHasSearched(false);
+                      setSelectedAppIcon(h.icon_data_url ?? null);
+                      setAppEditing(false);
                       setAppOpen(false);
                     }}
                   >

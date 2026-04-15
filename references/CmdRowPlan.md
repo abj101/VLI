@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: frontend-confirmed-chip
     content: Implement confirmed icon-chip mode with click-to-reveal inline text behavior.
-    status: pending
+    status: completed
   - id: frontend-input-autogrow
     content: Apply min-width + content-grow sizing consistently across text input boxes in formula rows.
     status: pending
