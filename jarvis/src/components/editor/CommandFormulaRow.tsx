@@ -1,12 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { CSS } from "@dnd-kit/utilities";
-import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ActionPayload, CommandNodePayload } from "../../types";
 import { formatUserError } from "../../utils/userErrors";
 import { useEditorStore } from "../../store/editorStore";
-import { ActionChain } from "./ActionChain";
-import { actionKindLabel, filterActionKindOptions, getActionKind } from "./actionCatalog";
+import { ACTION_KIND_OPTIONS, getActionKind } from "./actionCatalog";
 import { fingerprintCommandNode } from "./formulaRow.logic";
 import {
   defaultActionForKind,
@@ -26,43 +23,25 @@ export type AppIndexEntry = {
 type CommandFormulaRowProps = {
   node: CommandNodePayload;
   expanded: boolean;
-  /** When true, drag handle is inert (e.g. while command list is filtered). */
-  dragDisabled?: boolean;
   onToggleExpand: () => void;
   onToggleEnabled: () => void;
   onDelete: () => void;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
-  rowDndId: string;
   errorText?: string | null;
 };
 
 export function CommandFormulaRow({
   node,
   expanded,
-  dragDisabled = false,
   onToggleExpand,
   onToggleEnabled,
   onDelete,
-  onMoveUp,
-  onMoveDown,
-  rowDndId,
   errorText,
 }: CommandFormulaRowProps) {
   const setNodes = useEditorStore((s) => s.setNodes);
   const [model, setModel] = useState<FormModel>(() => modelFromNode(node));
   const [toastText, setToastText] = useState<string | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuWrapRef = useRef<HTMLDivElement>(null);
   const dirtyRef = useRef(false);
   const toastTimer = useRef<number | null>(null);
-
-  const { setNodeRef: setDropRef } = useDroppable({ id: rowDndId });
-  const { attributes, listeners, setNodeRef: setDragRef, transform } = useDraggable({
-    id: rowDndId,
-    disabled: dragDisabled,
-  });
-  const dragStyle = { transform: CSS.Translate.toString(transform) };
 
   const serverPrint = useMemo(() => fingerprintCommandNode(node), [node]);
 
@@ -77,22 +56,6 @@ export function CommandFormulaRow({
   useEffect(() => {
     modelRef.current = model;
   }, [model]);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!menuWrapRef.current?.contains(e.target as Node)) setMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenuOpen(false);
-    };
-    document.addEventListener("click", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("click", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [menuOpen]);
 
   useEffect(
     () => () => {
@@ -178,7 +141,7 @@ export function CommandFormulaRow({
   const errors = validateFormModel(model);
 
   return (
-    <li ref={setDropRef} className="editor-command-item" style={dragStyle}>
+    <li className="editor-command-item">
       <div className={`editor-command-card${expanded ? " is-expanded" : ""}`}>
         {toastText && (
           <div className="editor-inline-toast editor-command-row-toast" role="status">
@@ -240,17 +203,6 @@ export function CommandFormulaRow({
           <div className="editor-command-trail">
             <button
               type="button"
-              className={`editor-drag-handle editor-command-drag${dragDisabled ? " is-disabled" : ""}`}
-              ref={setDragRef}
-              aria-label={`Drag to reorder ${model.name || "command"}`}
-              disabled={dragDisabled}
-              {...(dragDisabled ? {} : listeners)}
-              {...(dragDisabled ? {} : attributes)}
-            >
-              ⠿
-            </button>
-            <button
-              type="button"
               className={`editor-switch${model.enabled ? " is-on" : ""}`}
               role="switch"
               aria-checked={model.enabled}
@@ -267,65 +219,14 @@ export function CommandFormulaRow({
             >
               {expanded ? "⌄" : "›"}
             </button>
-            <div className="editor-node-menu-wrap" ref={menuWrapRef}>
-              <button
-                type="button"
-                className="editor-node-more-btn"
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-                aria-label="More"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMenuOpen((o) => !o);
-                }}
-              >
-                ···
-              </button>
-              {menuOpen && (
-                <ul className="editor-node-menu" role="menu">
-                  <li role="none">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="editor-node-menu-item"
-                      onClick={() => {
-                        onMoveUp();
-                        setMenuOpen(false);
-                      }}
-                    >
-                      Move up
-                    </button>
-                  </li>
-                  <li role="none">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="editor-node-menu-item"
-                      onClick={() => {
-                        onMoveDown();
-                        setMenuOpen(false);
-                      }}
-                    >
-                      Move down
-                    </button>
-                  </li>
-                  <li role="separator" className="editor-node-menu-sep" />
-                  <li role="none">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="editor-node-menu-item editor-node-menu-item--danger"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        onDelete();
-                      }}
-                    >
-                      Delete…
-                    </button>
-                  </li>
-                </ul>
-              )}
-            </div>
+            <button
+              type="button"
+              className="editor-command-delete"
+              onClick={onDelete}
+              aria-label={`Delete ${model.name.trim() || primaryPhrase.trim() || "command"}`}
+            >
+              ×
+            </button>
           </div>
         </div>
 
@@ -359,32 +260,11 @@ export function CommandFormulaRow({
                 />
               </label>
             </div>
-            <ActionChain
-              title="Action chain (full editor)"
-              actions={model.actions}
-              onChange={(actions) => updateModel((p) => ({ ...p, actions }))}
-              errorByIndex={{}}
-            />
-            <section className="editor-subprompt-panel">
-              <h3>Sub-prompt branch</h3>
-              <label>
-                Prompt text
-                <input
-                  value={model.subPromptText}
-                  onChange={(e) => updateModel((p) => ({ ...p, subPromptText: e.target.value }))}
-                  placeholder="Optional follow-up question"
-                />
-              </label>
-              <ActionChain
-                title="Sub-prompt actions"
-                actions={model.subPromptActions}
-                onChange={(subPromptActions) => updateModel((p) => ({ ...p, subPromptActions }))}
-                errorByIndex={{}}
-              />
-            </section>
-            {(errors.actions || errors.triggerPhrases || errors.name) && (
+            {(errors.actions || errors.triggerPhrases || errors.name || Object.keys(errors.actionErrors).length > 0) && (
               <p className="editor-field-error">
-                {[errors.name, errors.triggerPhrases, errors.actions].filter(Boolean).join(" ")}
+                {[errors.name, errors.triggerPhrases, errors.actions, ...Object.values(errors.actionErrors)]
+                  .filter(Boolean)
+                  .join(" ")}
               </p>
             )}
           </div>
@@ -427,7 +307,10 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
     }
     const errors = validateFormModel(m);
     if (hasBlockingErrors(errors)) {
-      setToastText(errors.name ?? errors.triggerPhrases ?? errors.actions ?? "Fix errors first.");
+      const actionErr = Object.values(errors.actionErrors)[0];
+      setToastText(
+        errors.name ?? errors.triggerPhrases ?? errors.actions ?? actionErr ?? "Fix errors first.",
+      );
       return;
     }
     setSaving(true);
@@ -527,10 +410,6 @@ type SegmentProps = {
 
 function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: SegmentProps) {
   const kind = getActionKind(action);
-  const [kindQuery, setKindQuery] = useState(() => actionKindLabel(kind));
-  const [kindOpen, setKindOpen] = useState(false);
-  const [kindPicked, setKindPicked] = useState(true);
-  const kindBoxRef = useRef<HTMLDivElement>(null);
 
   const [appQuery, setAppQuery] = useState(() => ("open_app" in action ? action.open_app.name : ""));
   const [appHits, setAppHits] = useState<AppIndexEntry[]>([]);
@@ -538,13 +417,10 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   const appTimer = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!kindOpen) return;
-    const close = (e: MouseEvent) => {
-      if (!kindBoxRef.current?.contains(e.target as Node)) setKindOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [kindOpen]);
+    if ("open_app" in action) {
+      setAppQuery(action.open_app.name);
+    }
+  }, [action]);
 
   useEffect(() => {
     if (!("open_app" in action) || !appOpen) return;
@@ -559,21 +435,15 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     };
   }, [appQuery, appOpen, action]);
 
-  const pickKind = (nextKind: ActionKind) => {
+  const onPickKind = (nextKind: ActionKind) => {
     onChange(defaultActionForKind(nextKind));
-    setKindQuery(actionKindLabel(nextKind));
-    setKindPicked(true);
-    setKindOpen(false);
     if (nextKind === "open_app") {
       setAppQuery("");
       setAppOpen(true);
     }
   };
 
-  const filteredKinds = useMemo(() => filterActionKindOptions(kindQuery), [kindQuery]);
-
   const renderArg = () => {
-    if (!kindPicked) return null;
     if ("open_app" in action) {
       return (
         <div className="editor-formula-arg-wrap">
@@ -584,7 +454,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
             onChange={(e) => {
               setAppQuery(e.target.value);
               onChange({
-                open_app: { ...action.open_app, name: e.target.value, path: action.open_app.path },
+                open_app: { name: e.target.value, path: "" },
               });
             }}
             onFocus={() => {
@@ -595,7 +465,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
             }}
             onBlur={() => window.setTimeout(() => setAppOpen(false), 120)}
             placeholder="Search app…"
-            aria-label={`App target for step ${index + 1}`}
+            aria-label={`App name for step ${index + 1}`}
           />
           {appOpen && appHits.length > 0 && (
             <ul className="editor-formula-suggest" role="listbox">
@@ -660,15 +530,47 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     }
     if ("run_script" in action) {
       return (
+        <div className="editor-formula-arg-wrap editor-formula-arg-wrap--stack">
+          <input
+            type="text"
+            className="editor-formula-input editor-formula-input--arg"
+            value={action.run_script.script}
+            onChange={(e) =>
+              onChange({ run_script: { ...action.run_script, script: e.target.value } })
+            }
+            placeholder="Script path"
+            aria-label={`Script path for step ${index + 1}`}
+          />
+          <input
+            type="text"
+            className="editor-formula-input editor-formula-input--arg"
+            value={action.run_script.args.join(", ")}
+            onChange={(e) =>
+              onChange({
+                run_script: {
+                  ...action.run_script,
+                  args: e.target.value
+                    .split(",")
+                    .map((part) => part.trim())
+                    .filter((part) => part.length > 0),
+                },
+              })
+            }
+            placeholder="Arguments (comma-separated)"
+            aria-label={`Script arguments for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("sub_prompt" in action) {
+      return (
         <input
           type="text"
           className="editor-formula-input editor-formula-input--arg"
-          value={action.run_script.script}
-          onChange={(e) =>
-            onChange({ run_script: { ...action.run_script, script: e.target.value } })
-          }
-          placeholder="script path"
-          aria-label={`Script for step ${index + 1}`}
+          value={action.sub_prompt.prompt}
+          onChange={(e) => onChange({ sub_prompt: { prompt: e.target.value } })}
+          placeholder="Follow-up question"
+          aria-label={`Sub-prompt text for step ${index + 1}`}
         />
       );
     }
@@ -694,48 +596,22 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   };
 
   return (
-    <div className="editor-formula-segment" ref={kindBoxRef}>
+    <div className="editor-formula-segment">
       <div className="editor-formula-kind-wrap">
-        <input
-          type="text"
+        <select
           className="editor-formula-input"
-          value={kindQuery}
-          onChange={(e) => {
-            setKindQuery(e.target.value);
-            setKindPicked(false);
-            setKindOpen(true);
-          }}
-          onFocus={() => setKindOpen(true)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && filteredKinds.length === 1) {
-              e.preventDefault();
-              pickKind(filteredKinds[0].id);
-            }
-          }}
-          placeholder="Action…"
+          value={kind}
+          onChange={(e) => onPickKind(e.target.value as ActionKind)}
           aria-label={`Action type for step ${index + 1}`}
-          aria-expanded={kindOpen}
-          aria-controls={`kind-list-${index}`}
-        />
-        {kindOpen && filteredKinds.length > 0 && (
-          <ul className="editor-formula-suggest" id={`kind-list-${index}`} role="listbox">
-            {filteredKinds.map((opt) => (
-              <li key={opt.id} role="none">
-                <button
-                  type="button"
-                  role="option"
-                  className="editor-formula-suggest-btn"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => pickKind(opt.id)}
-                >
-                  {opt.label}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        >
+          {ACTION_KIND_OPTIONS.map((opt) => (
+            <option key={opt.id} value={opt.id}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
       </div>
-      {kindPicked && <div className="editor-formula-arg-slot">{renderArg()}</div>}
+      <div className="editor-formula-arg-slot">{renderArg()}</div>
       {canRemove && (
         <button
           type="button"

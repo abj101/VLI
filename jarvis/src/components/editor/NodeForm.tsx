@@ -198,29 +198,9 @@ export function NodeForm() {
           title="Action Chain"
           actions={model.actions}
           onChange={(actions) => updateModel((prev) => ({ ...prev, actions }))}
-          errorByIndex={showErrors ? errors.actionUrls : {}}
+          errorByIndex={showErrors ? errors.actionErrors : {}}
         />
         {showErrors && errors.actions && <p className="editor-field-error">{errors.actions}</p>}
-
-        <section className="editor-subprompt-panel">
-          <h3>Sub-prompt</h3>
-          <label>
-            Prompt text
-            <input
-              value={model.subPromptText}
-              onChange={(e) => updateModel((prev) => ({ ...prev, subPromptText: e.target.value }))}
-              placeholder="What should I search?"
-            />
-          </label>
-          {showErrors && errors.subPromptText && <p className="editor-field-error">{errors.subPromptText}</p>}
-
-          <ActionChain
-            title="Sub-prompt Action Chain"
-            actions={model.subPromptActions}
-            onChange={(subPromptActions) => updateModel((prev) => ({ ...prev, subPromptActions }))}
-            errorByIndex={showErrors ? errors.subPromptUrls : {}}
-          />
-        </section>
       </div>
 
       <footer className="editor-form-actions">

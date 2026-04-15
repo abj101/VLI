@@ -15,18 +15,12 @@ export const ACTION_KIND_OPTIONS: ActionKindOption[] = [
   { id: "send_keys", label: "Send keys", haystack: "send keys keyboard shortcut hotkey type" },
   { id: "speak", label: "Speak", haystack: "speak say voice tts read aloud" },
   { id: "wait", label: "Wait", haystack: "wait pause delay ms milliseconds" },
+  {
+    id: "sub_prompt",
+    label: "Sub-prompt",
+    haystack: "sub prompt follow up question ask input voice",
+  },
 ];
-
-export function filterActionKindOptions(query: string): ActionKindOption[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return ACTION_KIND_OPTIONS;
-  return ACTION_KIND_OPTIONS.filter(
-    (o) =>
-      o.label.toLowerCase().includes(q) ||
-      o.haystack.includes(q) ||
-      o.id.replace("_", " ").includes(q),
-  );
-}
 
 export function getActionKind(action: ActionPayload): ActionKind {
   if ("open_app" in action) return "open_app";
@@ -34,7 +28,8 @@ export function getActionKind(action: ActionPayload): ActionKind {
   if ("run_script" in action) return "run_script";
   if ("send_keys" in action) return "send_keys";
   if ("speak" in action) return "speak";
-  return "wait";
+  if ("wait" in action) return "wait";
+  return "sub_prompt";
 }
 
 export function actionKindLabel(kind: ActionKind): string {

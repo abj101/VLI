@@ -1,4 +1,5 @@
 import type { ActionPayload } from "../../types";
+import { getActionKind } from "./actionCatalog";
 import { defaultActionForKind } from "./NodeForm.logic";
 
 type ActionCardProps = {
@@ -27,6 +28,7 @@ export function ActionCard({ action, index, onChange, onRemove }: ActionCardProp
             <option value="send_keys">Send keys</option>
             <option value="speak">Speak</option>
             <option value="wait">Wait</option>
+            <option value="sub_prompt">Sub-prompt</option>
           </select>
         </label>
         <button type="button" className="editor-delete-btn" onClick={onRemove}>
@@ -35,24 +37,14 @@ export function ActionCard({ action, index, onChange, onRemove }: ActionCardProp
       </div>
 
       {"open_app" in action && (
-        <div className="editor-form-grid-two">
-          <label htmlFor={`${prefix}-app-name`}>
-            App name
-            <input
-              id={`${prefix}-app-name`}
-              value={action.open_app.name}
-              onChange={(e) => onChange({ open_app: { ...action.open_app, name: e.target.value } })}
-            />
-          </label>
-          <label htmlFor={`${prefix}-app-path`}>
-            App path
-            <input
-              id={`${prefix}-app-path`}
-              value={action.open_app.path}
-              onChange={(e) => onChange({ open_app: { ...action.open_app, path: e.target.value } })}
-            />
-          </label>
-        </div>
+        <label htmlFor={`${prefix}-app-name`}>
+          App name
+          <input
+            id={`${prefix}-app-name`}
+            value={action.open_app.name}
+            onChange={(e) => onChange({ open_app: { name: e.target.value, path: "" } })}
+          />
+        </label>
       )}
 
       {"open_url" in action && (
@@ -141,15 +133,18 @@ export function ActionCard({ action, index, onChange, onRemove }: ActionCardProp
           />
         </label>
       )}
+
+      {"sub_prompt" in action && (
+        <label htmlFor={`${prefix}-sub-prompt`}>
+          Prompt
+          <input
+            id={`${prefix}-sub-prompt`}
+            value={action.sub_prompt.prompt}
+            onChange={(e) => onChange({ sub_prompt: { prompt: e.target.value } })}
+            placeholder="Follow-up question"
+          />
+        </label>
+      )}
     </div>
   );
-}
-
-function getActionKind(action: ActionPayload) {
-  if ("open_app" in action) return "open_app" as const;
-  if ("open_url" in action) return "open_url" as const;
-  if ("run_script" in action) return "run_script" as const;
-  if ("send_keys" in action) return "send_keys" as const;
-  if ("speak" in action) return "speak" as const;
-  return "wait" as const;
 }

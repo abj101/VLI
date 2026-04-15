@@ -1,6 +1,13 @@
 import type { ActionPayload, CommandNodePayload } from "../../types";
 
-export type ActionKind = "open_app" | "open_url" | "run_script" | "send_keys" | "speak" | "wait";
+export type ActionKind =
+  | "open_app"
+  | "open_url"
+  | "run_script"
+  | "send_keys"
+  | "speak"
+  | "wait"
+  | "sub_prompt";
 
 export type FormModel = {
   id: number | null;
@@ -9,8 +16,6 @@ export type FormModel = {
   threshold: number;
   enabled: boolean;
   actions: ActionPayload[];
-  subPromptText: string;
-  subPromptActions: ActionPayload[];
 };
 
 export type FormErrors = {
@@ -18,9 +23,8 @@ export type FormErrors = {
   triggerPhrases?: string;
   threshold?: string;
   actions?: string;
-  actionUrls: Record<number, string>;
-  subPromptText?: string;
-  subPromptUrls: Record<number, string>;
+  /** Per-index messages for any action row (URLs, sub-prompt text, etc.). */
+  actionErrors: Record<number, string>;
 };
 
 const MIN_THRESHOLD = 0.5;
@@ -40,6 +44,8 @@ export function defaultActionForKind(kind: ActionKind): ActionPayload {
       return { speak: { text: "" } };
     case "wait":
       return { wait: { ms: 250 } };
+    case "sub_prompt":
+      return { sub_prompt: { prompt: "" } };
   }
 }
 
@@ -51,8 +57,6 @@ export function emptyFormModel(): FormModel {
     threshold: 0.8,
     enabled: true,
     actions: [],
-    subPromptText: "",
-    subPromptActions: [],
   };
 }
 
@@ -60,44 +64,21 @@ export function modelFromNode(node: CommandNodePayload | null): FormModel {
   if (!node) {
     return emptyFormModel();
   }
-  const subPromptIndex = node.actions.findIndex((action) => "sub_prompt" in action);
-  if (subPromptIndex === -1) {
-    return {
-      id: node.id,
-      name: node.name,
-      triggerPhrases: [...node.trigger_phrases],
-      threshold: clampThreshold(node.fuzzy_threshold_pct / 100),
-      enabled: node.enabled,
-      actions: [...node.actions],
-      subPromptText: "",
-      subPromptActions: [],
-    };
-  }
-
-  const subPromptAction = node.actions[subPromptIndex];
   return {
     id: node.id,
     name: node.name,
     triggerPhrases: [...node.trigger_phrases],
     threshold: clampThreshold(node.fuzzy_threshold_pct / 100),
     enabled: node.enabled,
-    actions: node.actions.slice(0, subPromptIndex),
-    subPromptText: "sub_prompt" in subPromptAction ? subPromptAction.sub_prompt.prompt : "",
-    subPromptActions: node.actions.slice(subPromptIndex + 1),
+    actions: [...node.actions],
   };
 }
 
 export function toCommandPayload(model: FormModel): Omit<CommandNodePayload, "id" | "created_at"> {
-  const mergedActions = [...model.actions];
-  const normalizedSubPrompt = model.subPromptText.trim();
-  if (model.subPromptText.trim().length > 0 || model.subPromptActions.length > 0) {
-    mergedActions.push({ sub_prompt: { prompt: normalizedSubPrompt } });
-    mergedActions.push(...model.subPromptActions);
-  }
   return {
     name: model.name.trim(),
     trigger_phrases: normalizeTriggerPhrases(model.triggerPhrases),
-    actions: mergedActions,
+    actions: [...model.actions],
     enabled: model.enabled,
     fuzzy_threshold_pct: Math.round(clampThreshold(model.threshold) * 100),
   };
@@ -105,8 +86,7 @@ export function toCommandPayload(model: FormModel): Omit<CommandNodePayload, "id
 
 export function validateFormModel(model: FormModel): FormErrors {
   const errors: FormErrors = {
-    actionUrls: {},
-    subPromptUrls: {},
+    actionErrors: {},
   };
 
   if (model.name.trim().length === 0) {
@@ -121,9 +101,7 @@ export function validateFormModel(model: FormModel): FormErrors {
     errors.threshold = "Threshold must be between 0.50 and 1.00.";
   }
 
-  const topLevelCount = model.actions.length;
-  const subPromptCount = model.subPromptActions.length;
-  if (topLevelCount + subPromptCount === 0) {
+  if (model.actions.length === 0) {
     errors.actions = "At least one action is required.";
   }
 
@@ -131,20 +109,12 @@ export function validateFormModel(model: FormModel): FormErrors {
     if ("open_url" in action) {
       const maybeError = validateUrl(action.open_url.url);
       if (maybeError) {
-        errors.actionUrls[index] = maybeError;
+        errors.actionErrors[index] = maybeError;
       }
     }
-  });
-
-  if (model.subPromptActions.length > 0 && model.subPromptText.trim().length === 0) {
-    errors.subPromptText = "Sub-prompt text is required when sub-prompt actions exist.";
-  }
-
-  model.subPromptActions.forEach((action, index) => {
-    if ("open_url" in action) {
-      const maybeError = validateUrl(action.open_url.url);
-      if (maybeError) {
-        errors.subPromptUrls[index] = maybeError;
+    if ("sub_prompt" in action) {
+      if (action.sub_prompt.prompt.trim().length === 0) {
+        errors.actionErrors[index] = "Sub-prompt text is required.";
       }
     }
   });
@@ -158,9 +128,7 @@ export function hasBlockingErrors(errors: FormErrors): boolean {
       errors.triggerPhrases ||
       errors.threshold ||
       errors.actions ||
-      errors.subPromptText ||
-      Object.keys(errors.actionUrls).length > 0 ||
-      Object.keys(errors.subPromptUrls).length > 0,
+      Object.keys(errors.actionErrors).length > 0,
   );
 }
 

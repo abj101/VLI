@@ -25,16 +25,12 @@ function makeNode(): CommandNodePayload {
 }
 
 describe("NodeForm logic", () => {
-  it("splits node actions into main and sub-prompt sections", () => {
+  it("loads all actions from the node in order", () => {
     const model = modelFromNode(makeNode());
-    expect(model.actions).toEqual([{ open_url: { url: "https://example.com" } }]);
-    expect(model.subPromptText).toBe("What should I search?");
-    expect(model.subPromptActions).toEqual([
-      { open_url: { url: "https://example.com/search?q={{follow_up}}" } },
-    ]);
+    expect(model.actions).toEqual(makeNode().actions);
   });
 
-  it("joins model data into command payload with sub-prompt chain", () => {
+  it("round-trips command payload actions unchanged", () => {
     const model = modelFromNode(makeNode());
     const payload = toCommandPayload(model);
     expect(payload.name).toBe("Search docs");
@@ -51,8 +47,6 @@ describe("NodeForm logic", () => {
       threshold: 0.45,
       enabled: true,
       actions: [],
-      subPromptText: "",
-      subPromptActions: [],
     });
 
     expect(errors.name).toBeTruthy();
@@ -62,35 +56,35 @@ describe("NodeForm logic", () => {
     expect(hasBlockingErrors(errors)).toBe(true);
   });
 
-  it("validates open_url actions in both chains", () => {
+  it("validates open_url actions by index", () => {
     const errors = validateFormModel({
       id: null,
       name: "Open stuff",
       triggerPhrases: ["open thing"],
       threshold: 0.8,
       enabled: true,
-      actions: [{ open_url: { url: "not-a-url" } }],
-      subPromptText: "Where?",
-      subPromptActions: [{ open_url: { url: "" } }],
+      actions: [
+        { open_url: { url: "not-a-url" } },
+        { sub_prompt: { prompt: "Where?" } },
+        { open_url: { url: "" } },
+      ],
     });
 
-    expect(errors.actionUrls[0]).toBe("URL is invalid.");
-    expect(errors.subPromptUrls[0]).toBe("URL is required.");
+    expect(errors.actionErrors[0]).toBe("URL is invalid.");
+    expect(errors.actionErrors[2]).toBe("URL is required.");
     expect(hasBlockingErrors(errors)).toBe(true);
   });
 
-  it("requires sub-prompt text when nested actions exist", () => {
+  it("requires non-empty sub-prompt text on sub_prompt actions", () => {
     const errors = validateFormModel({
       id: null,
       name: "Need follow-up",
       triggerPhrases: ["ask me"],
       threshold: 0.75,
       enabled: true,
-      actions: [{ wait: { ms: 100 } }],
-      subPromptText: "",
-      subPromptActions: [{ open_url: { url: "https://example.com" } }],
+      actions: [{ wait: { ms: 100 } }, { sub_prompt: { prompt: "   " } }, { open_url: { url: "https://example.com" } }],
     });
-    expect(errors.subPromptText).toBeTruthy();
+    expect(errors.actionErrors[1]).toBe("Sub-prompt text is required.");
     expect(hasBlockingErrors(errors)).toBe(true);
   });
 
@@ -101,5 +95,6 @@ describe("NodeForm logic", () => {
     expect(defaultActionForKind("send_keys")).toEqual({ send_keys: { keys: "" } });
     expect(defaultActionForKind("speak")).toEqual({ speak: { text: "" } });
     expect(defaultActionForKind("wait")).toEqual({ wait: { ms: 250 } });
+    expect(defaultActionForKind("sub_prompt")).toEqual({ sub_prompt: { prompt: "" } });
   });
 });
