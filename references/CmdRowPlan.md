@@ -19,7 +19,7 @@ todos:
     status: completed
   - id: tests-regressions
     content: Add/adjust backend and frontend tests for icon payload, UI mode transitions, and lookup states.
-    status: pending
+    status: completed
 isProject: false
 ---
 
