@@ -646,6 +646,7 @@ mod tests {
         let index = vec![AppEntry {
             display_name: "Calculator".into(),
             exe_path: "calc.exe".into(),
+            icon_data_url: None,
         }];
         let node = node_with_actions(vec![Action::OpenApp {
             name: "calc".into(),

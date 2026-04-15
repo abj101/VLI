@@ -29,6 +29,7 @@ pub fn load_app_index(conn: &Connection) -> Result<Vec<AppEntry>, DbError> {
         out.push(AppEntry {
             exe_path: row.get(0)?,
             display_name: row.get(1)?,
+            icon_data_url: None,
         });
     }
     Ok(out)
@@ -83,10 +84,12 @@ mod tests {
             AppEntry {
                 exe_path: r"C:\a\b.exe".into(),
                 display_name: "Bee".into(),
+                icon_data_url: None,
             },
             AppEntry {
                 exe_path: r"C:\c\d.exe".into(),
                 display_name: "Dee".into(),
+                icon_data_url: None,
             },
         ];
         replace_app_index(&conn, &entries, 12345).unwrap();

@@ -4,6 +4,7 @@ use super::AppEntry;
 use std::collections::HashMap;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use windows::core::{Interface, PCWSTR};
 use windows::Win32::Foundation::MAX_PATH;
 use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
@@ -94,7 +95,8 @@ fn scan_uninstall_registry(map: &mut HashMap<String, AppEntry>) -> Result<(), St
             if exe_norm.is_empty() || !Path::new(&exe_norm).exists() {
                 continue;
             }
-            insert_entry(map, exe_norm, display_name);
+            let icon_data_url = extract_icon_data_url(&exe_norm);
+            insert_entry(map, exe_norm, display_name, icon_data_url);
         }
     }
     Ok(())
@@ -190,7 +192,8 @@ fn visit_dir_lnk(
                     .and_then(|s| s.to_str())
                     .unwrap_or("App")
                     .to_string();
-                insert_entry(map, target, label);
+                let icon_data_url = extract_icon_data_url(&target);
+                insert_entry(map, target, label, icon_data_url);
             }
         }
     }
@@ -223,17 +226,84 @@ fn resolve_lnk(shell_link: &IShellLinkW, persist: &IPersistFile, lnk: &Path) -> 
     }
 }
 
-fn insert_entry(map: &mut HashMap<String, AppEntry>, exe_path: String, display_name: String) {
+fn extract_icon_data_url(exe_path: &str) -> Option<String> {
+    let escaped_path = exe_path.replace('\'', "''");
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'; \
+         Add-Type -AssemblyName System.Drawing; \
+         $icon = [System.Drawing.Icon]::ExtractAssociatedIcon('{escaped_path}'); \
+         if ($null -eq $icon) {{ exit 0 }}; \
+         $bitmap = $icon.ToBitmap(); \
+         $stream = New-Object System.IO.MemoryStream; \
+         $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png); \
+         [Convert]::ToBase64String($stream.ToArray())"
+    );
+    let output = Command::new("powershell")
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-Command")
+        .arg(script)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let b64 = String::from_utf8(output.stdout).ok()?;
+    let trimmed = b64.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(format!("data:image/png;base64,{trimmed}"))
+}
+
+fn insert_entry(
+    map: &mut HashMap<String, AppEntry>,
+    exe_path: String,
+    display_name: String,
+    icon_data_url: Option<String>,
+) {
     let key = exe_path.to_lowercase();
     let entry = AppEntry {
         display_name,
         exe_path,
+        icon_data_url,
     };
     map.entry(key)
         .and_modify(|existing| {
             if entry.display_name.len() > existing.display_name.len() {
                 *existing = entry.clone();
+            } else if existing.icon_data_url.is_none() && entry.icon_data_url.is_some() {
+                existing.icon_data_url = entry.icon_data_url.clone();
             }
         })
         .or_insert(entry);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn insert_entry_backfills_missing_icon_on_existing_row() {
+        let mut map = HashMap::<String, AppEntry>::new();
+        insert_entry(
+            &mut map,
+            r"C:\Apps\Example.exe".into(),
+            "Example".into(),
+            None,
+        );
+        insert_entry(
+            &mut map,
+            r"C:\Apps\Example.exe".into(),
+            "Example".into(),
+            Some("data:image/png;base64,AAA=".into()),
+        );
+        let stored = map
+            .get(&r"c:\apps\example.exe".to_string())
+            .expect("entry exists");
+        assert_eq!(
+            stored.icon_data_url.as_deref(),
+            Some("data:image/png;base64,AAA=")
+        );
+    }
 }

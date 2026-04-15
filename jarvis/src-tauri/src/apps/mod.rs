@@ -13,6 +13,8 @@ pub const APP_RESOLVE_MIN_RATIO: f64 = 0.75;
 pub struct AppEntry {
     pub display_name: String,
     pub exe_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_data_url: Option<String>,
 }
 
 /// Best fuzzy match at or above [`APP_RESOLVE_MIN_RATIO`], comparing `query` to display name and to the exe file stem.
@@ -77,10 +79,12 @@ mod tests {
             AppEntry {
                 display_name: "Discord".into(),
                 exe_path: r"C:\Apps\Discord.exe".into(),
+                icon_data_url: None,
             },
             AppEntry {
                 display_name: "Notepad".into(),
                 exe_path: r"C:\Windows\notepad.exe".into(),
+                icon_data_url: None,
             },
         ];
         let hit = resolve_app("discrod", &entries).expect("fuzzy match");
@@ -92,6 +96,7 @@ mod tests {
         let entries = vec![AppEntry {
             display_name: "Zebra Viewer 9000".into(),
             exe_path: r"C:\z.exe".into(),
+            icon_data_url: None,
         }];
         assert!(resolve_app("completely different thing", &entries).is_none());
     }
@@ -101,8 +106,23 @@ mod tests {
         let entries = vec![AppEntry {
             display_name: "X".into(),
             exe_path: r"C:\Stuff\Microsoft Edge.exe".into(),
+            icon_data_url: None,
         }];
         let hit = resolve_app("Microsoft Edge", &entries).expect("stem match");
         assert!(hit.exe_path.contains("Edge"));
+    }
+
+    #[test]
+    fn app_entry_serializes_icon_data_url_when_present() {
+        let entry = AppEntry {
+            display_name: "Notepad".into(),
+            exe_path: r"C:\Windows\notepad.exe".into(),
+            icon_data_url: Some("data:image/png;base64,AAA=".into()),
+        };
+        let value = serde_json::to_value(entry).expect("serialize app entry");
+        assert_eq!(
+            value.get("icon_data_url").and_then(|v| v.as_str()),
+            Some("data:image/png;base64,AAA=")
+        );
     }
 }
