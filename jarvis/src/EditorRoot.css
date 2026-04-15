@@ -208,6 +208,9 @@ html[data-theme="light"] {
   grid-column: 1 / -1;
   grid-row: 1;
   z-index: 2;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
   height: 34px;
   min-height: 34px;
   flex-shrink: 0;
@@ -220,6 +223,78 @@ html[data-theme="light"] {
   );
   user-select: none;
   -webkit-user-select: none;
+}
+
+.editor-window-chrome-title {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  max-width: 42%;
+}
+
+.editor-window-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--editor-text);
+}
+
+.editor-window-chrome-drag {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.editor-window-chrome-controls {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.editor-caption-btn {
+  box-sizing: border-box;
+  width: 46px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--editor-text);
+  cursor: pointer;
+}
+
+.editor-caption-btn:hover {
+  background: color-mix(in oklch, var(--editor-text) 8%, transparent);
+}
+
+.editor-caption-btn:active {
+  background: color-mix(in oklch, var(--editor-text) 14%, transparent);
+}
+
+.editor-caption-btn:focus-visible {
+  outline: 2px solid var(--editor-focus-ring);
+  outline-offset: -2px;
+  z-index: 1;
+}
+
+.editor-caption-btn--close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+.editor-caption-btn--close:active {
+  background: #a52318;
+  color: #fff;
+}
+
+.editor-caption-icon-svg {
+  display: block;
+  flex-shrink: 0;
 }
 
 @media (max-width: 800px) {
@@ -254,11 +329,6 @@ html[data-theme="light"] {
     padding: 10px 12px;
   }
 
-  .editor-app-sidebar .editor-app-brand {
-    flex: 1 1 100%;
-    padding-bottom: 2px;
-  }
-
   .editor-app-sidebar .editor-app-nav-group {
     flex: 1 1 auto;
     min-width: min(160px, 45%);
@@ -273,14 +343,6 @@ html[data-theme="light"] {
     grid-column: 1;
     grid-row: 3;
   }
-}
-
-.editor-app-brand {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.22em;
-  color: var(--editor-label-muted);
-  padding: 0 8px;
 }
 
 .editor-app-nav-group {
@@ -383,7 +445,7 @@ html[data-theme="light"] {
     var(--editor-glass-shadow),
     var(--editor-glass-inset),
     inset 0 0 0 1px var(--editor-glass-hairline);
-  border: 1px solid var(--editor-glass-border);
+  border: none;
   border-radius: 12px;
 }
 

@@ -4,7 +4,8 @@ import { SettingsPanel } from "./components/Settings/SettingsPanel";
 import "./EditorRoot.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useCallback, useEffect, useState } from "react";
 import {
   applyEditorThemeToDocument,
   normalizeThemePreference,
@@ -14,10 +15,64 @@ import { useSettingsStore } from "./store/settingsStore";
 
 type ShellSection = "commands" | EditorSettingsNavId;
 
+function CaptionMinimizeIcon() {
+  return (
+    <svg className="editor-caption-icon-svg" viewBox="0 0 10 10" width="10" height="10" aria-hidden>
+      <rect x="1" y="5" width="8" height="1" fill="currentColor" />
+    </svg>
+  );
+}
+
+function CaptionMaximizeIcon() {
+  return (
+    <svg className="editor-caption-icon-svg" viewBox="0 0 10 10" width="10" height="10" aria-hidden>
+      <rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
+    </svg>
+  );
+}
+
+function CaptionRestoreIcon() {
+  return (
+    <svg className="editor-caption-icon-svg" viewBox="0 0 12 12" width="12" height="12" aria-hidden>
+      <rect x="3.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
+      <rect x="1.5" y="3.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
+    </svg>
+  );
+}
+
+function CaptionCloseIcon() {
+  return (
+    <svg className="editor-caption-icon-svg" viewBox="0 0 10 10" width="10" height="10" aria-hidden>
+      <path
+        d="M1 1l8 8M9 1L1 9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1"
+        strokeLinecap="square"
+      />
+    </svg>
+  );
+}
+
 export default function EditorRoot() {
   const nodes = useEditorStore((s) => s.nodes);
   const setAppIndexCount = useSettingsStore((s) => s.setAppIndexCount);
   const [section, setSection] = useState<ShellSection>("commands");
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  const syncMaximized = useCallback(() => {
+    const w = getCurrentWindow();
+    void w.isMaximized().then(setIsMaximized);
+  }, []);
+
+  useEffect(() => {
+    void syncMaximized();
+    const onResize = () => {
+      void syncMaximized();
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [syncMaximized]);
 
   useEffect(() => {
     let unlistenOpen: (() => void) | undefined;
@@ -68,13 +123,55 @@ export default function EditorRoot() {
     return () => mq.removeEventListener("change", sync);
   }, []);
 
+  const onMinimize = () => {
+    void getCurrentWindow().minimize();
+  };
+
+  const onToggleMaximize = () => {
+    const w = getCurrentWindow();
+    void w.toggleMaximize().then(() => syncMaximized());
+  };
+
+  const onClose = () => {
+    void getCurrentWindow().close();
+  };
+
   return (
     <main className="editor-app">
       <div className="editor-app-shell editor-glass-panel">
-        <div className="editor-window-chrome" data-tauri-drag-region aria-hidden="true" />
-        <aside className="editor-app-sidebar" aria-label="JARVIS navigation">
-          <div className="editor-app-brand">JARVIS</div>
-
+        <header className="editor-window-chrome" aria-label="Window">
+          <div className="editor-window-chrome-title" data-tauri-drag-region>
+            <span className="editor-window-title">VLI</span>
+          </div>
+          <div className="editor-window-chrome-drag" data-tauri-drag-region />
+          <div className="editor-window-chrome-controls" role="group" aria-label="Window controls">
+            <button
+              type="button"
+              className="editor-caption-btn"
+              aria-label="Minimize"
+              onClick={onMinimize}
+            >
+              <CaptionMinimizeIcon />
+            </button>
+            <button
+              type="button"
+              className="editor-caption-btn"
+              aria-label={isMaximized ? "Restore" : "Maximize"}
+              onClick={onToggleMaximize}
+            >
+              {isMaximized ? <CaptionRestoreIcon /> : <CaptionMaximizeIcon />}
+            </button>
+            <button
+              type="button"
+              className="editor-caption-btn editor-caption-btn--close"
+              aria-label="Close"
+              onClick={onClose}
+            >
+              <CaptionCloseIcon />
+            </button>
+          </div>
+        </header>
+        <aside className="editor-app-sidebar" aria-label="VLI navigation">
           <div className="editor-app-nav-group">
             <div className="editor-app-nav-label">Library</div>
             <button

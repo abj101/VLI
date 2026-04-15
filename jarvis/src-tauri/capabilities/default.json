@@ -5,6 +5,9 @@
   "windows": ["hud", "editor"],
   "permissions": [
     "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
     "global-shortcut:allow-register",
     "opener:default",
     "shell:allow-open"
