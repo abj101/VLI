@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: frontend-result-confirm
     content: Enhance open_app suggestions with icon + explicit found/not-found/searching feedback.
-    status: pending
+    status: completed
   - id: frontend-confirmed-chip
     content: Implement confirmed icon-chip mode with click-to-reveal inline text behavior.
     status: pending

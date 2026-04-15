@@ -4,7 +4,7 @@ import type { ActionPayload, CommandNodePayload } from "../../types";
 import { formatUserError } from "../../utils/userErrors";
 import { useEditorStore } from "../../store/editorStore";
 import { ACTION_KIND_OPTIONS, getActionKind } from "./actionCatalog";
-import { fingerprintCommandNode } from "./formulaRow.logic";
+import { deriveAppSearchMeta, fingerprintCommandNode } from "./formulaRow.logic";
 import {
   defaultActionForKind,
   hasBlockingErrors,
@@ -18,6 +18,7 @@ import {
 export type AppIndexEntry = {
   display_name: string;
   exe_path: string;
+  icon_data_url?: string | null;
 };
 
 type CommandFormulaRowProps = {
@@ -101,7 +102,7 @@ export function CommandFormulaRow({
   const setPrimaryPhrase = (next: string) => {
     updateModel((prev) => ({
       ...prev,
-      triggerPhrases: next.trim().length > 0 ? [next.trim()] : [],
+      triggerPhrases: next.length > 0 ? [next] : [],
     }));
   };
 
@@ -146,7 +147,7 @@ export function CommandFormulaRow({
         <div className="editor-command-formula">
           <input
             type="text"
-            className="editor-formula-input"
+            className="editor-formula-input editor-formula-input--phrase"
             value={primaryPhrase}
             onChange={(e) => setPrimaryPhrase(e.target.value)}
             placeholder="Trigger phrase"
@@ -164,7 +165,7 @@ export function CommandFormulaRow({
                 <div key={`seg-${index}`} className="editor-formula-segment-wrap">
                   {index > 0 && (
                     <span className="editor-formula-arrow" aria-hidden>
-                      →
+                      +
                     </span>
                   )}
                   <ActionSegmentEditor
@@ -241,7 +242,7 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
   const setPrimaryPhrase = (next: string) => {
     updateModel((prev) => ({
       ...prev,
-      triggerPhrases: next.trim().length > 0 ? [next.trim()] : [],
+      triggerPhrases: next.length > 0 ? [next] : [],
     }));
   };
 
@@ -296,7 +297,7 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
         <div className="editor-command-formula">
           <input
             type="text"
-            className="editor-formula-input"
+            className="editor-formula-input editor-formula-input--phrase"
             value={primaryPhrase}
             onChange={(e) => setPrimaryPhrase(e.target.value)}
             placeholder="New trigger phrase"
@@ -310,7 +311,7 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
               <div key={`d-${index}`} className="editor-formula-segment-wrap">
                 {index > 0 && (
                   <span className="editor-formula-arrow" aria-hidden>
-                    →
+                    +
                   </span>
                 )}
                 <ActionSegmentEditor
@@ -351,10 +352,16 @@ type SegmentProps = {
 
 function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: SegmentProps) {
   const kind = getActionKind(action);
+  const [kindQuery, setKindQuery] = useState(
+    () => ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind,
+  );
+  const [kindOpen, setKindOpen] = useState(false);
 
   const [appQuery, setAppQuery] = useState(() => ("open_app" in action ? action.open_app.name : ""));
   const [appHits, setAppHits] = useState<AppIndexEntry[]>([]);
   const [appOpen, setAppOpen] = useState(false);
+  const [appLoading, setAppLoading] = useState(false);
+  const [appHasSearched, setAppHasSearched] = useState(false);
   const appTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -364,12 +371,24 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   }, [action]);
 
   useEffect(() => {
+    setKindQuery(ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind);
+  }, [kind]);
+
+  useEffect(() => {
     if (!("open_app" in action) || !appOpen) return;
     if (appTimer.current) window.clearTimeout(appTimer.current);
     appTimer.current = window.setTimeout(() => {
+      setAppLoading(true);
       void invoke<AppIndexEntry[]>("search_app_index", { query: appQuery, limit: 24 })
-        .then(setAppHits)
-        .catch(() => setAppHits([]));
+        .then((hits) => {
+          setAppHits(hits);
+          setAppHasSearched(true);
+        })
+        .catch(() => {
+          setAppHits([]);
+          setAppHasSearched(true);
+        })
+        .finally(() => setAppLoading(false));
     }, 160);
     return () => {
       if (appTimer.current) window.clearTimeout(appTimer.current);
@@ -381,8 +400,34 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     if (nextKind === "open_app") {
       setAppQuery("");
       setAppOpen(true);
+      setAppHasSearched(false);
     }
   };
+
+  const kindHits = useMemo(() => {
+    const q = kindQuery.trim().toLowerCase();
+    if (!q) return ACTION_KIND_OPTIONS;
+    return ACTION_KIND_OPTIONS.filter(
+      (opt) =>
+        opt.label.toLowerCase().includes(q) ||
+        opt.haystack.includes(q) ||
+        opt.id.split("_").join(" ").includes(q),
+    );
+  }, [kindQuery]);
+
+  const applyKindOption = (nextKind: ActionKind) => {
+    onPickKind(nextKind);
+    setKindQuery(ACTION_KIND_OPTIONS.find((opt) => opt.id === nextKind)?.label ?? nextKind);
+    setKindOpen(false);
+  };
+
+  const appSearchMeta = deriveAppSearchMeta({
+    isOpen: appOpen,
+    query: appQuery,
+    isLoading: appLoading,
+    hasSearched: appHasSearched,
+    hitCount: appHits.length,
+  });
 
   const renderArg = () => {
     if ("open_app" in action) {
@@ -394,22 +439,41 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
             value={appQuery}
             onChange={(e) => {
               setAppQuery(e.target.value);
+              setAppHasSearched(false);
               onChange({
                 open_app: { name: e.target.value, path: "" },
               });
             }}
             onFocus={() => {
               setAppOpen(true);
+              setAppLoading(true);
               void invoke<AppIndexEntry[]>("search_app_index", { query: appQuery, limit: 24 })
-                .then(setAppHits)
-                .catch(() => setAppHits([]));
+                .then((hits) => {
+                  setAppHits(hits);
+                  setAppHasSearched(true);
+                })
+                .catch(() => {
+                  setAppHits([]);
+                  setAppHasSearched(true);
+                })
+                .finally(() => setAppLoading(false));
             }}
             onBlur={() => window.setTimeout(() => setAppOpen(false), 120)}
             placeholder="Search app…"
             aria-label={`App name for step ${index + 1}`}
           />
-          {appOpen && appHits.length > 0 && (
+          {appOpen && (
             <ul className="editor-formula-suggest" role="listbox">
+              {appSearchMeta.countText && (
+                <li role="none" className="editor-formula-suggest-meta">
+                  {appSearchMeta.countText}
+                </li>
+              )}
+              {appSearchMeta.statusText && (
+                <li role="none" className="editor-formula-suggest-status">
+                  {appSearchMeta.statusText}
+                </li>
+              )}
               {appHits.map((h) => (
                 <li key={h.exe_path} role="none">
                   <button
@@ -420,11 +484,28 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
                     onClick={() => {
                       onChange({ open_app: { name: h.display_name, path: h.exe_path } });
                       setAppQuery(h.display_name);
+                      setAppHasSearched(false);
                       setAppOpen(false);
                     }}
                   >
-                    <span className="editor-formula-suggest-title">{h.display_name}</span>
-                    <span className="editor-formula-suggest-sub">{h.exe_path}</span>
+                    <span className="editor-formula-suggest-app">
+                      {h.icon_data_url ? (
+                        <img
+                          src={h.icon_data_url}
+                          alt=""
+                          className="editor-formula-suggest-icon"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <span className="editor-formula-suggest-icon editor-formula-suggest-icon--fallback" aria-hidden>
+                          {h.display_name.trim().charAt(0).toUpperCase() || "A"}
+                        </span>
+                      )}
+                      <span>
+                        <span className="editor-formula-suggest-title">{h.display_name}</span>
+                        <span className="editor-formula-suggest-sub">{h.exe_path}</span>
+                      </span>
+                    </span>
                   </button>
                 </li>
               ))}
@@ -539,28 +620,59 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   return (
     <div className="editor-formula-segment">
       <div className="editor-formula-kind-wrap">
-        <select
-          className="editor-formula-input"
-          value={kind}
-          onChange={(e) => onPickKind(e.target.value as ActionKind)}
+        <input
+          type="text"
+          className="editor-formula-input editor-formula-input--kind"
+          value={kindQuery}
+          onChange={(e) => {
+            setKindQuery(e.target.value);
+            setKindOpen(true);
+          }}
+          onFocus={() => setKindOpen(true)}
+          onBlur={() => {
+            window.setTimeout(() => {
+              setKindOpen(false);
+              setKindQuery(ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind);
+            }, 120);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === "Tab") {
+              const pick = kindHits[0];
+              if (!pick) return;
+              e.preventDefault();
+              applyKindOption(pick.id);
+            }
+          }}
+          placeholder="Action"
           aria-label={`Action type for step ${index + 1}`}
-        >
-          {ACTION_KIND_OPTIONS.map((opt) => (
-            <option key={opt.id} value={opt.id}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+        />
+        {kindOpen && kindHits.length > 0 && (
+          <ul className="editor-formula-suggest" role="listbox">
+            {kindHits.map((opt) => (
+              <li key={opt.id} role="none">
+                <button
+                  type="button"
+                  role="option"
+                  className="editor-formula-suggest-btn"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => applyKindOption(opt.id)}
+                >
+                  <span className="editor-formula-suggest-title">{opt.label}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
       <div className="editor-formula-arg-slot">{renderArg()}</div>
       {canRemove && (
         <button
           type="button"
-          className="editor-formula-remove"
+          className="editor-formula-remove-inline"
           onClick={onRemove}
           aria-label={`Remove step ${index + 1}`}
         >
-          −
+          ×
         </button>
       )}
     </div>

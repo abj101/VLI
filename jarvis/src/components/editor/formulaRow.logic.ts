@@ -27,3 +27,36 @@ export function commandNodeSearchHaystack(node: CommandNodePayload): string {
   ];
   return bits.join(" ").toLowerCase();
 }
+
+type DeriveAppSearchMetaInput = {
+  isOpen: boolean;
+  query: string;
+  isLoading: boolean;
+  hasSearched: boolean;
+  hitCount: number;
+};
+
+type AppSearchMeta = {
+  statusText: string | null;
+  countText: string | null;
+};
+
+export function deriveAppSearchMeta(input: DeriveAppSearchMetaInput): AppSearchMeta {
+  if (!input.isOpen) {
+    return { statusText: null, countText: null };
+  }
+  if (input.isLoading) {
+    return { statusText: "Searching…", countText: null };
+  }
+  const hasQuery = input.query.trim().length > 0;
+  if (!hasQuery || !input.hasSearched) {
+    return { statusText: null, countText: null };
+  }
+  if (input.hitCount === 0) {
+    return { statusText: "No apps found", countText: null };
+  }
+  return {
+    statusText: null,
+    countText: `Found ${input.hitCount} app${input.hitCount === 1 ? "" : "s"}`,
+  };
+}
