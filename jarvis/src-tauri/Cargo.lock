@@ -2416,6 +2416,7 @@ dependencies = [
  "ndarray",
  "ort",
  "rapidfuzz",
+ "raw-window-handle",
  "rusqlite",
  "serde",
  "serde_json",

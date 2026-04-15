@@ -1,18 +1,22 @@
 /* --- Theme tokens: resolved palette on `html[data-theme="light"|"dark"]` --- */
 
-/* Frameless editor: native window supplies rounding (DWM); keep client rect square so radii never fight. */
+/* Frameless editor: one radius token — paired with `DWMWCP_ROUNDSMALL` in `editor_window_win.rs`. */
 html {
   /* Default until theme sync sets `data-theme` */
   --editor-bg: #0f1116;
+  --editor-shell-radius: 8px;
   box-sizing: border-box;
   height: 100%;
   min-height: 100%;
   min-height: 100dvh;
   width: 100%;
   margin: 0;
-  border-radius: 0;
+  border-radius: var(--editor-shell-radius);
   overflow: hidden;
+  /* Must be opaque: a transparent `html` under rounded corners shows the Win32 host as a hairline. */
   background: var(--editor-bg);
+  /* Subpixel fringe between DWM curve and CSS clip — pull background 1px inward on the mask. */
+  box-shadow: inset 0 0 0 1px var(--editor-bg);
 }
 
 body {
@@ -31,9 +35,10 @@ body {
   width: 100%;
   margin: 0;
   box-sizing: border-box;
-  border-radius: 0;
+  border-radius: var(--editor-shell-radius);
   overflow: hidden;
   background: var(--editor-bg);
+  box-shadow: inset 0 0 0 1px var(--editor-bg);
 }
 
 html[data-theme="dark"] {
@@ -175,6 +180,16 @@ html[data-theme="light"] {
     --editor-settings-bg: #ffffff;
   }
 
+  html {
+    --editor-shell-radius: 0px;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  #root {
+    box-shadow: none;
+  }
+
   .editor-glass-panel,
   .editor-app-shell,
   .editor-settings-panel,
@@ -200,6 +215,7 @@ html[data-theme="light"] {
   flex-direction: column;
   min-height: 0;
   padding: 0;
+  border-radius: inherit;
   background: transparent;
   color: var(--editor-text);
   font-family: system-ui, -apple-system, "BlinkMacSystemFont", "SF Pro Text", "SF Pro Display", "Work Sans",
@@ -213,13 +229,14 @@ html[data-theme="light"] {
   grid-template-columns: 212px minmax(0, 1fr);
   grid-template-rows: 34px minmax(0, 1fr);
   overflow: hidden;
-  border-radius: 0;
+  border-radius: var(--editor-shell-radius);
 }
 
-/* Main shell: square rect; DWM rounds the HWND. Overrides .editor-glass-panel radius for this node only. */
+/* Outer drop shadow removed on the main shell: Win32 host is still rectangular; heavy blur reads as square corners. */
 .editor-app-shell.editor-glass-panel {
-  border-radius: 0;
+  border-radius: var(--editor-shell-radius);
   box-shadow: var(--editor-glass-inset), inset 0 0 0 1px var(--editor-glass-hairline);
+  /* Clip backdrop-filter / layers to the rounded rect (reduces corner fringe vs DWM). */
   isolation: isolate;
   transform: translateZ(0);
 }
@@ -1240,20 +1257,10 @@ html[data-theme="light"] {
   border-bottom: 1px solid color-mix(in oklch, var(--editor-header-border) 65%, transparent);
 }
 
-.editor-commands-title {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--editor-settings-heading);
-  flex: 1 1 120px;
-  min-width: 0;
-}
-
 .editor-commands-search {
-  flex: 2 1 200px;
+  flex: 1 1 200px;
   min-width: 0;
-  max-width: 360px;
+  max-width: 420px;
 }
 
 .editor-commands-add {
@@ -1285,11 +1292,6 @@ html[data-theme="light"] {
 .editor-commands-empty {
   flex: 1;
   border-top: none;
-}
-
-.editor-commands-search-hint {
-  margin: 0;
-  padding: 8px 16px 0;
 }
 
 .editor-command-list {
@@ -1410,6 +1412,14 @@ html[data-theme="light"] {
   min-width: 0;
 }
 
+.editor-formula-arg-wrap--stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
 .editor-formula-arg-slot {
   display: flex;
   align-items: flex-start;
@@ -1515,9 +1525,24 @@ html[data-theme="light"] {
   margin-left: auto;
 }
 
-.editor-command-drag.is-disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
+.editor-command-delete {
+  box-sizing: border-box;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--editor-control-border);
+  background: var(--editor-control-bg);
+  color: var(--editor-muted);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.editor-command-delete:hover {
+  color: var(--editor-error-text);
+  border-color: var(--editor-danger-border);
+  background: color-mix(in oklch, var(--editor-danger-bg) 35%, var(--editor-control-bg));
 }
 
 .editor-expand-chevron {

@@ -1,11 +1,3 @@
-import {
-  DndContext,
-  PointerSensor,
-  closestCenter,
-  type DragEndEvent,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -14,21 +6,13 @@ import { useEditorStore } from "../../store/editorStore";
 import type { CommandNodePayload } from "../../types";
 import { CommandDraftRow, CommandFormulaRow } from "./CommandFormulaRow";
 import { commandNodeSearchHaystack } from "./formulaRow.logic";
-import {
-  makeNodeRowId,
-  parseNodeRowId,
-  reorderIdsByArrow,
-  reorderIdsByDrag,
-  withEnabledValue,
-} from "./NodeList.logic";
+import { withEnabledValue } from "./NodeList.logic";
 
 export function CommandsTab() {
   const nodes = useEditorStore((s) => s.nodes);
   const setNodes = useEditorStore((s) => s.setNodes);
-  const reorderNodes = useEditorStore((s) => s.reorderNodes);
   const deleteNode = useEditorStore((s) => s.deleteNode);
   const toggleEnabled = useEditorStore((s) => s.toggleEnabled);
-  const sensors = useSensors(useSensor(PointerSensor));
 
   const [errorText, setErrorText] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -74,39 +58,11 @@ export function CommandsTab() {
     };
   }, [setNodes]);
 
-  const searchActive = query.trim().length > 0;
-
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return nodes;
     return nodes.filter((n) => commandNodeSearchHaystack(n).includes(q));
   }, [nodes, query]);
-
-  const persistReorder = (orderedIds: number[]) => {
-    const previousNodes = useEditorStore.getState().nodes;
-    reorderNodes(orderedIds);
-    void invoke("reorder_commands", { payload: { orderedIds } }).catch((err: unknown) => {
-      setNodes(previousNodes);
-      showError(formatUserError(err, "Could not reorder commands."));
-    });
-  };
-
-  const onDragEnd = (event: DragEndEvent) => {
-    if (!event.over) return;
-    const activeId = parseNodeRowId(String(event.active.id));
-    const overId = parseNodeRowId(String(event.over.id));
-    const currentIds = useEditorStore.getState().nodes.map((n) => n.id);
-    const reordered = reorderIdsByDrag(currentIds, activeId, overId);
-    if (reordered === currentIds) return;
-    persistReorder(reordered);
-  };
-
-  const onArrowReorder = (id: number, direction: -1 | 1) => {
-    const currentIds = useEditorStore.getState().nodes.map((n) => n.id);
-    const reordered = reorderIdsByArrow(currentIds, id, direction);
-    if (reordered === currentIds) return;
-    persistReorder(reordered);
-  };
 
   const onToggleEnabled = (id: number) => {
     const current = useEditorStore.getState().nodes.find((n) => n.id === id);
@@ -148,13 +104,12 @@ export function CommandsTab() {
   return (
     <div className="editor-commands-tab">
       <header className="editor-commands-toolbar">
-        <h2 className="editor-commands-title">Commands</h2>
         <input
           type="search"
           className="editor-formula-input editor-commands-search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search commands"
+          placeholder="Search"
           aria-label="Search commands"
         />
         <button
@@ -165,7 +120,6 @@ export function CommandsTab() {
             setExpandedId(null);
           }}
           aria-label="Add command"
-          title="Add command"
         >
           +
         </button>
@@ -185,52 +139,38 @@ export function CommandsTab() {
             className="editor-empty-add"
             onClick={() => setShowDraft(true)}
             aria-label="Add command"
-            title="Add command"
           >
             +
           </button>
         </div>
       ) : (
         <>
-          {searchActive ? (
-            <p className="editor-settings-help editor-commands-search-hint" role="status">
-              Drag-to-reorder is off while search filters the list.
-            </p>
-          ) : null}
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-            <ul className="editor-command-list">
-              {showDraft && (
-                <CommandDraftRow
-                  onDiscard={() => setShowDraft(false)}
-                  onCreated={async () => {
-                    try {
-                      const list = await invoke<CommandNodePayload[]>("list_commands");
-                      setNodes(list);
-                    } catch {
-                      showError("Created, but list refresh failed.");
-                    }
-                    setShowDraft(false);
-                  }}
-                />
-              )}
-              {filtered.map((node) => (
-                <CommandFormulaRow
-                  key={node.id}
-                  node={node}
-                  expanded={expandedId === node.id}
-                  dragDisabled={searchActive}
-                  onToggleExpand={() =>
-                    setExpandedId((cur) => (cur === node.id ? null : node.id))
+          <ul className="editor-command-list">
+            {showDraft && (
+              <CommandDraftRow
+                onDiscard={() => setShowDraft(false)}
+                onCreated={async () => {
+                  try {
+                    const list = await invoke<CommandNodePayload[]>("list_commands");
+                    setNodes(list);
+                  } catch {
+                    showError("Created, but list refresh failed.");
                   }
-                  onToggleEnabled={() => onToggleEnabled(node.id)}
-                  onDelete={() => onDelete(node.id)}
-                  onMoveUp={() => onArrowReorder(node.id, -1)}
-                  onMoveDown={() => onArrowReorder(node.id, 1)}
-                  rowDndId={makeNodeRowId(node.id)}
-                />
-              ))}
-            </ul>
-          </DndContext>
+                  setShowDraft(false);
+                }}
+              />
+            )}
+            {filtered.map((node) => (
+              <CommandFormulaRow
+                key={node.id}
+                node={node}
+                expanded={expandedId === node.id}
+                onToggleExpand={() => setExpandedId((cur) => (cur === node.id ? null : node.id))}
+                onToggleEnabled={() => onToggleEnabled(node.id)}
+                onDelete={() => onDelete(node.id)}
+              />
+            ))}
+          </ul>
         </>
       )}
     </div>
