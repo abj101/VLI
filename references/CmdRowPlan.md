@@ -16,7 +16,7 @@ todos:
     status: completed
   - id: frontend-input-autogrow
     content: Apply min-width + content-grow sizing consistently across text input boxes in formula rows.
-    status: pending
+    status: completed
   - id: tests-regressions
     content: Add/adjust backend and frontend tests for icon payload, UI mode transitions, and lookup states.
     status: pending

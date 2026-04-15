@@ -7,6 +7,7 @@ import { ACTION_KIND_OPTIONS, getActionKind } from "./actionCatalog";
 import {
   deriveAppSearchMeta,
   deriveOpenAppDisplayMode,
+  formulaArgInputClass,
   fingerprintCommandNode,
 } from "./formulaRow.logic";
 import {
@@ -458,7 +459,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
         return (
           <button
             type="button"
-            className="editor-formula-input editor-formula-input--arg editor-formula-confirmed-chip"
+            className={`${formulaArgInputClass()} editor-formula-confirmed-chip`}
             onClick={() => {
               setAppEditing(true);
               setAppOpen(false);
@@ -486,7 +487,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
         <div className="editor-formula-arg-wrap">
           <input
             type="text"
-            className="editor-formula-input editor-formula-input--arg"
+            className={formulaArgInputClass()}
             value={appQuery}
             onChange={(e) => {
               setAppQuery(e.target.value);
@@ -572,7 +573,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
       return (
         <input
           type="url"
-          className="editor-formula-input editor-formula-input--arg"
+          className={formulaArgInputClass()}
           value={action.open_url.url}
           onChange={(e) => onChange({ open_url: { url: e.target.value } })}
           placeholder="https://…"
@@ -584,7 +585,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
       return (
         <input
           type="text"
-          className="editor-formula-input editor-formula-input--arg"
+          className={formulaArgInputClass()}
           value={action.speak.text}
           onChange={(e) => onChange({ speak: { text: e.target.value } })}
           placeholder="Words to speak"
@@ -596,7 +597,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
       return (
         <input
           type="text"
-          className="editor-formula-input editor-formula-input--arg"
+          className={formulaArgInputClass()}
           value={action.send_keys.keys}
           onChange={(e) => onChange({ send_keys: { keys: e.target.value } })}
           placeholder="ctrl+shift+p"
@@ -609,7 +610,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
         <div className="editor-formula-arg-wrap editor-formula-arg-wrap--stack">
           <input
             type="text"
-            className="editor-formula-input editor-formula-input--arg"
+            className={formulaArgInputClass()}
             value={action.run_script.script}
             onChange={(e) =>
               onChange({ run_script: { ...action.run_script, script: e.target.value } })
@@ -619,7 +620,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
           />
           <input
             type="text"
-            className="editor-formula-input editor-formula-input--arg"
+            className={formulaArgInputClass()}
             value={action.run_script.args.join(", ")}
             onChange={(e) =>
               onChange({
@@ -642,7 +643,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
       return (
         <input
           type="text"
-          className="editor-formula-input editor-formula-input--arg"
+          className={formulaArgInputClass()}
           value={action.sub_prompt.prompt}
           onChange={(e) => onChange({ sub_prompt: { prompt: e.target.value } })}
           placeholder="Follow-up question"
@@ -654,7 +655,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
       return (
         <input
           type="number"
-          className="editor-formula-input editor-formula-input--arg editor-formula-input--narrow"
+          className={formulaArgInputClass({ narrow: true, autoGrow: false })}
           min={0}
           value={action.wait.ms}
           onChange={(e) =>

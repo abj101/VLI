@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { deriveAppSearchMeta, deriveOpenAppDisplayMode } from "./formulaRow.logic";
+import {
+  deriveAppSearchMeta,
+  deriveOpenAppDisplayMode,
+  formulaArgInputClass,
+} from "./formulaRow.logic";
 
 describe("deriveAppSearchMeta", () => {
   it("shows searching feedback while request is in-flight", () => {
@@ -61,5 +65,17 @@ describe("deriveOpenAppDisplayMode", () => {
       selectedPath: "C:\\Apps\\Discord.exe",
     });
     expect(mode).toBe("edit");
+  });
+});
+
+describe("formulaArgInputClass", () => {
+  it("includes autogrow class for regular text boxes", () => {
+    expect(formulaArgInputClass()).toContain("editor-formula-input--autogrow");
+  });
+
+  it("keeps narrow class without autogrow for numeric narrow inputs", () => {
+    const klass = formulaArgInputClass({ narrow: true, autoGrow: false });
+    expect(klass).toContain("editor-formula-input--narrow");
+    expect(klass).not.toContain("editor-formula-input--autogrow");
   });
 });

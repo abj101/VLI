@@ -75,3 +75,19 @@ export function deriveOpenAppDisplayMode(input: DeriveOpenAppDisplayModeInput): 
   }
   return "confirmed";
 }
+
+type FormulaArgInputClassOptions = {
+  narrow?: boolean;
+  autoGrow?: boolean;
+};
+
+export function formulaArgInputClass(options: FormulaArgInputClassOptions = {}): string {
+  const classes = ["editor-formula-input", "editor-formula-input--arg"];
+  if (options.narrow) {
+    classes.push("editor-formula-input--narrow");
+  }
+  if (options.autoGrow ?? true) {
+    classes.push("editor-formula-input--autogrow");
+  }
+  return classes.join(" ");
+}
