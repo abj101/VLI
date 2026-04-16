@@ -54,8 +54,6 @@ type AppIndexStore = Arc<RwLock<Vec<apps::AppEntry>>>;
 #[derive(Default)]
 struct AppIndexScanning(AtomicBool);
 
-const APP_INDEX_CACHE_MAX_AGE_SECS: u64 = 24 * 60 * 60;
-
 fn now_unix_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -66,12 +64,6 @@ fn now_unix_secs() -> i64 {
 fn refresh_app_index_on_startup(app: &AppHandle, store: &AppIndexStore) -> Result<(), String> {
     let conn = open_db_connection(app)?;
     let entries = db::load_app_index(&conn).map_err(|e| e.to_string())?;
-    let last = db::get_app_index_last_scan_unix(&conn).map_err(|e| e.to_string())?;
-    let now = now_unix_secs();
-    let stale = match last {
-        None => true,
-        Some(t) => now.saturating_sub(t) > APP_INDEX_CACHE_MAX_AGE_SECS as i64,
-    };
     {
         let mut g = store
             .write()
@@ -82,13 +74,14 @@ fn refresh_app_index_on_startup(app: &AppHandle, store: &AppIndexStore) -> Resul
         .read()
         .map_err(|_| "app index lock poisoned".to_string())?
         .len();
+    // Always kick a background rescan on launch. A non-stale DB with count>0
+    // used to skip the scan entirely, so users saw an old/empty index until
+    // they hit "Rescan now" after a scanner fix.
     let _ = app.emit(
         APP_INDEX_READY_EVENT,
-        serde_json::json!({ "count": count, "scanning": stale || count == 0 }),
+        serde_json::json!({ "count": count, "scanning": true }),
     );
-    if stale || count == 0 {
-        spawn_app_index_scan(app.clone(), Arc::clone(store));
-    }
+    spawn_app_index_scan(app.clone(), Arc::clone(store));
     Ok(())
 }
 

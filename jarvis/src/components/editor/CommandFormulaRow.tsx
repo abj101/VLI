@@ -6,6 +6,7 @@ import { useEditorStore } from "../../store/editorStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { ACTION_KIND_OPTIONS, getActionKind } from "./actionCatalog";
 import {
+  appExeDisplayLabel,
   deriveAppSearchMeta,
   deriveOpenAppDisplayMode,
   formulaArgInputClass,
@@ -395,6 +396,8 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
 
   const [appQuery, setAppQuery] = useState(() => ("open_app" in action ? action.open_app.name : ""));
   const [appHits, setAppHits] = useState<AppIndexEntry[]>([]);
+  /** Lazy-loaded icons for current dropdown rows (`null` = fetched, no icon). */
+  const [appHitIcons, setAppHitIcons] = useState<Record<string, string | null>>({});
   const [appOpen, setAppOpen] = useState(false);
   const [appHasSearched, setAppHasSearched] = useState(false);
   const [appEditing, setAppEditing] = useState(
@@ -403,8 +406,60 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   const [selectedAppIcon, setSelectedAppIcon] = useState<string | null>(null);
   const appTimer = useRef<number | null>(null);
 
+  useEffect(() => {
+    if (!appOpen) {
+      setAppHitIcons({});
+      return;
+    }
+    if (!appHits.length) return;
+
+    let cancelled = false;
+    const targets = appHits.filter((h) => {
+      if (h.icon_data_url) return false;
+      const p = h.exe_path.trim();
+      if (!p) return false;
+      const low = p.toLowerCase();
+      if (low.startsWith("shell:")) return false;
+      if (p.includes("://")) return false;
+      return true;
+    });
+
+    const run = async () => {
+      const CONCURRENCY = 4;
+      for (let i = 0; i < targets.length && !cancelled; i += CONCURRENCY) {
+        const slice = targets.slice(i, i + CONCURRENCY);
+        await Promise.all(
+          slice.map(async (h) => {
+            if (cancelled) return;
+            try {
+              const icon = await invoke<string | null>("get_app_icon", {
+                payload: { path: h.exe_path },
+              });
+              if (!cancelled) {
+                setAppHitIcons((prev) => {
+                  if (Object.prototype.hasOwnProperty.call(prev, h.exe_path)) return prev;
+                  return { ...prev, [h.exe_path]: icon };
+                });
+              }
+            } catch {
+              if (!cancelled) {
+                setAppHitIcons((prev) => {
+                  if (Object.prototype.hasOwnProperty.call(prev, h.exe_path)) return prev;
+                  return { ...prev, [h.exe_path]: null };
+                });
+              }
+            }
+          }),
+        );
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [appOpen, appHits]);
+
   /* Local pickers mirror `action` / `kind` from the parent when the node reloads or the segment kind changes. */
-  /* eslint-disable react-hooks/set-state-in-effect -- intentional props → local state sync */
   useEffect(() => {
     if ("open_app" in action) {
       setAppQuery(action.open_app.name);
@@ -420,7 +475,6 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   useEffect(() => {
     setKindQuery(ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind);
   }, [kind]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Lazy icon fetch for already-saved open_app actions (scanner no longer
   // ships icons inline, so they need to be pulled on first render).
@@ -569,23 +623,27 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
                   {appSearchMeta.statusText}
                 </li>
               )}
-              {appHits.map((h) => (
+              {appHits.map((h) => {
+                const rowIcon = h.icon_data_url ?? appHitIcons[h.exe_path] ?? undefined;
+                const fileLabel = appExeDisplayLabel(h.exe_path);
+                return (
                 <li key={h.exe_path} role="none">
                   <button
                     type="button"
                     role="option"
-                    className="editor-formula-suggest-btn editor-formula-suggest-btn--icon-only"
-                    title={h.display_name}
+                    className="editor-formula-suggest-btn"
+                    title={`${h.display_name}\n${h.exe_path}`}
                     aria-label={`${h.display_name}, ${h.exe_path}`}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
                       onChange({ open_app: { name: h.display_name, path: h.exe_path } });
                       setAppQuery(h.display_name);
                       setAppHasSearched(false);
-                      setSelectedAppIcon(h.icon_data_url ?? null);
+                      const picked = h.icon_data_url ?? appHitIcons[h.exe_path] ?? null;
+                      setSelectedAppIcon(picked);
                       setAppEditing(false);
                       setAppOpen(false);
-                      if (!h.icon_data_url && h.exe_path) {
+                      if (!picked && h.exe_path) {
                         void invoke<string | null>("get_app_icon", {
                           payload: { path: h.exe_path },
                         })
@@ -594,17 +652,22 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
                       }
                     }}
                   >
-                    <span className="editor-formula-suggest-app editor-formula-suggest-app--icon-only">
+                    <span className="editor-formula-suggest-app">
                       <AppIconImg
-                        key={`${h.exe_path}:${h.icon_data_url ?? ""}`}
-                        iconUrl={h.icon_data_url}
+                        key={`${h.exe_path}:${rowIcon ?? ""}`}
+                        iconUrl={rowIcon}
                         label={h.display_name}
                         className="editor-formula-suggest-icon"
                       />
+                      <span className="editor-formula-suggest-text">
+                        <span className="editor-formula-suggest-title">{h.display_name}</span>
+                        <span className="editor-formula-suggest-sub">{fileLabel}</span>
+                      </span>
                     </span>
                   </button>
                 </li>
-              ))}
+              );
+              })}
             </ul>
           )}
         </div>

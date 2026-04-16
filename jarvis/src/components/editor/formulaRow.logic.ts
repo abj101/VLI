@@ -96,6 +96,34 @@ type FormulaArgInputClassOptions = {
   autoGrow?: boolean;
 };
 
+/** Second line in the app picker: `.exe` file name, or a short tail for shell / protocol targets. */
+export function appExeDisplayLabel(exePath: string): string {
+  const p = exePath.trim();
+  if (!p) return "";
+  const lower = p.toLowerCase();
+  if (lower.startsWith("shell:")) {
+    const bs = p.lastIndexOf("\\");
+    const fs = p.lastIndexOf("/");
+    const i = Math.max(bs, fs);
+    if (i >= 0 && i + 1 < p.length) {
+      return p.slice(i + 1);
+    }
+    return p;
+  }
+  if (p.includes("://")) {
+    const ix = p.indexOf("://");
+    if (ix >= 0) {
+      const rest = p.slice(ix + 3).replace(/\\/g, "/");
+      const compact = rest.split("/").filter((s) => s.length > 0).join("/");
+      if (compact.length > 0) return compact;
+    }
+    return p;
+  }
+  const norm = p.replace(/\\/g, "/");
+  const seg = norm.split("/").pop();
+  return seg && seg.length > 0 ? seg : p;
+}
+
 export function formulaArgInputClass(options: FormulaArgInputClassOptions = {}): string {
   const classes = ["editor-formula-input", "editor-formula-input--arg"];
   if (options.narrow) {

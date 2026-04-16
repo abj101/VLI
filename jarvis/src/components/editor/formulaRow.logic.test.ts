@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  appExeDisplayLabel,
   deriveAppSearchMeta,
   deriveOpenAppDisplayMode,
   formulaArgInputClass,
@@ -102,6 +103,22 @@ describe("deriveOpenAppDisplayMode", () => {
       selectedPath: "C:\\Apps\\Discord.exe",
     });
     expect(mode).toBe("edit");
+  });
+});
+
+describe("appExeDisplayLabel", () => {
+  it("returns the file name for a Windows path", () => {
+    expect(appExeDisplayLabel(String.raw`C:\Apps\Discord\Discord.exe`)).toBe("Discord.exe");
+  });
+
+  it("returns the last segment for shell app targets", () => {
+    expect(
+      appExeDisplayLabel(String.raw`shell:AppsFolder\com.squirrel.Discord.Discord`),
+    ).toBe("com.squirrel.Discord.Discord");
+  });
+
+  it("returns host-style path after the protocol for steam://", () => {
+    expect(appExeDisplayLabel("steam://rungameid/730")).toBe("rungameid/730");
   });
 });
 

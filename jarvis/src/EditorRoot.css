@@ -1468,6 +1468,15 @@ html[data-theme="light"] {
   padding-right: 8px;
 }
 
+.editor-formula-suggest-btn--icon-only {
+  justify-content: center;
+  padding: 6px 8px;
+}
+
+.editor-formula-suggest-app--icon-only {
+  justify-content: center;
+}
+
 .editor-formula-input--narrow {
   min-width: 72px;
   max-width: 100px;
@@ -1550,7 +1559,7 @@ html[data-theme="light"] {
   left: 0;
   right: 0;
   z-index: 30;
-  max-height: 220px;
+  max-height: 280px;
   overflow: auto;
   border-radius: 8px;
   border: 1px solid var(--editor-glass-border);
@@ -1611,66 +1620,13 @@ html[data-theme="light"] {
   min-width: 0;
 }
 
-/* Open App hits: compact icon row; hover / focus expands to show name (after .editor-formula-suggest-app so gap/width win). */
-.editor-formula-suggest-li--icon {
+.editor-formula-suggest-text {
   display: flex;
-  justify-content: center;
-}
-
-.editor-formula-suggest-btn.editor-formula-suggest-btn--icon-only {
-  justify-content: flex-start;
-  width: auto;
-  max-width: calc(100% - 4px);
-  margin-inline: auto;
-  padding: 9px 12px;
-  gap: 0;
-  transition:
-    background-color 200ms cubic-bezier(0.25, 1, 0.5, 1),
-    box-shadow 200ms cubic-bezier(0.25, 1, 0.5, 1);
-}
-
-.editor-formula-suggest-app.editor-formula-suggest-app--icon-only {
-  justify-content: flex-start;
-  gap: 0;
+  flex-direction: column;
+  align-items: flex-start;
   min-width: 0;
-  transition: gap 240ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.editor-formula-suggest-btn.editor-formula-suggest-btn--icon-only:hover
-  .editor-formula-suggest-app.editor-formula-suggest-app--icon-only,
-.editor-formula-suggest-btn.editor-formula-suggest-btn--icon-only:focus-visible
-  .editor-formula-suggest-app.editor-formula-suggest-app--icon-only {
-  gap: 10px;
-}
-
-.editor-formula-suggest-hover-label {
-  display: block;
-  max-width: 0;
-  opacity: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 18px;
-  color: var(--editor-text);
-  transition:
-    max-width 260ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 200ms cubic-bezier(0.25, 1, 0.5, 1);
-}
-
-.editor-formula-suggest-btn.editor-formula-suggest-btn--icon-only:hover .editor-formula-suggest-hover-label,
-.editor-formula-suggest-btn.editor-formula-suggest-btn--icon-only:focus-visible
-  .editor-formula-suggest-hover-label {
-  max-width: min(16rem, 70vw);
-  opacity: 1;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .editor-formula-suggest-btn.editor-formula-suggest-btn--icon-only,
-  .editor-formula-suggest-app.editor-formula-suggest-app--icon-only,
-  .editor-formula-suggest-hover-label {
-    transition-duration: 0.01ms;
-  }
+  flex: 1;
+  text-align: left;
 }
 
 .editor-formula-suggest-icon {
