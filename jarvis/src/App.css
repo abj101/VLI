@@ -17,6 +17,7 @@ body,
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   --hud-shell-radius: 14px;
+  /* Legacy: optional tint behind full view; keep transparent so backdrop-filter sees the OS. */
   --hud-window-bg: oklch(0.14 0.012 268);
   --app-scrollbar-thumb: rgb(143 156 176 / 45%);
   --app-scrollbar-thumb-hover: rgb(143 156 176 / 58%);
@@ -26,9 +27,8 @@ body,
 html {
   border-radius: var(--hud-shell-radius);
   overflow: hidden;
-  /* Keep host corners opaque so Win32 frame does not leak as square pixels. */
-  background: var(--hud-window-bg);
-  box-shadow: inset 0 0 0 1px var(--hud-window-bg);
+  /* Transparent: HUD webview is `transparent: true` — opaque html makes backdrop-filter blur solid color, not the desktop. */
+  background: transparent;
 }
 
 body {
@@ -38,8 +38,7 @@ body {
 #root {
   border-radius: inherit;
   overflow: hidden;
-  background: var(--hud-window-bg);
-  box-shadow: inset 0 0 0 1px var(--hud-window-bg);
+  background: transparent;
 }
 
 * {
@@ -84,8 +83,11 @@ body {
  *      top-leading edge without a second border radius (avoids clashing with
  *      the Win32/DWM window curve).
  *   2. Vertical veil — slightly denser frost at the top; ties to --*-glass-veil.
- *   3. Base tint — color-mix(surface, --*-glass-fill-ratio); high ratio keeps
- *      the panel readable over busy wallpapers.
+ *   3. Base tint — color-mix(surface, --*-glass-fill-ratio); lower ratio =
+ *      more see-through (desktop shows via backdrop-filter). Too low hurts
+ *      contrast — tune with blur/saturate. Ancestors above the glass must be
+ *      transparent or backdrop only blurs solid fills (HUD: keep html/#root
+ *      transparent; DWM rounds the window).
  *   4. backdrop-filter — blur + saturate + brightness; blur/saturation sell
  *      the glass; brightness lifts dark tints slightly.
  *   5. box-shadow — ambient + contact (comma-separated), then inset top lip,
@@ -124,11 +126,11 @@ body {
   --hud-tag-text: oklch(0.86 0.04 250);
   --hud-match-text: oklch(0.82 0.05 248);
   /* Frosted glass — keep in sync with --editor-glass-* in EditorRoot.css */
-  --hud-glass-fill-ratio: 93%;
-  --hud-glass-veil: 20%;
-  --hud-glass-blur: 50px;
-  --hud-glass-saturate: 1.28;
-  --hud-glass-brightness: 1.03;
+  --hud-glass-fill-ratio: 72%;
+  --hud-glass-veil: 16%;
+  --hud-glass-blur: 56px;
+  --hud-glass-saturate: 1.32;
+  --hud-glass-brightness: 1.04;
   --hud-glass-shadow:
     0 10px 36px oklch(0.04 0.03 268 / 0.42),
     0 2px 10px oklch(0.04 0.03 268 / 0.24);
@@ -138,10 +140,6 @@ body {
 }
 
 @media (prefers-color-scheme: light) {
-  :root {
-    --hud-window-bg: oklch(0.985 0.006 268);
-  }
-
   .hud-panel-fill {
     color-scheme: light;
 
@@ -161,11 +159,11 @@ body {
     --hud-tag-border: oklch(0.45 0.07 250 / 0.28);
     --hud-tag-text: oklch(0.32 0.06 255);
     --hud-match-text: oklch(0.4 0.08 255);
-    --hud-glass-fill-ratio: 96%;
-    --hud-glass-veil: 14%;
-    --hud-glass-blur: 54px;
-    --hud-glass-saturate: 1.22;
-    --hud-glass-brightness: 1.01;
+    --hud-glass-fill-ratio: 82%;
+    --hud-glass-veil: 12%;
+    --hud-glass-blur: 58px;
+    --hud-glass-saturate: 1.24;
+    --hud-glass-brightness: 1.02;
     --hud-glass-shadow:
       0 10px 34px oklch(0.32 0.035 268 / 0.12),
       0 2px 10px oklch(0.32 0.035 268 / 0.06);

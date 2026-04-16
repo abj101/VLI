@@ -92,11 +92,11 @@ html[data-theme="dark"] {
    */
   --editor-glass-surface: oklch(0.14 0.012 268);
   --editor-glass-border: oklch(0.96 0.01 268 / 0.12);
-  --editor-glass-fill-ratio: 93%;
-  --editor-glass-veil: 20%;
-  --editor-glass-blur: 50px;
-  --editor-glass-saturate: 1.28;
-  --editor-glass-brightness: 1.03;
+  --editor-glass-fill-ratio: 72%;
+  --editor-glass-veil: 16%;
+  --editor-glass-blur: 56px;
+  --editor-glass-saturate: 1.32;
+  --editor-glass-brightness: 1.04;
   /* Modest spread: large blur reads as a square halo on transparent Win32 hosts. */
   --editor-glass-shadow:
     0 10px 36px oklch(0.04 0.03 268 / 0.42),
@@ -158,11 +158,11 @@ html[data-theme="light"] {
   --editor-backdrop: rgb(15 23 42 / 25%);
   --editor-glass-surface: oklch(0.985 0.006 268);
   --editor-glass-border: oklch(0.35 0.04 268 / 0.14);
-  --editor-glass-fill-ratio: 96%;
-  --editor-glass-veil: 14%;
-  --editor-glass-blur: 54px;
-  --editor-glass-saturate: 1.22;
-  --editor-glass-brightness: 1.01;
+  --editor-glass-fill-ratio: 82%;
+  --editor-glass-veil: 12%;
+  --editor-glass-blur: 58px;
+  --editor-glass-saturate: 1.24;
+  --editor-glass-brightness: 1.02;
   --editor-glass-shadow:
     0 10px 34px oklch(0.32 0.035 268 / 0.12),
     0 2px 10px oklch(0.32 0.035 268 / 0.06);
@@ -710,7 +710,7 @@ html[data-theme="light"] {
       color-mix(in oklch, var(--editor-glass-surface) calc(var(--editor-glass-veil) + 4%), transparent) 0%,
       transparent 40%
     ),
-    color-mix(in oklch, var(--editor-glass-surface) 94%, transparent);
+    color-mix(in oklch, var(--editor-glass-surface) 78%, transparent);
   backdrop-filter: blur(28px) saturate(1.2) brightness(var(--editor-glass-brightness));
   -webkit-backdrop-filter: blur(28px) saturate(1.2) brightness(var(--editor-glass-brightness));
   box-shadow: var(--editor-glass-shadow), var(--editor-glass-inset), inset 0 0 0 1px var(--editor-glass-hairline);
@@ -1570,7 +1570,7 @@ html[data-theme="light"] {
       color-mix(in oklch, var(--editor-glass-surface) calc(var(--editor-glass-veil) + 4%), transparent) 0%,
       transparent 40%
     ),
-    color-mix(in oklch, var(--editor-glass-surface) 94%, transparent);
+    color-mix(in oklch, var(--editor-glass-surface) 78%, transparent);
   backdrop-filter: blur(24px) saturate(1.15) brightness(var(--editor-glass-brightness));
   -webkit-backdrop-filter: blur(24px) saturate(1.15) brightness(var(--editor-glass-brightness));
   box-shadow: var(--editor-glass-shadow), inset 0 0 0 1px var(--editor-glass-hairline);
