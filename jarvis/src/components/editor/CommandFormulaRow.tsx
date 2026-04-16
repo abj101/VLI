@@ -691,8 +691,21 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     return null;
   };
 
+  const openAppIconMode =
+    "open_app" in action &&
+    deriveOpenAppDisplayMode({
+      isEditing: appEditing,
+      selectedPath: action.open_app.path,
+    }) === "confirmed";
+
   return (
-    <div className="editor-formula-segment">
+    <div
+      className={
+        openAppIconMode
+          ? "editor-formula-segment editor-formula-segment--icon-arg"
+          : "editor-formula-segment"
+      }
+    >
       <div className="editor-formula-kind-wrap">
         <input
           type="text"
@@ -738,17 +751,19 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
           </ul>
         )}
       </div>
-      <div className="editor-formula-arg-slot">{renderArg()}</div>
-      {canRemove && (
-        <button
-          type="button"
-          className="editor-formula-remove-inline"
-          onClick={onRemove}
-          aria-label={`Remove step ${index + 1}`}
-        >
-          ×
-        </button>
-      )}
+      <div className="editor-formula-arg-slot">
+        {renderArg()}
+        {canRemove && (
+          <button
+            type="button"
+            className="editor-formula-remove-inline"
+            onClick={onRemove}
+            aria-label={`Remove step ${index + 1}`}
+          >
+            ×
+          </button>
+        )}
+      </div>
     </div>
   );
 }

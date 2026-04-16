@@ -1464,13 +1464,16 @@ html[data-theme="light"] {
   justify-content: center;
   gap: 0;
   min-width: 36px;
-  padding-left: 8px;
-  padding-right: 8px;
+  padding: 8px 10px;
+}
+
+.editor-formula-segment--icon-arg .editor-formula-confirmed-chip {
+  padding: 10px 14px 10px 12px;
 }
 
 .editor-formula-suggest-btn--icon-only {
   justify-content: center;
-  padding: 6px 8px;
+  padding: 8px 10px;
 }
 
 .editor-formula-suggest-app--icon-only {
@@ -1548,6 +1551,11 @@ html[data-theme="light"] {
   align-items: flex-start;
   min-width: 0;
   position: relative;
+}
+
+.editor-formula-segment--icon-arg .editor-formula-arg-slot {
+  padding-top: 4px;
+  padding-right: 4px;
 }
 
 .editor-formula-suggest {
@@ -1673,11 +1681,11 @@ html[data-theme="light"] {
 
 .editor-formula-remove-inline {
   position: absolute;
-  top: 50%;
-  right: 8px;
-  transform: translateY(-50%);
-  width: 18px;
-  height: 18px;
+  top: 5px;
+  right: 6px;
+  z-index: 2;
+  width: 20px;
+  height: 20px;
   border: none;
   background: transparent;
   color: var(--editor-muted);
@@ -1690,6 +1698,11 @@ html[data-theme="light"] {
   visibility: hidden;
   pointer-events: none;
   transition: opacity 120ms ease;
+}
+
+.editor-formula-segment--icon-arg .editor-formula-remove-inline {
+  top: 3px;
+  right: 4px;
 }
 
 .editor-formula-remove-inline:hover {
