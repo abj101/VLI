@@ -5,6 +5,7 @@ use crate::{
 };
 use log::debug;
 use serde::Serialize;
+use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -66,13 +67,28 @@ impl<'a> TauriActionRuntime<'a> {
 impl ActionRuntime for TauriActionRuntime<'_> {
     fn open_app(&self, path: &str) -> Result<(), String> {
         debug!("executor: open_app path={path:?}");
-        let status = Command::new("cmd")
-            .arg("/C")
-            .arg("start")
-            .arg("")
-            .arg(path)
-            .status()
-            .map_err(|e| format!("failed to launch app `{path}`: {e}"))?;
+        let trimmed = path.trim();
+        let status = if trimmed
+            .to_ascii_lowercase()
+            .starts_with("shell:appsfolder\\")
+        {
+            let windir = std::env::var("WINDIR")
+                .or_else(|_| std::env::var("SystemRoot"))
+                .unwrap_or_else(|_| "C:\\Windows".to_string());
+            let explorer = Path::new(&windir).join("explorer.exe");
+            Command::new(explorer)
+                .arg(trimmed)
+                .status()
+                .map_err(|e| format!("failed to launch app `{path}`: {e}"))?
+        } else {
+            Command::new("cmd")
+                .arg("/C")
+                .arg("start")
+                .arg("")
+                .arg(trimmed)
+                .status()
+                .map_err(|e| format!("failed to launch app `{path}`: {e}"))?
+        };
         if status.success() {
             Ok(())
         } else {
@@ -332,7 +348,15 @@ fn validate_open_app_path(path: &str) -> Result<(), String> {
     if trimmed.is_empty() {
         return Err("OpenApp path cannot be empty".to_string());
     }
-    if trimmed.chars().any(is_shell_metachar) {
+    let uwp_shell = trimmed
+        .to_ascii_lowercase()
+        .starts_with("shell:appsfolder\\");
+    if trimmed.chars().any(|c| {
+        if uwp_shell && c == '!' {
+            return false;
+        }
+        is_shell_metachar(c)
+    }) {
         return Err(format!(
             "OpenApp path contains forbidden shell metacharacters: `{trimmed}`"
         ));
@@ -668,6 +692,12 @@ mod tests {
         execute_command(&node, &runtime, Some(&[]));
         let s = runtime.snapshot();
         assert_eq!(s.app_calls, vec!["notepad".to_string()]);
+    }
+
+    #[test]
+    fn validate_open_app_path_allows_shell_apps_folder_with_bang() {
+        let p = "shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App";
+        validate_open_app_path(p).expect("UWP shell path should validate");
     }
 
     #[test]
