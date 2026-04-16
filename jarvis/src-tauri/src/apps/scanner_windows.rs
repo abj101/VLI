@@ -1,4 +1,5 @@
-//! Registry Uninstall + Start Menu `.lnk` + flat / limited-depth `*.exe` inventory under System32 / SysWOW64 / WinDir + Program Files,
+//! Registry Uninstall + Start Menu / Desktop / pinned `.lnk` + `.url` (Steam, Epic, Battle.net, etc.),
+//! flat / limited-depth `*.exe` inventory under System32 / SysWOW64 / WinDir + Program Files,
 //! plus Steam / Epic / GOG library roots and Start Apps (UWP / packaged) aliases (Windows).
 
 use super::AppEntry;
@@ -8,7 +9,6 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use windows::core::{Interface, PCWSTR};
-use windows::Win32::Foundation::MAX_PATH;
 use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
@@ -30,6 +30,26 @@ const NAME_RANK_SEED: u8 = 52;
 const NAME_RANK_STEAM_FOLDER: u8 = 45;
 const NAME_RANK_RECURSIVE_PF: u8 = 30;
 const NAME_RANK_FLAT_EXE: u8 = 20;
+
+/// `IShellLinkW` path / argument buffers (game shortcuts often exceed `MAX_PATH`).
+const SHELL_LINK_WCHAR_CAP: usize = 8192;
+
+const GAME_PROTOCOL_PREFIXES: &[&str] = &[
+    "steam://",
+    "com.epicgames.launcher://",
+    "battlenet://",
+    "blizzard://",
+    "uplay://",
+    "ubisoft://",
+    "ubisoftconnect://",
+    "goggalaxy://",
+    "gog://",
+    "rockstar://",
+    "origin://",
+    "eadesktop://",
+    "msxbox://",
+    "xbox://",
+];
 
 #[derive(Debug, Clone)]
 pub(crate) struct IndexedEntry {
@@ -643,6 +663,113 @@ fn install_dir_fallback_exe_score(stem_lower: &str) -> usize {
     tier.saturating_sub(len)
 }
 
+fn wide_nul_trim(buf: &[u16]) -> String {
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    String::from_utf16_lossy(&buf[..len]).trim().to_string()
+}
+
+fn is_steam_client_exe_path(target: &str) -> bool {
+    Path::new(target)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|n| n.eq_ignore_ascii_case("steam.exe"))
+        .unwrap_or(false)
+}
+
+fn parse_steam_applaunch_id(args: &str) -> Option<u32> {
+    let lower = args.to_ascii_lowercase();
+    for key in ["-applaunch", "/applaunch"] {
+        let Some(idx) = lower.find(key) else {
+            continue;
+        };
+        let rest = args[idx + key.len()..].trim_start();
+        let mut digits = String::new();
+        for c in rest.chars() {
+            if c.is_ascii_digit() {
+                digits.push(c);
+            } else if !digits.is_empty() {
+                break;
+            }
+        }
+        if let Ok(id) = digits.parse::<u32>() {
+            return Some(id);
+        }
+    }
+    None
+}
+
+fn extract_game_protocol_url(target: &str, args: &str) -> Option<String> {
+    for hay in [args, target] {
+        if hay.is_empty() {
+            continue;
+        }
+        let lower = hay.to_ascii_lowercase();
+        for pref in GAME_PROTOCOL_PREFIXES {
+            let Some(idx) = lower.find(pref) else {
+                continue;
+            };
+            let slice = &hay[idx..];
+            let end = slice
+                .find(|c: char| {
+                    c.is_whitespace() || matches!(c, '"' | '\'' | '`' | ')' | '>' | '<')
+                })
+                .unwrap_or(slice.len());
+            let url = slice[..end].trim_end_matches(|c| c == '"' || c == '\'');
+            if !url.is_empty() {
+                return Some(url.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Resolves a shell shortcut to something `cmd /c start` can launch (`*.exe`, `steam://…`, etc.).
+/// Returns `(launch_spec, optional_icon_exe_path)`.
+fn shortcut_launch_spec(target: &str, args: &str) -> Option<(String, Option<String>)> {
+    let target_t = target.trim();
+    let args_t = args.trim();
+    if let Some(url) = extract_game_protocol_url(target_t, args_t) {
+        let icon = if is_steam_client_exe_path(target_t) {
+            Some(target_t.to_string())
+        } else {
+            None
+        };
+        return Some((url, icon));
+    }
+    if let Some(id) = parse_steam_applaunch_id(args_t) {
+        if is_steam_client_exe_path(target_t) {
+            return Some((
+                format!("steam://rungameid/{id}"),
+                Some(target_t.to_string()),
+            ));
+        }
+    }
+    let p = Path::new(target_t);
+    if p.is_file() {
+        return Some((target_t.to_string(), Some(target_t.to_string())));
+    }
+    None
+}
+
+fn parse_internet_shortcut_url(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    for raw in text.lines() {
+        let line = raw.trim();
+        let rest = if let Some(r) = line.strip_prefix("URL=") {
+            r
+        } else if let Some(r) = line.strip_prefix("url=") {
+            r
+        } else {
+            continue;
+        };
+        let u = rest.trim();
+        if let Some(url) = extract_game_protocol_url("", u) {
+            return Some(url);
+        }
+    }
+    None
+}
+
 fn scan_start_menu(map: &mut HashMap<String, IndexedEntry>) -> Result<(), String> {
     let shell_link: IShellLinkW =
         unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }
@@ -654,7 +781,11 @@ fn scan_start_menu(map: &mut HashMap<String, IndexedEntry>) -> Result<(), String
         roots.push(PathBuf::from(pd).join(r"Microsoft\Windows\Start Menu\Programs"));
     }
     if let Ok(ad) = std::env::var("APPDATA") {
-        roots.push(PathBuf::from(ad).join(r"Microsoft\Windows\Start Menu\Programs"));
+        roots.push(PathBuf::from(&ad).join(r"Microsoft\Windows\Start Menu\Programs"));
+        roots.push(
+            PathBuf::from(&ad)
+                .join(r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"),
+        );
     }
     if let Ok(la) = std::env::var("LOCALAPPDATA") {
         roots.push(PathBuf::from(la).join(r"Microsoft\Windows\Start Menu\Programs"));
@@ -663,7 +794,8 @@ fn scan_start_menu(map: &mut HashMap<String, IndexedEntry>) -> Result<(), String
         roots.push(PathBuf::from(public).join("Desktop"));
     }
     if let Ok(profile) = std::env::var("USERPROFILE") {
-        roots.push(PathBuf::from(profile).join("Desktop"));
+        roots.push(PathBuf::from(&profile).join("Desktop"));
+        roots.push(PathBuf::from(&profile).join("Links"));
     }
 
     for root in roots {
@@ -687,8 +819,8 @@ fn visit_dir_lnk(
         if p.is_dir() {
             visit_dir_lnk(&p, shell_link, persist, map)?;
         } else if p.extension().and_then(|x| x.to_str()) == Some("lnk") {
-            if let Some(target) = resolve_lnk(shell_link, persist, &p) {
-                if target.is_empty() || !Path::new(&target).exists() {
+            if let Some((launch, icon_probe)) = resolve_shell_link(shell_link, persist, &p) {
+                if launch.is_empty() {
                     continue;
                 }
                 let label = p
@@ -696,12 +828,29 @@ fn visit_dir_lnk(
                     .and_then(|s| s.to_str())
                     .unwrap_or("App")
                     .to_string();
-                let icon_data_url = extract_icon_data_url(&target);
+                let icon_data_url = icon_probe
+                    .as_deref()
+                    .and_then(|ip| extract_icon_data_url(ip));
                 insert_entry(
                     map,
-                    target,
+                    launch,
                     label,
                     icon_data_url,
+                    NAME_RANK_START_MENU,
+                );
+            }
+        } else if p.extension().and_then(|x| x.to_str()) == Some("url") {
+            if let Some(url) = parse_internet_shortcut_url(&p) {
+                let label = p
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Game")
+                    .to_string();
+                insert_entry(
+                    map,
+                    url,
+                    label,
+                    None,
                     NAME_RANK_START_MENU,
                 );
             }
@@ -710,7 +859,11 @@ fn visit_dir_lnk(
     Ok(())
 }
 
-fn resolve_lnk(shell_link: &IShellLinkW, persist: &IPersistFile, lnk: &Path) -> Option<String> {
+fn resolve_shell_link(
+    shell_link: &IShellLinkW,
+    persist: &IPersistFile,
+    lnk: &Path,
+) -> Option<(String, Option<String>)> {
     let wide: Vec<u16> = lnk
         .as_os_str()
         .encode_wide()
@@ -718,21 +871,21 @@ fn resolve_lnk(shell_link: &IShellLinkW, persist: &IPersistFile, lnk: &Path) -> 
         .collect();
     unsafe {
         persist.Load(PCWSTR(wide.as_ptr()), STGM_READ).ok()?;
-        let mut buf = vec![0u16; MAX_PATH as usize];
-        shell_link
-            .GetPath(
-                &mut buf,
-                std::ptr::null_mut::<WIN32_FIND_DATAW>(),
-                SLGP_RAWPATH.0 as u32,
-            )
-            .ok()?;
-        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-        let s = String::from_utf16_lossy(&buf[..len]);
-        let t = s.trim();
-        if t.is_empty() {
-            return None;
-        }
-        Some(t.to_string())
+        let mut path_buf = vec![0u16; SHELL_LINK_WCHAR_CAP];
+        let target = match shell_link.GetPath(
+            &mut path_buf,
+            std::ptr::null_mut::<WIN32_FIND_DATAW>(),
+            SLGP_RAWPATH.0 as u32,
+        ) {
+            Ok(()) => wide_nul_trim(&path_buf),
+            Err(_) => String::new(),
+        };
+        let mut arg_buf = vec![0u16; SHELL_LINK_WCHAR_CAP];
+        let args = match shell_link.GetArguments(&mut arg_buf) {
+            Ok(()) => wide_nul_trim(&arg_buf),
+            Err(_) => String::new(),
+        };
+        shortcut_launch_spec(&target, &args)
     }
 }
 
@@ -1195,6 +1348,40 @@ mod tests {
         assert_eq!(display_name_from_app_paths_key("firefox.exe"), "Firefox");
         assert_eq!(display_name_from_app_paths_key("WINWORD.EXE"), "WINWORD");
         assert_eq!(display_name_from_app_paths_key("code.exe"), "Code");
+    }
+
+    #[test]
+    fn shortcut_launch_spec_steam_exe_applaunch_becomes_rungameid() {
+        let (launch, icon) = shortcut_launch_spec(
+            r"C:\Steam\steam.exe",
+            "-silent -applaunch 440",
+        )
+        .expect("steam shortcut");
+        assert_eq!(launch, "steam://rungameid/440");
+        assert_eq!(icon.as_deref(), Some(r"C:\Steam\steam.exe"));
+    }
+
+    #[test]
+    fn shortcut_launch_spec_prefers_protocol_in_arguments() {
+        let (launch, _) = shortcut_launch_spec(
+            r"C:\Epic\EpicGamesLauncher.exe",
+            r"com.epicgames.launcher://apps/abc?action=launch",
+        )
+        .expect("epic protocol");
+        assert!(launch.to_ascii_lowercase().starts_with("com.epicgames.launcher://"));
+    }
+
+    #[test]
+    fn parse_internet_shortcut_url_reads_steam_url_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("Game.url");
+        std::fs::write(
+            &p,
+            "[InternetShortcut]\nURL=steam://rungameid/123\n",
+        )
+        .unwrap();
+        let u = parse_internet_shortcut_url(&p).expect("url");
+        assert_eq!(u, "steam://rungameid/123");
     }
 
     #[test]
