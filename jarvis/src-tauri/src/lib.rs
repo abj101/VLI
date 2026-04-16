@@ -46,6 +46,8 @@ type ActionPayload = db::Action;
 type CommandCache = Arc<RwLock<Vec<db::CommandNode>>>;
 /// Cached installed-app entries for `OpenApp` resolution (path optional).
 type AppIndexStore = Arc<RwLock<Vec<apps::AppEntry>>>;
+/// In-memory icon cache shared between the scanner and the `get_app_icon` command.
+type AppIconCache = Arc<apps::IconCache>;
 
 /// `true` while a background app-index scan is in-flight. The settings panel
 /// reads this via [`get_app_index_status`] to render "Indexing apps…" only
@@ -760,7 +762,16 @@ fn await_follow_up_input(
                         s.pending_follow_up_candidate_at = None;
                     }
                 }
-                let _ = set_phase(app, rt, HudPhase::Done)?;
+                // Same as successful run: `Done` fades UI to empty — must schedule dismiss or HUD
+                // window stays visible (click-through) until manual Escape.
+                if let Ok(done_session_id) = set_phase(app, rt, HudPhase::Done) {
+                    schedule_auto_dismiss(
+                        app.clone(),
+                        Arc::clone(rt),
+                        audio.clone(),
+                        done_session_id,
+                    );
+                }
                 return Err(FOLLOW_UP_TIMEOUT_MSG.to_string());
             }
         }
@@ -1430,19 +1441,31 @@ struct GetAppIconPayload {
     path: String,
 }
 
-/// Lazy icon extraction for a single app — the scanner no longer extracts
-/// icons inline (it was slow enough to stall the "Indexing apps…" UI for
-/// many seconds). Call this from the picker when an app is selected.
+/// Lazy, cached icon extraction for a single app. The extractor is native
+/// (`SHGetFileInfoW` + GDI) so first calls are millisecond-scale, and the
+/// shared `IconCache` collapses repeats (the picker asks for the same icons
+/// on every keystroke) to an in-memory lookup. Call this from the picker
+/// when the dropdown renders or an app is selected.
 #[tauri::command]
-fn get_app_icon(payload: GetAppIconPayload) -> Result<Option<String>, String> {
-    Ok(apps::get_app_icon(&payload.path))
+fn get_app_icon(
+    payload: GetAppIconPayload,
+    cache: State<'_, AppIconCache>,
+) -> Result<Option<String>, String> {
+    Ok(cache.get_or_extract(&payload.path))
 }
 
 /// Trigger a background rescan of installed apps. Emits `app-index-ready`
 /// with `{ count, scanning }` before and after the scan.
 #[tauri::command]
-fn rescan_app_index(app: AppHandle, store: State<'_, AppIndexStore>) -> Result<(), String> {
+fn rescan_app_index(
+    app: AppHandle,
+    store: State<'_, AppIndexStore>,
+    cache: State<'_, AppIconCache>,
+) -> Result<(), String> {
     let st = Arc::clone(store.inner());
+    // Rescans can drop entries that no longer exist. Flush the icon cache so
+    // the next render doesn't reuse a stale base64 blob for a removed path.
+    cache.clear();
     spawn_app_index_scan(app, st);
     Ok(())
 }
@@ -1564,6 +1587,7 @@ pub fn run() {
     let is_paused = Arc::new(AtomicBool::new(false));
     let command_cache: CommandCache = Arc::new(RwLock::new(Vec::new()));
     let app_index_store: AppIndexStore = Arc::new(RwLock::new(Vec::new()));
+    let app_icon_cache: AppIconCache = Arc::new(apps::IconCache::new());
 
     tauri::Builder::default()
         .manage(Arc::clone(&hud_state))
@@ -1571,6 +1595,7 @@ pub fn run() {
         .manage(Arc::clone(&is_paused))
         .manage(command_cache.clone())
         .manage(app_index_store.clone())
+        .manage(app_icon_cache.clone())
         .manage(AppIndexScanning::default())
         .manage(HotkeyBindingState {
             current: Mutex::new(DEFAULT_HOTKEY.to_string()),

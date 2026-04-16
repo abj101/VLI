@@ -25,7 +25,7 @@ pub enum DbError {
     Validation(String),
 }
 
-/// Open or create DB file, apply schema, seed defaults when table empty.
+/// Open or create DB file, apply schema, remove legacy shipped sample rows (no auto-seed).
 pub fn init_db(path: &Path) -> Result<(), DbError> {
     let conn = Connection::open(path)?;
     conn.execute_batch(
@@ -50,7 +50,7 @@ pub fn init_db(path: &Path) -> Result<(), DbError> {
     ensure_sort_order_column(&conn)?;
     app_index::ensure_app_index_schema(&conn)?;
     drop_legacy_ai_command_columns(&conn)?;
-    reconcile_default_commands(&conn)?;
+    purge_legacy_shipped_sample_commands(&conn)?;
     Ok(())
 }
 
@@ -117,131 +117,23 @@ fn drop_legacy_ai_command_columns(conn: &Connection) -> Result<(), DbError> {
     Ok(())
 }
 
-#[derive(Clone)]
-struct DefaultCommandSpec {
-    trigger_key: &'static str,
-    priority: u8,
-    row: NewCommandNode,
-}
-
-fn default_command_specs() -> Vec<DefaultCommandSpec> {
-    vec![
-        DefaultCommandSpec {
-            trigger_key: "open github and notepad",
-            priority: 100,
-            row: NewCommandNode {
-                name: "Open GitHub and Notepad".into(),
-                trigger_phrases: vec!["open github and notepad".into()],
-                actions: vec![
-                    Action::OpenApp {
-                        name: "notepad".into(),
-                        path: "notepad.exe".into(),
-                    },
-                    Action::Wait { ms: 1000 },
-                    Action::OpenUrl {
-                        url: "https://github.com".into(),
-                    },
-                ],
-                enabled: true,
-                fuzzy_threshold_pct: 80,
-            },
-        },
-        DefaultCommandSpec {
-            trigger_key: "open notepad",
-            priority: 10,
-            row: NewCommandNode {
-                name: "Open Notepad".into(),
-                trigger_phrases: vec!["open notepad".into()],
-                actions: vec![Action::OpenApp {
-                    name: "notepad".into(),
-                    path: "notepad.exe".into(),
-                }],
-                enabled: true,
-                fuzzy_threshold_pct: 80,
-            },
-        },
-        DefaultCommandSpec {
-            trigger_key: "open github",
-            priority: 10,
-            row: NewCommandNode {
-                name: "Open GitHub".into(),
-                trigger_phrases: vec!["open github".into()],
-                actions: vec![Action::OpenUrl {
-                    url: "https://github.com".into(),
-                }],
-                enabled: true,
-                fuzzy_threshold_pct: 80,
-            },
-        },
-        DefaultCommandSpec {
-            trigger_key: "subprompt test",
-            priority: 10,
-            row: NewCommandNode {
-                name: "SubPrompt Test".into(),
-                trigger_phrases: vec!["subprompt test".into()],
-                actions: vec![
-                    Action::SubPrompt {
-                        prompt: "What should I search on GitHub?".into(),
-                    },
-                    Action::OpenUrl {
-                        url: "https://github.com/search?q={{follow_up}}".into(),
-                    },
-                ],
-                enabled: true,
-                fuzzy_threshold_pct: 80,
-            },
-        },
+/// Previously shipped demo commands (exact `trigger_phrases` JSON as stored by serde_json).
+fn legacy_shipped_sample_trigger_json() -> [&'static str; 4] {
+    [
+        r#"["open github and notepad"]"#,
+        r#"["open notepad"]"#,
+        r#"["open github"]"#,
+        r#"["subprompt test"]"#,
     ]
 }
 
-fn reconcile_default_commands(conn: &Connection) -> Result<(), DbError> {
-    let specs = default_command_specs();
-    let all = get_all_commands(conn)?;
-    let mut ensured: Vec<(i64, DefaultCommandSpec)> = Vec::new();
-
-    for spec in specs {
-        let existing_id = all.iter().find_map(|node| {
-            node.trigger_phrases
-                .iter()
-                .any(|p| p.eq_ignore_ascii_case(spec.trigger_key))
-                .then_some(node.id)
-        });
-        let id = if let Some(id) = existing_id {
-            let _ = update_command(conn, id, &spec.row)?;
-            id
-        } else {
-            insert_command(conn, &spec.row)?
-        };
-        ensured.push((id, spec));
-    }
-
-    let max_priority = ensured
-        .iter()
-        .map(|(_, spec)| spec.priority)
-        .max()
-        .unwrap_or(0);
-    let refreshed = get_all_commands(conn)?;
-    for (id, spec) in ensured {
-        let Some(current) = refreshed.iter().find(|n| n.id == id) else {
-            continue;
-        };
-        let should_enable = spec.priority == max_priority;
-        if current.enabled == should_enable {
-            continue;
-        }
-        let _ = update_command(
-            conn,
-            id,
-            &NewCommandNode {
-                name: current.name.clone(),
-                trigger_phrases: current.trigger_phrases.clone(),
-                actions: current.actions.clone(),
-                enabled: should_enable,
-                fuzzy_threshold_pct: current.fuzzy_threshold_pct,
-            },
+fn purge_legacy_shipped_sample_commands(conn: &Connection) -> Result<(), DbError> {
+    for tp in legacy_shipped_sample_trigger_json() {
+        conn.execute(
+            "DELETE FROM command_nodes WHERE trigger_phrases = ?1",
+            [tp],
         )?;
     }
-
     Ok(())
 }
 
@@ -356,51 +248,56 @@ mod tests {
     }
 
     #[test]
-    fn seed_runs_once_and_matches_expected_actions() {
+    fn init_db_does_not_seed_commands() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("j.db");
         init_db(&path).unwrap();
         let conn = Connection::open(&path).unwrap();
-        let all = get_all_commands(&conn).unwrap();
-        assert_eq!(all.len(), 4);
-        assert!(all.iter().any(|n| {
-            n.trigger_phrases
-                .contains(&"open github and notepad".to_string())
-                && n.enabled
-                && n.actions.iter().any(|a| {
-                    matches!(
-                        a,
-                        Action::OpenApp { name, path }
-                            if name == "notepad" && path == "notepad.exe"
-                    )
-                })
-                && n.actions
-                    .iter()
-                    .any(|a| matches!(a, Action::Wait { ms } if *ms == 1000))
-        }));
-        assert!(all
-            .iter()
-            .any(|n| { n.trigger_phrases.contains(&"open notepad".to_string()) && !n.enabled }));
-        assert!(all
-            .iter()
-            .any(|n| { n.trigger_phrases.contains(&"open github".to_string()) && !n.enabled }));
-        assert!(all.iter().any(|n| {
-            n.trigger_phrases.contains(&"subprompt test".to_string())
-                && !n.enabled
-                && n.actions
-                    == vec![
-                        Action::SubPrompt {
-                            prompt: "What should I search on GitHub?".into(),
-                        },
-                        Action::OpenUrl {
-                            url: "https://github.com/search?q={{follow_up}}".into(),
-                        },
-                    ]
-        }));
+        assert!(get_all_commands(&conn).unwrap().is_empty());
 
         init_db(&path).unwrap();
         let conn2 = Connection::open(&path).unwrap();
-        assert_eq!(get_all_commands(&conn2).unwrap().len(), 4);
+        assert!(get_all_commands(&conn2).unwrap().is_empty());
+    }
+
+    #[test]
+    fn init_db_removes_legacy_shipped_sample_by_exact_trigger_json() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy-samples.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            r"
+            CREATE TABLE command_nodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                trigger_phrases TEXT NOT NULL,
+                actions TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                fuzzy_threshold_pct INTEGER NOT NULL DEFAULT 80,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            ",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO command_nodes (name, trigger_phrases, actions, enabled, fuzzy_threshold_pct) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                "Shipped sample",
+                r#"["open github"]"#,
+                r#"[{"open_url":{"url":"https://github.com"}}]"#,
+                1,
+                80
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        init_db(&path).unwrap();
+        let after = Connection::open(&path).unwrap();
+        assert!(
+            get_all_commands(&after).unwrap().is_empty(),
+            "legacy shipped sample row should be purged"
+        );
     }
 
     #[test]

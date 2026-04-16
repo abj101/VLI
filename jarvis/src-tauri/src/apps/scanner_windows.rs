@@ -13,18 +13,27 @@
 //!  10. Recursive exe scan — Program Files + LocalAppData\Programs (depth ≤ 6)
 
 use super::AppEntry;
+use base64::Engine;
 use std::collections::HashMap;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use windows::core::{Interface, PCWSTR};
 use windows::Win32::Foundation::{HWND, MAX_PATH};
-use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
+use windows::Win32::Graphics::Gdi::{
+    DeleteObject, GetDC, GetDIBits, GetObjectW, ReleaseDC, BITMAP, BITMAPINFO, BITMAPINFOHEADER,
+    BI_RGB, DIB_RGB_COLORS, HBITMAP, HDC,
+};
+use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_NORMAL, WIN32_FIND_DATAW};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED, STGM_READ,
 };
-use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_RAWPATH};
+use windows::Win32::UI::Shell::{
+    IShellLinkW, SHGetFileInfoW, ShellLink, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON,
+    SHGFI_USEFILEATTRIBUTES, SLGP_RAWPATH,
+};
+use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
 use winreg::enums::*;
 use winreg::types::FromRegValue;
 use winreg::RegKey;
@@ -138,83 +147,6 @@ fn log_scan_stats(stats: &[(&'static str, usize)], total: usize) {
     log::info!("app index scan stats: {}", parts.join(" "));
 }
 
-/// Keep the picker focused on **user-launchable** programs. Squirrel / MSI
-/// folders ship `Update.exe`, `Uninstall.exe`, `*SystemHelper.exe`, etc.
-/// that match substring search ("disc" → "Discovery") and clutter results.
-/// Shell / protocol targets are kept — they are not filesystem `.exe` paths.
-pub(crate) fn should_index_launch_target(exe_path: &str) -> bool {
-    let exe_path = exe_path.trim();
-    if exe_path.is_empty() {
-        return false;
-    }
-    let low = exe_path.to_ascii_lowercase();
-    if low.starts_with("shell:") || exe_path.contains("://") {
-        return true;
-    }
-
-    let p = Path::new(exe_path);
-    if !p
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("exe"))
-        .unwrap_or(false)
-    {
-        return false;
-    }
-
-    let name = p
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let stem = p
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-
-    const EXACT_BLOCK: &[&str] = &[
-        "update.exe",
-        "squirrel.exe",
-        "squirrel.temp.exe",
-        "setup.exe",
-        "install.exe",
-        "installer.exe",
-        "crashpad_handler.exe",
-        "crashhandler.exe",
-        "elevate.exe",
-        "maintenanceservice.exe",
-        "servicehub.host.exe",
-    ];
-    if EXACT_BLOCK.iter().any(|b| *b == name.as_str()) {
-        return false;
-    }
-
-    // Inno / NSIS uninstall stubs
-    if name.starts_with("unins") && name.ends_with(".exe") {
-        return false;
-    }
-
-    // Squirrel / OEM "sidecar" helpers next to the real app
-    if name.contains("systemhelper") {
-        return false;
-    }
-    if name.ends_with("_helper.exe") || name.ends_with("-helper.exe") {
-        return false;
-    }
-
-    // Common redistributable launchers sitting in game install roots
-    if stem.contains("vcredist")
-        || stem.contains("vc_redist")
-        || stem == "dxsetup"
-        || stem.contains("dotnet")
-    {
-        return false;
-    }
-
-    true
-}
-
 // ---------------------------------------------------------------------------
 // insert_entry — merge with priority + icon back-fill
 // ---------------------------------------------------------------------------
@@ -226,9 +158,6 @@ fn insert_entry(
     priority: SourcePriority,
 ) {
     if exe_path.is_empty() {
-        return;
-    }
-    if !should_index_launch_target(&exe_path) {
         return;
     }
     let key = exe_path.to_lowercase();
@@ -550,25 +479,131 @@ fn install_location_guess(display_name: &str, loc: &str) -> Option<String> {
     None
 }
 
+/// `true` when an exe stem looks like a helper/updater/redist binary that
+/// should never surface in the picker. Combines substring, exact, and suffix
+/// matching so Chromium/Electron/Squirrel helpers are filtered without
+/// accidentally blocking legitimate names that happen to contain the word
+/// "helper" (e.g. `MyHelperApp`).
 fn install_dir_skipped_stem(stem: &str) -> bool {
-    const SKIP: &[&str] = &[
+    // Substring matches — catch any variant.
+    const CONTAINS: &[&str] = &[
         "uninstall",
         "unins000",
         "unins001",
         "unins002",
         "setup",
         "install",
-        "update",
-        "updater",
         "maintenanceservice",
         "crashreporter",
+        "crashpad",
+        "crashhandler",
+        "crash_handler",
         "elevate",
         "vc_redist",
-        "dxsetup",
         "vcredist",
+        "dxsetup",
+        "dotnetfx",
+    ];
+    // Exact-match stems. Safer than "contains" for short/common words
+    // (e.g. "update" as a substring would nuke `GameUpdate.exe`).
+    const EXACT: &[&str] = &[
+        "update",
+        "updater",
+        "updaters",
+        "updatehandler",
+        "squirrel",
+        "stub",
+        "chrome_proxy",
+        "chrome_crashpad_handler",
+        "chrome_pwa_launcher",
+        "notification_helper",
+        "notificationhelper",
+        "node",
+        "nodejs",
+        "python",
+        "python3",
+        "pythonw",
+        "ffmpeg",
+        "ffprobe",
+        "ffplay",
+        "perl",
+        "ruby",
+        "msiexec",
+        "regsvr32",
+        "rundll32",
+        "conhost",
+        "dllhost",
+    ];
+    // Suffixes — Chromium/Electron/CEF style helper processes.
+    const ENDINGS: &[&str] = &[
+        "_helper",
+        "-helper",
+        " helper",
+        "_gpu",
+        "-gpu",
+        "_renderer",
+        "-renderer",
+        "_plugin",
+        "-plugin",
+        "_utility",
+        "-utility",
+        "broker",
+        "elevatedinstaller",
+        "_bg",
     ];
     let s = stem.to_lowercase();
-    SKIP.iter().any(|p| s.contains(p))
+    if CONTAINS.iter().any(|p| s.contains(p)) {
+        return true;
+    }
+    if EXACT.iter().any(|p| s == *p) {
+        return true;
+    }
+    if ENDINGS.iter().any(|e| s.ends_with(e)) {
+        return true;
+    }
+    // Generic Electron-style "<App> Helper (GPU).exe" → collapsed stem ends with " (gpu)" etc.
+    if s.contains("helper (") || s.ends_with(" helper") {
+        return true;
+    }
+    false
+}
+
+/// Directory names we should never descend into for the shallow exe-scan
+/// pass: locale/resource/redist/helper-process folders that only contain
+/// non-app binaries. Matches on lowercased single path components.
+fn is_skippable_subdir(name_lower: &str) -> bool {
+    matches!(
+        name_lower,
+        "_commonredist"
+            | "commonredist"
+            | "redist"
+            | "dotnet"
+            | "directx"
+            | "vcredist"
+            | "vc_redist"
+            | "dxsetup"
+            | "eossdk"
+            | "engine"
+            | "support"
+            | "crashhandler"
+            | "installer"
+            | "locales"
+            | "locale"
+            | "resources"
+            | "swiftshader"
+            | "cef"
+            | "plugins"
+            | "codecs"
+            | "node_modules"
+            | "extensions"
+            | "packages"
+            | "cache"
+            | "tools"
+            | "driver"
+            | "drivers"
+            | "microsoft shared"
+            | "common files"
+    )
 }
 
 /// BUG FIX #2: Previously dropped every exe whose stem wasn't in the display
@@ -688,28 +723,15 @@ fn collect_exes(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBu
     if depth > max_depth || !dir.is_dir() {
         return;
     }
-    // Skip engine/redistributable folders where the real game exe never lives.
+    // Skip engine/redistributable/helper folders where the real app exe never
+    // lives. Shared with the shallow Program Files pass via `is_skippable_subdir`.
     if depth > 0 {
         let name_lower = dir
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_lowercase();
-        if matches!(
-            name_lower.as_str(),
-            "_commonredist"
-                | "commonredist"
-                | "redist"
-                | "dotnet"
-                | "directx"
-                | "vcredist"
-                | "support"
-                | "crashhandler"
-                | "installer"
-                | "dxsetup"
-                | "eossdk"
-                | "engine"
-        ) {
+        if is_skippable_subdir(&name_lower) {
             return;
         }
     }
@@ -1963,9 +1985,21 @@ fn find_squirrel_app_exe(app_dir: &Path, app_name: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// BUG FIX #3: Recursive Program Files scan (depth ≤ 3)
-// Previously was flat (depth 1 only), missing all games in subdirectories.
-// This pass runs last with lowest priority — never overwrites richer entries.
+// Program Files / LocalAppData\Programs shallow scan.
+//
+// Previously this walked every directory up to depth 6 and inserted *every*
+// `.exe` it found. On a typical dev machine that produced 1000+ entries,
+// dominated by Chromium / Electron helpers, updater stubs, codec DLLs-as-exe,
+// and per-locale resource binaries. Those both polluted the search UI and
+// made icon extraction miserable.
+//
+// New strategy: treat each top-level vendor/app folder as **one app**, and
+// use `find_game_exe_in_tree` to pick the *best* exe inside it (same scoring
+// that already works well for Steam/Epic installs). We also peek one level
+// deeper to handle `Publisher\App` layouts (e.g. `Adobe\Photoshop`,
+// `Microsoft\Edge`). Insert uses `SourcePriority::ExeScan`, so richer
+// sources (Uninstall, Start Menu, App Paths, UWP, Steam/Epic/GOG) always win
+// on name merge.
 // ---------------------------------------------------------------------------
 fn scan_program_files_recursive(map: &mut HashMap<String, MapEntry>) {
     let mut roots: Vec<PathBuf> = Vec::new();
@@ -1985,94 +2019,247 @@ fn scan_program_files_recursive(map: &mut HashMap<String, MapEntry>) {
         }
     }
     for root in roots {
-        scan_exe_recursive(&root, map, 0, 6);
+        scan_install_dirs_shallow(&root, map);
     }
 }
 
-fn scan_exe_recursive(dir: &Path, map: &mut HashMap<String, MapEntry>, depth: usize, max_depth: usize) {
-    if depth > max_depth {
+fn scan_install_dirs_shallow(root: &Path, map: &mut HashMap<String, MapEntry>) {
+    if !root.is_dir() {
         return;
     }
-    if !dir.is_dir() {
+    let Ok(entries) = std::fs::read_dir(root) else {
         return;
-    }
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
     };
     for entry in entries.filter_map(|e| e.ok()) {
-        let p = entry.path();
-        if p.is_dir() {
-            scan_exe_recursive(&p, map, depth + 1, max_depth);
-        } else if p.is_file() {
-            let is_exe = p
-                .extension()
-                .and_then(|x| x.to_str())
-                .map(|x| x.eq_ignore_ascii_case("exe"))
-                .unwrap_or(false);
-            if !is_exe {
-                continue;
-            }
-            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            if install_dir_skipped_stem(stem) {
-                continue;
-            }
+        let app_dir = entry.path();
+        if !app_dir.is_dir() {
+            continue;
+        }
+        let dir_name = app_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let dir_lower = dir_name.to_lowercase();
+        if dir_lower.is_empty() || dir_lower.starts_with('.') {
+            continue;
+        }
+        if is_skippable_subdir(&dir_lower) {
+            continue;
+        }
 
-            let exe_norm = std::fs::canonicalize(&p)
-                .unwrap_or_else(|_| p.to_path_buf())
-                .to_string_lossy()
+        // Pass 1 — treat this directory itself as the app dir, but only if
+        // it has an exe directly inside (depth 0). Publisher folders like
+        // `Adobe` have no exes at their root, so this correctly skips them
+        // and lets pass 2 name each sub-dir individually instead of filing
+        // one of the sub-apps under the publisher name.
+        let display_name = pretty_name_from_identifier(&dir_name);
+        try_insert_best_exe(&app_dir, &display_name, 0, map);
+
+        // Pass 2 — peek one level deeper for Publisher\App layouts. Sub-dir
+        // scans get the full depth so deep nests like
+        // `Microsoft\Edge\Application\msedge.exe` still resolve. We skip
+        // helper/resource buckets so Electron apps don't spray their locales
+        // folder into the index.
+        let Ok(subs) = std::fs::read_dir(&app_dir) else {
+            continue;
+        };
+        for sub in subs.filter_map(|e| e.ok()) {
+            let sub_dir = sub.path();
+            if !sub_dir.is_dir() {
+                continue;
+            }
+            let sub_name = sub_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
                 .to_string();
-            // Only add if not already discovered by a richer source
-            let key = exe_norm.to_lowercase();
-            if map.contains_key(&key) {
+            let sub_lower = sub_name.to_lowercase();
+            if sub_lower.is_empty() || sub_lower.starts_with('.') {
                 continue;
             }
-
-            let label = display_name_from_app_paths_key(stem);
-            insert_entry(
-                map,
-                exe_norm,
-                label,
-                None,
-                SourcePriority::ExeScan,
-            );
+            if is_skippable_subdir(&sub_lower) {
+                continue;
+            }
+            let sub_display = pretty_name_from_identifier(&sub_name);
+            try_insert_best_exe(&sub_dir, &sub_display, 4, map);
         }
     }
 }
 
+fn try_insert_best_exe(
+    app_dir: &Path,
+    display_name: &str,
+    max_depth: usize,
+    map: &mut HashMap<String, MapEntry>,
+) {
+    let Some(exe) = find_game_exe_in_tree(app_dir, display_name, max_depth) else {
+        return;
+    };
+    if !Path::new(&exe).exists() {
+        return;
+    }
+    let exe_norm = std::fs::canonicalize(&exe)
+        .unwrap_or_else(|_| PathBuf::from(&exe))
+        .to_string_lossy()
+        .to_string();
+    let key = exe_norm.to_lowercase();
+    if map.contains_key(&key) {
+        return;
+    }
+    insert_entry(
+        map,
+        exe_norm,
+        display_name.to_string(),
+        None,
+        SourcePriority::ExeScan,
+    );
+}
+
 // ---------------------------------------------------------------------------
-// Icon extraction via PowerShell (unchanged — runs async-style per entry)
+// Icon extraction — native Win32 / GDI (≈1–5 ms per call).
+//
+// The previous implementation spawned a PowerShell subprocess per icon
+// (`Add-Type … ExtractAssociatedIcon`), which took ~200–500 ms each and made
+// the picker freeze whenever the dropdown opened with many rows. We now go
+// straight to `SHGetFileInfoW` → `GetIconInfo` → `GetDIBits`, then hand the
+// raw BGRA pixels to the `png` crate. Callers are expected to cache results;
+// see `apps::get_app_icon_cached`.
 // ---------------------------------------------------------------------------
 pub(crate) fn extract_icon_data_url(exe_path: &str) -> Option<String> {
-    // Only extract icons for real filesystem paths, not UWP URIs
+    // Only extract icons for real filesystem paths, not UWP / shell: URIs.
     if !Path::new(exe_path).exists() {
         return None;
     }
-    let escaped = exe_path.replace('\'', "''");
-    let script = format!(
-        "$ErrorActionPreference='Stop';\
-         Add-Type -AssemblyName System.Drawing;\
-         $icon=[System.Drawing.Icon]::ExtractAssociatedIcon('{escaped}');\
-         if($null -eq $icon){{exit 0}};\
-         $bmp=$icon.ToBitmap();\
-         $ms=New-Object System.IO.MemoryStream;\
-         $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);\
-         [Convert]::ToBase64String($ms.ToArray())"
-    );
-    let out = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let b64 = String::from_utf8(out.stdout).ok()?;
-    let t = b64.trim();
-    if t.is_empty() {
-        return None;
-    }
-    Some(format!("data:image/png;base64,{t}"))
+    let png = extract_icon_png_bytes(exe_path)?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+    Some(format!("data:image/png;base64,{b64}"))
 }
+
+fn extract_icon_png_bytes(exe_path: &str) -> Option<Vec<u8>> {
+    let wide: Vec<u16> = Path::new(exe_path)
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        let mut sfi: SHFILEINFOW = std::mem::zeroed();
+        // `SHGFI_USEFILEATTRIBUTES` keeps the call strictly local (no shell
+        // binding lookups over the network). 32-bit large icon gives us a
+        // crisp 32×32 bitmap on standard DPI and still scales well.
+        let flags = SHGFI_ICON | SHGFI_LARGEICON | SHGFI_USEFILEATTRIBUTES;
+        let ok = SHGetFileInfoW(
+            PCWSTR(wide.as_ptr()),
+            FILE_ATTRIBUTE_NORMAL,
+            Some(&mut sfi),
+            std::mem::size_of::<SHFILEINFOW>() as u32,
+            flags,
+        );
+        if ok == 0 || sfi.hIcon.is_invalid() {
+            return None;
+        }
+        let png = hicon_to_png(sfi.hIcon);
+        let _ = DestroyIcon(sfi.hIcon);
+        png
+    }
+}
+
+unsafe fn hicon_to_png(hicon: HICON) -> Option<Vec<u8>> {
+    let mut ii: ICONINFO = std::mem::zeroed();
+    if GetIconInfo(hicon, &mut ii).is_err() {
+        return None;
+    }
+    // Always free bitmaps, even on early return.
+    struct BitmapGuard(HBITMAP);
+    impl Drop for BitmapGuard {
+        fn drop(&mut self) {
+            if !self.0.is_invalid() {
+                unsafe {
+                    let _ = DeleteObject(self.0.into());
+                }
+            }
+        }
+    }
+    let _color_guard = BitmapGuard(ii.hbmColor);
+    let _mask_guard = BitmapGuard(ii.hbmMask);
+
+    if ii.hbmColor.is_invalid() {
+        return None;
+    }
+
+    // Fetch width/height from the colour bitmap.
+    let mut bmp: BITMAP = std::mem::zeroed();
+    let got = GetObjectW(
+        ii.hbmColor.into(),
+        std::mem::size_of::<BITMAP>() as i32,
+        Some(&mut bmp as *mut _ as *mut _),
+    );
+    if got == 0 {
+        return None;
+    }
+    let w = bmp.bmWidth;
+    let h = bmp.bmHeight;
+    if w <= 0 || h <= 0 {
+        return None;
+    }
+
+    let mut bmi: BITMAPINFO = std::mem::zeroed();
+    bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+    bmi.bmiHeader.biWidth = w;
+    bmi.bmiHeader.biHeight = -h; // negative = top-down DIB
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB.0;
+
+    let stride = (w as usize) * 4;
+    let mut pixels = vec![0u8; stride * h as usize];
+
+    let screen_dc: HDC = GetDC(None);
+    if screen_dc.is_invalid() {
+        return None;
+    }
+    let rows_copied = GetDIBits(
+        screen_dc,
+        ii.hbmColor,
+        0,
+        h as u32,
+        Some(pixels.as_mut_ptr() as *mut _),
+        &mut bmi,
+        DIB_RGB_COLORS,
+    );
+    ReleaseDC(None, screen_dc);
+    if rows_copied == 0 {
+        return None;
+    }
+
+    // Windows gives us BGRA (pre-multiplied when the icon has alpha). Swap
+    // the R/B bytes in-place to get RGBA that PNG expects.
+    for px in pixels.chunks_exact_mut(4) {
+        px.swap(0, 2);
+    }
+
+    // Some icons report every alpha byte as 0 (legacy .ico resources with
+    // only a mono AND-mask). Fall back to fully opaque in that case so the
+    // PNG isn't invisible.
+    let any_alpha = pixels.chunks_exact(4).any(|p| p[3] != 0);
+    if !any_alpha {
+        for px in pixels.chunks_exact_mut(4) {
+            px[3] = 0xFF;
+        }
+    }
+
+    let mut out: Vec<u8> = Vec::with_capacity(stride * h as usize + 1024);
+    {
+        let mut encoder = png::Encoder::new(&mut out, w as u32, h as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fast);
+        let mut writer = encoder.write_header().ok()?;
+        writer.write_image_data(&pixels).ok()?;
+    }
+    Some(out)
+}
+
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -2080,26 +2267,6 @@ pub(crate) fn extract_icon_data_url(exe_path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn should_index_launch_target_rejects_squirrel_and_helpers() {
-        assert!(!should_index_launch_target(
-            r"C:\Users\x\AppData\Local\Discord\Update.exe"
-        ));
-        assert!(!should_index_launch_target(
-            r"C:\Users\x\AppData\Local\Discord\app-1.0.0\DiscordSystemHelper.exe"
-        ));
-        assert!(!should_index_launch_target(
-            r"C:\Games\Foo\unins000.exe"
-        ));
-        assert!(should_index_launch_target(
-            r"C:\Users\x\AppData\Local\Discord\app-1.0.0\Discord.exe"
-        ));
-        assert!(should_index_launch_target(
-            "shell:AppsFolder\\com.squirrel.Discord.Discord"
-        ));
-        assert!(should_index_launch_target("steam://rungameid/730"));
-    }
 
     #[test]
     fn insert_prefers_lower_priority_source() {
@@ -2382,6 +2549,126 @@ mod tests {
     fn display_name_from_app_paths_key_title_cases_stem() {
         assert_eq!(display_name_from_app_paths_key("firefox.exe"), "Firefox");
         assert_eq!(display_name_from_app_paths_key("code.exe"), "Code");
+    }
+
+    // ------------------------------------------------------------------
+    // Helper-exe / redist filters — the headline fix for search lag was
+    // "stop indexing Chromium helpers / updaters / crash handlers". These
+    // tests pin the contract so real apps keep working and the common
+    // noise stays out of the picker.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn install_dir_skipped_stem_blocks_updaters_and_helpers() {
+        // Update stubs & installer stubs
+        assert!(install_dir_skipped_stem("Update"));
+        assert!(install_dir_skipped_stem("updater"));
+        assert!(install_dir_skipped_stem("Uninstall"));
+        assert!(install_dir_skipped_stem("Setup"));
+        assert!(install_dir_skipped_stem("Installer"));
+        assert!(install_dir_skipped_stem("vc_redist.x64"));
+        assert!(install_dir_skipped_stem("maintenanceservice"));
+        // Chromium / Electron / Squirrel process family
+        assert!(install_dir_skipped_stem("chrome_proxy"));
+        assert!(install_dir_skipped_stem("chrome_crashpad_handler"));
+        assert!(install_dir_skipped_stem("notification_helper"));
+        assert!(install_dir_skipped_stem("squirrel"));
+        assert!(install_dir_skipped_stem("crashpad_handler"));
+        assert!(install_dir_skipped_stem("CrashReporter"));
+        // Explicit helper-suffix families (Electron "<App> Helper (GPU)" etc.)
+        assert!(install_dir_skipped_stem("MyApp_helper"));
+        assert!(install_dir_skipped_stem("MyApp-helper"));
+        assert!(install_dir_skipped_stem("MyApp Helper"));
+        assert!(install_dir_skipped_stem("MyApp Helper (GPU)"));
+        assert!(install_dir_skipped_stem("MyApp Helper (Renderer)"));
+        // Bundled toolchain stubs that ship with Node/Electron/ffmpeg apps
+        assert!(install_dir_skipped_stem("node"));
+        assert!(install_dir_skipped_stem("ffmpeg"));
+        assert!(install_dir_skipped_stem("python"));
+    }
+
+    #[test]
+    fn install_dir_skipped_stem_allows_real_apps() {
+        // Exact apps whose names happen to brush against substrings
+        assert!(!install_dir_skipped_stem("Discord"));
+        assert!(!install_dir_skipped_stem("Notepad"));
+        assert!(!install_dir_skipped_stem("Code"));
+        assert!(!install_dir_skipped_stem("Firefox"));
+        assert!(!install_dir_skipped_stem("Photoshop"));
+        assert!(!install_dir_skipped_stem("msedge"));
+        // Regression: "UpdateManager" is a real app name — only the bare
+        // "update" / "updater" stems get axed, not substrings.
+        assert!(!install_dir_skipped_stem("UpdateManager"));
+        // "nodejs installer" would be scary but bare "node.exe" is always a
+        // bundled runtime; keep it skipped above and confirm related names pass.
+        assert!(!install_dir_skipped_stem("Node Editor"));
+        assert!(!install_dir_skipped_stem("NodePad"));
+    }
+
+    #[test]
+    fn is_skippable_subdir_matches_common_resource_folders() {
+        assert!(is_skippable_subdir("locales"));
+        assert!(is_skippable_subdir("resources"));
+        assert!(is_skippable_subdir("swiftshader"));
+        assert!(is_skippable_subdir("_commonredist"));
+        assert!(is_skippable_subdir("dotnet"));
+        assert!(is_skippable_subdir("vcredist"));
+        assert!(is_skippable_subdir("packages"));
+        // Real app dirs must pass through.
+        assert!(!is_skippable_subdir("discord"));
+        assert!(!is_skippable_subdir("microsoft vs code"));
+        assert!(!is_skippable_subdir("adobe"));
+    }
+
+    #[test]
+    fn scan_install_dirs_shallow_picks_one_exe_per_app_dir() {
+        let root = tempfile::tempdir().unwrap();
+        // `Cursor\Cursor.exe` + a pile of Electron helpers → one entry.
+        let cursor = root.path().join("Cursor");
+        touch_file(&cursor.join("Cursor.exe"));
+        touch_file(&cursor.join("Cursor Helper.exe"));
+        touch_file(&cursor.join("Cursor Helper (GPU).exe"));
+        touch_file(&cursor.join("Cursor Helper (Renderer).exe"));
+        touch_file(&cursor.join("resources/app/node.exe"));
+        touch_file(&cursor.join("ffmpeg.dll")); // not .exe, ignored anyway
+        touch_file(&cursor.join("chrome_crashpad_handler.exe"));
+
+        let mut map: HashMap<String, MapEntry> = HashMap::new();
+        scan_install_dirs_shallow(root.path(), &mut map);
+
+        let paths: Vec<String> = map.values().map(|e| e.inner.exe_path.to_lowercase()).collect();
+        assert_eq!(
+            paths.len(),
+            1,
+            "expected exactly one entry for the Cursor app dir, got {paths:?}"
+        );
+        assert!(
+            paths[0].ends_with("cursor.exe"),
+            "primary exe should be Cursor.exe, got {paths:?}"
+        );
+    }
+
+    #[test]
+    fn scan_install_dirs_shallow_recurses_into_publisher_app_layouts() {
+        let root = tempfile::tempdir().unwrap();
+        // `Adobe\Photoshop\Photoshop.exe` + `Adobe\Lightroom\Lightroom.exe`
+        let adobe = root.path().join("Adobe");
+        touch_file(&adobe.join("Photoshop/Photoshop.exe"));
+        touch_file(&adobe.join("Photoshop/Uninstall.exe"));
+        touch_file(&adobe.join("Lightroom/Lightroom.exe"));
+
+        let mut map: HashMap<String, MapEntry> = HashMap::new();
+        scan_install_dirs_shallow(root.path(), &mut map);
+
+        let names: Vec<String> = map.values().map(|e| e.inner.display_name.to_lowercase()).collect();
+        assert!(
+            names.iter().any(|n| n.contains("photoshop")),
+            "expected Photoshop entry, got {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("lightroom")),
+            "expected Lightroom entry, got {names:?}"
+        );
     }
 
     #[test]

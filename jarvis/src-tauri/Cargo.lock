@@ -2415,6 +2415,7 @@ dependencies = [
  "log",
  "ndarray",
  "ort",
+ "png 0.17.16",
  "rapidfuzz",
  "raw-window-handle",
  "rusqlite",

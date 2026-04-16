@@ -405,81 +405,57 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   );
   const [selectedAppIcon, setSelectedAppIcon] = useState<string | null>(null);
   const appTimer = useRef<number | null>(null);
-  const iconPrefetchAbort = useRef(false);
-  const iconPrefetchTimer = useRef<number | null>(null);
 
   useEffect(() => {
     if (!appOpen) {
       setAppHitIcons({});
-      if (iconPrefetchTimer.current) {
-        window.clearTimeout(iconPrefetchTimer.current);
-        iconPrefetchTimer.current = null;
-      }
       return;
     }
     if (!appHits.length) return;
 
-    // Debounce: each keystroke was spawning dozens of `get_app_icon` PowerShell
-    // calls — keep work idle until the user pauses typing.
-    iconPrefetchAbort.current = false;
-    const debounceMs = 380;
-    const maxIcons = 16;
-    if (iconPrefetchTimer.current) {
-      window.clearTimeout(iconPrefetchTimer.current);
-    }
-    iconPrefetchTimer.current = window.setTimeout(() => {
-      iconPrefetchTimer.current = null;
-      if (iconPrefetchAbort.current) return;
+    let cancelled = false;
+    const targets = appHits.filter((h) => {
+      if (h.icon_data_url) return false;
+      const p = h.exe_path.trim();
+      if (!p) return false;
+      const low = p.toLowerCase();
+      if (low.startsWith("shell:")) return false;
+      if (p.includes("://")) return false;
+      return true;
+    });
 
-      const targets = appHits
-        .filter((h) => {
-          if (h.icon_data_url) return false;
-          const p = h.exe_path.trim();
-          if (!p) return false;
-          const low = p.toLowerCase();
-          if (low.startsWith("shell:")) return false;
-          if (p.includes("://")) return false;
-          if (!low.endsWith(".exe")) return false;
-          return true;
-        })
-        .slice(0, maxIcons);
-
-      const run = async () => {
-        const CONCURRENCY = 3;
-        for (let i = 0; i < targets.length && !iconPrefetchAbort.current; i += CONCURRENCY) {
-          const slice = targets.slice(i, i + CONCURRENCY);
-          await Promise.all(
-            slice.map(async (h) => {
-              if (iconPrefetchAbort.current) return;
-              try {
-                const icon = await invoke<string | null>("get_app_icon", {
-                  payload: { path: h.exe_path },
-                });
-                if (iconPrefetchAbort.current) return;
+    const run = async () => {
+      const CONCURRENCY = 4;
+      for (let i = 0; i < targets.length && !cancelled; i += CONCURRENCY) {
+        const slice = targets.slice(i, i + CONCURRENCY);
+        await Promise.all(
+          slice.map(async (h) => {
+            if (cancelled) return;
+            try {
+              const icon = await invoke<string | null>("get_app_icon", {
+                payload: { path: h.exe_path },
+              });
+              if (!cancelled) {
                 setAppHitIcons((prev) => {
                   if (Object.prototype.hasOwnProperty.call(prev, h.exe_path)) return prev;
                   return { ...prev, [h.exe_path]: icon };
                 });
-              } catch {
-                if (iconPrefetchAbort.current) return;
+              }
+            } catch {
+              if (!cancelled) {
                 setAppHitIcons((prev) => {
                   if (Object.prototype.hasOwnProperty.call(prev, h.exe_path)) return prev;
                   return { ...prev, [h.exe_path]: null };
                 });
               }
-            }),
-          );
-        }
-      };
-      void run();
-    }, debounceMs);
-
-    return () => {
-      iconPrefetchAbort.current = true;
-      if (iconPrefetchTimer.current) {
-        window.clearTimeout(iconPrefetchTimer.current);
-        iconPrefetchTimer.current = null;
+            }
+          }),
+        );
       }
+    };
+    void run();
+    return () => {
+      cancelled = true;
     };
   }, [appOpen, appHits]);
 
@@ -528,7 +504,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     if (!("open_app" in action) || !appOpen) return;
     if (appTimer.current) window.clearTimeout(appTimer.current);
     appTimer.current = window.setTimeout(() => {
-      void invoke<AppIndexEntry[]>("search_app_index", searchAppIndexInvokeArgs(appQuery, 48))
+      void invoke<AppIndexEntry[]>("search_app_index", searchAppIndexInvokeArgs(appQuery, 120))
         .then((hits) => {
           setAppHits(hits);
           setAppHasSearched(true);
@@ -537,7 +513,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
           setAppHits([]);
           setAppHasSearched(true);
         });
-    }, 280);
+    }, 200);
     return () => {
       if (appTimer.current) window.clearTimeout(appTimer.current);
     };

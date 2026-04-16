@@ -4,7 +4,9 @@
 mod scanner_windows;
 
 use rapidfuzz::fuzz;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::RwLock;
 
 /// Minimum [`fuzz::ratio`] (normalized 0..=1) for a display name / exe stem to count as a match (Phase 4: 0.75).
 pub const APP_RESOLVE_MIN_RATIO: f64 = 0.75;
@@ -26,9 +28,6 @@ pub fn resolve_app<'a>(query: &str, entries: &'a [AppEntry]) -> Option<&'a AppEn
     let q_lower = q.to_lowercase();
     let mut best: Option<(f64, &'a AppEntry)> = None;
     for e in entries {
-        if !picker_indexable(e) {
-            continue;
-        }
         let r = score_entry(&q_lower, e);
         if r + f64::EPSILON < APP_RESOLVE_MIN_RATIO {
             continue;
@@ -54,26 +53,9 @@ fn score_entry(query_lower: &str, e: &AppEntry) -> f64 {
     name.max(stem)
 }
 
-/// Picker + browse lists hide the same junk the scanner refuses to insert
-/// (`Update.exe`, `*SystemHelper.exe`, …) so an old SQLite cache cannot
-/// resurrect them until the next full rescan.
-#[inline]
-fn picker_indexable(e: &AppEntry) -> bool {
-    #[cfg(windows)]
-    {
-        scanner_windows::should_index_launch_target(&e.exe_path)
-    }
-    #[cfg(not(windows))]
-    {
-        !e.exe_path.trim().is_empty()
-    }
-}
-
 /// First `limit` entries sorted by display name (case-insensitive), then `exe_path`.
 pub fn sorted_app_name_slice(entries: &[AppEntry], limit: usize) -> Vec<AppEntry> {
-    let mut idx: Vec<usize> = (0..entries.len())
-        .filter(|&i| picker_indexable(&entries[i]))
-        .collect();
+    let mut idx: Vec<usize> = (0..entries.len()).collect();
     idx.sort_by(|&i, &j| {
         entries[i]
             .display_name
@@ -91,7 +73,6 @@ pub fn sorted_app_name_slice(entries: &[AppEntry], limit: usize) -> Vec<AppEntry
 pub fn filter_app_entries_substring(entries: &[AppEntry], query_lower: &str, limit: usize) -> Vec<AppEntry> {
     let mut matched: Vec<AppEntry> = entries
         .iter()
-        .filter(|e| picker_indexable(e))
         .filter(|e| {
             let name = e.display_name.to_lowercase();
             let path = e.exe_path.to_lowercase();
@@ -148,6 +129,59 @@ pub fn get_app_icon(exe_path: &str) -> Option<String> {
     #[cfg(not(windows))]
     {
         None
+    }
+}
+
+/// Shared icon cache keyed by lowercased exe path. `None` means "we tried and
+/// there's no icon" — cached so repeat misses don't re-spawn the extractor.
+///
+/// The native extractor is fast (~1–5 ms on Windows), but the picker dropdown
+/// can request dozens of icons on every keystroke as `appHits` changes. This
+/// cache collapses those to a single extraction per unique exe for the life
+/// of the process, which is what actually eliminates the typing lag.
+#[derive(Default)]
+pub struct IconCache {
+    inner: RwLock<HashMap<String, Option<String>>>,
+}
+
+impl IconCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Look up `exe_path` in the cache; on miss, extract via the platform
+    /// helper and memoize the result (including `None` misses).
+    pub fn get_or_extract(&self, exe_path: &str) -> Option<String> {
+        let key = exe_path.trim().to_lowercase();
+        if key.is_empty() {
+            return None;
+        }
+        if let Ok(g) = self.inner.read() {
+            if let Some(v) = g.get(&key) {
+                return v.clone();
+            }
+        }
+        // Extract outside the lock so one slow path can't stall parallel readers.
+        let extracted = get_app_icon(exe_path);
+        if let Ok(mut g) = self.inner.write() {
+            // Double-check in case another thread raced us; either value is fine,
+            // both came from the same extractor.
+            g.entry(key).or_insert_with(|| extracted.clone());
+        }
+        extracted
+    }
+
+    /// Drop every cached entry. Used when a rescan replaces the backing index
+    /// so stale paths don't linger.
+    pub fn clear(&self) {
+        if let Ok(mut g) = self.inner.write() {
+            g.clear();
+        }
+    }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.inner.read().map(|g| g.len()).unwrap_or(0)
     }
 }
 
@@ -228,6 +262,34 @@ mod tests {
     }
 
     #[test]
+    fn icon_cache_missing_path_returns_none_and_memoizes() {
+        let cache = IconCache::new();
+        // A path that clearly does not exist on any machine.
+        let missing = r"Z:\definitely\not\real\nope.exe";
+        assert!(cache.get_or_extract(missing).is_none());
+        assert!(cache.get_or_extract(missing).is_none());
+        // Second call must hit the cache rather than re-extract — one entry.
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn icon_cache_empty_path_is_not_cached() {
+        let cache = IconCache::new();
+        assert!(cache.get_or_extract("").is_none());
+        assert!(cache.get_or_extract("   ").is_none());
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn icon_cache_clear_wipes_entries() {
+        let cache = IconCache::new();
+        let _ = cache.get_or_extract(r"Z:\nope\nope.exe");
+        assert_eq!(cache.len(), 1);
+        cache.clear();
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
     fn filter_finds_notepad_discord_and_cs2_fixtures() {
         let entries = vec![
             AppEntry {
@@ -263,27 +325,5 @@ mod tests {
             !filter_app_entries_substring(&entries, "cs2", 24).is_empty(),
             "cs2 stem"
         );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn filter_and_sorted_slice_drop_squirrel_junk_exes() {
-        let entries = vec![
-            AppEntry {
-                display_name: "Discord".into(),
-                exe_path: r"C:\Users\x\AppData\Local\Discord\Update.exe".into(),
-                icon_data_url: None,
-            },
-            AppEntry {
-                display_name: "Discord".into(),
-                exe_path: r"C:\Users\x\AppData\Local\Discord\app-1.0\Discord.exe".into(),
-                icon_data_url: None,
-            },
-        ];
-        let hits = filter_app_entries_substring(&entries, "discord", 10);
-        assert_eq!(hits.len(), 1);
-        assert!(hits[0].exe_path.to_lowercase().ends_with("discord.exe"));
-        let slice = sorted_app_name_slice(&entries, 10);
-        assert_eq!(slice.len(), 1);
     }
 }
