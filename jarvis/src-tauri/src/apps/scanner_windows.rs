@@ -138,6 +138,83 @@ fn log_scan_stats(stats: &[(&'static str, usize)], total: usize) {
     log::info!("app index scan stats: {}", parts.join(" "));
 }
 
+/// Keep the picker focused on **user-launchable** programs. Squirrel / MSI
+/// folders ship `Update.exe`, `Uninstall.exe`, `*SystemHelper.exe`, etc.
+/// that match substring search ("disc" → "Discovery") and clutter results.
+/// Shell / protocol targets are kept — they are not filesystem `.exe` paths.
+pub(crate) fn should_index_launch_target(exe_path: &str) -> bool {
+    let exe_path = exe_path.trim();
+    if exe_path.is_empty() {
+        return false;
+    }
+    let low = exe_path.to_ascii_lowercase();
+    if low.starts_with("shell:") || exe_path.contains("://") {
+        return true;
+    }
+
+    let p = Path::new(exe_path);
+    if !p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("exe"))
+        .unwrap_or(false)
+    {
+        return false;
+    }
+
+    let name = p
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let stem = p
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    const EXACT_BLOCK: &[&str] = &[
+        "update.exe",
+        "squirrel.exe",
+        "squirrel.temp.exe",
+        "setup.exe",
+        "install.exe",
+        "installer.exe",
+        "crashpad_handler.exe",
+        "crashhandler.exe",
+        "elevate.exe",
+        "maintenanceservice.exe",
+        "servicehub.host.exe",
+    ];
+    if EXACT_BLOCK.iter().any(|b| *b == name.as_str()) {
+        return false;
+    }
+
+    // Inno / NSIS uninstall stubs
+    if name.starts_with("unins") && name.ends_with(".exe") {
+        return false;
+    }
+
+    // Squirrel / OEM "sidecar" helpers next to the real app
+    if name.contains("systemhelper") {
+        return false;
+    }
+    if name.ends_with("_helper.exe") || name.ends_with("-helper.exe") {
+        return false;
+    }
+
+    // Common redistributable launchers sitting in game install roots
+    if stem.contains("vcredist")
+        || stem.contains("vc_redist")
+        || stem == "dxsetup"
+        || stem.contains("dotnet")
+    {
+        return false;
+    }
+
+    true
+}
+
 // ---------------------------------------------------------------------------
 // insert_entry — merge with priority + icon back-fill
 // ---------------------------------------------------------------------------
@@ -149,6 +226,9 @@ fn insert_entry(
     priority: SourcePriority,
 ) {
     if exe_path.is_empty() {
+        return;
+    }
+    if !should_index_launch_target(&exe_path) {
         return;
     }
     let key = exe_path.to_lowercase();
@@ -2000,6 +2080,26 @@ pub(crate) fn extract_icon_data_url(exe_path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn should_index_launch_target_rejects_squirrel_and_helpers() {
+        assert!(!should_index_launch_target(
+            r"C:\Users\x\AppData\Local\Discord\Update.exe"
+        ));
+        assert!(!should_index_launch_target(
+            r"C:\Users\x\AppData\Local\Discord\app-1.0.0\DiscordSystemHelper.exe"
+        ));
+        assert!(!should_index_launch_target(
+            r"C:\Games\Foo\unins000.exe"
+        ));
+        assert!(should_index_launch_target(
+            r"C:\Users\x\AppData\Local\Discord\app-1.0.0\Discord.exe"
+        ));
+        assert!(should_index_launch_target(
+            "shell:AppsFolder\\com.squirrel.Discord.Discord"
+        ));
+        assert!(should_index_launch_target("steam://rungameid/730"));
+    }
 
     #[test]
     fn insert_prefers_lower_priority_source() {

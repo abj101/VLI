@@ -26,6 +26,9 @@ pub fn resolve_app<'a>(query: &str, entries: &'a [AppEntry]) -> Option<&'a AppEn
     let q_lower = q.to_lowercase();
     let mut best: Option<(f64, &'a AppEntry)> = None;
     for e in entries {
+        if !picker_indexable(e) {
+            continue;
+        }
         let r = score_entry(&q_lower, e);
         if r + f64::EPSILON < APP_RESOLVE_MIN_RATIO {
             continue;
@@ -51,9 +54,26 @@ fn score_entry(query_lower: &str, e: &AppEntry) -> f64 {
     name.max(stem)
 }
 
+/// Picker + browse lists hide the same junk the scanner refuses to insert
+/// (`Update.exe`, `*SystemHelper.exe`, …) so an old SQLite cache cannot
+/// resurrect them until the next full rescan.
+#[inline]
+fn picker_indexable(e: &AppEntry) -> bool {
+    #[cfg(windows)]
+    {
+        scanner_windows::should_index_launch_target(&e.exe_path)
+    }
+    #[cfg(not(windows))]
+    {
+        !e.exe_path.trim().is_empty()
+    }
+}
+
 /// First `limit` entries sorted by display name (case-insensitive), then `exe_path`.
 pub fn sorted_app_name_slice(entries: &[AppEntry], limit: usize) -> Vec<AppEntry> {
-    let mut idx: Vec<usize> = (0..entries.len()).collect();
+    let mut idx: Vec<usize> = (0..entries.len())
+        .filter(|&i| picker_indexable(&entries[i]))
+        .collect();
     idx.sort_by(|&i, &j| {
         entries[i]
             .display_name
@@ -71,6 +91,7 @@ pub fn sorted_app_name_slice(entries: &[AppEntry], limit: usize) -> Vec<AppEntry
 pub fn filter_app_entries_substring(entries: &[AppEntry], query_lower: &str, limit: usize) -> Vec<AppEntry> {
     let mut matched: Vec<AppEntry> = entries
         .iter()
+        .filter(|e| picker_indexable(e))
         .filter(|e| {
             let name = e.display_name.to_lowercase();
             let path = e.exe_path.to_lowercase();
@@ -242,5 +263,27 @@ mod tests {
             !filter_app_entries_substring(&entries, "cs2", 24).is_empty(),
             "cs2 stem"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn filter_and_sorted_slice_drop_squirrel_junk_exes() {
+        let entries = vec![
+            AppEntry {
+                display_name: "Discord".into(),
+                exe_path: r"C:\Users\x\AppData\Local\Discord\Update.exe".into(),
+                icon_data_url: None,
+            },
+            AppEntry {
+                display_name: "Discord".into(),
+                exe_path: r"C:\Users\x\AppData\Local\Discord\app-1.0\Discord.exe".into(),
+                icon_data_url: None,
+            },
+        ];
+        let hits = filter_app_entries_substring(&entries, "discord", 10);
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].exe_path.to_lowercase().ends_with("discord.exe"));
+        let slice = sorted_app_name_slice(&entries, 10);
+        assert_eq!(slice.len(), 1);
     }
 }
