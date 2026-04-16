@@ -3,7 +3,7 @@
 /* Frameless editor: one radius token — paired with `DWMWCP_ROUNDSMALL` in `editor_window_win.rs`. */
 html {
   /* Default until theme sync sets `data-theme` */
-  --editor-bg: #0f1116;
+  --editor-bg: #0a0a0a;
   --editor-shell-radius: 8px;
   box-sizing: border-box;
   height: 100%;
@@ -43,155 +43,154 @@ body {
 
 html[data-theme="dark"] {
   color-scheme: dark;
-  --editor-bg: #0f1116;
-  --editor-text: #f3f5fb;
-  --editor-panel: #171b23;
-  --editor-border: #2a3342;
-  --editor-header-border: #273041;
-  --editor-control-bg: #1f2736;
-  --editor-control-border: #394865;
-  --editor-control-text: #f3f5fb;
-  --editor-label-muted: #c8d0df;
-  --editor-muted: #a9b4c9;
-  --editor-surface-row: #1d2431;
-  --editor-surface-row-border: #374359;
-  --editor-node-name: #f8f9fd;
-  --editor-node-trigger: #a9b4c9;
-  --editor-focus-ring: #7eb6ff;
-  --editor-accent: #5aa9ff;
-  --editor-input-bg: #151d2a;
-  --editor-input-border: #394865;
-  --editor-input-text: #eef2f8;
-  --editor-danger-border: #6b2934;
-  --editor-danger-bg: #3b1f26;
-  --editor-danger-text: #f3f5fb;
-  --editor-toggle-on-border: #2e8d60;
-  --editor-toggle-on-bg: #1b3b2d;
-  --editor-tag-border: #2f6ba3;
-  --editor-tag-bg: #163754;
-  --editor-tag-fg: #cfe8ff;
-  --editor-chain-bg: #121926;
-  --editor-chain-border: #344157;
-  --editor-subprompt-border: #2b3549;
-  --editor-placeholder-text: #a9b4c9;
-  --editor-toast-error-border: #6b2934;
-  --editor-toast-error-bg: #3b1f26;
-  --editor-toast-error-text: #f3f5fb;
-  --editor-empty-muted: #c5ccda;
-  --editor-settings-bg: #151d2a;
-  --editor-settings-border: #374359;
+  --editor-bg: #0a0a0a;
+  --editor-text: #f3f3f3;
+  --editor-panel: #111111;
+  --editor-border: #2a2a2a;
+  --editor-header-border: #262626;
+  --editor-control-bg: #1a1a1a;
+  --editor-control-border: #3d3d3d;
+  --editor-control-text: #f3f3f3;
+  --editor-label-muted: #a8a8a8;
+  --editor-muted: #8f8f8f;
+  --editor-surface-row: #141414;
+  --editor-surface-row-border: #333333;
+  --editor-node-name: #fafafa;
+  --editor-node-trigger: #a3a3a3;
+  --editor-focus-ring: #d4d4d4;
+  --editor-accent: #e8e8e8;
+  --editor-input-bg: #121212;
+  --editor-input-border: #404040;
+  --editor-input-text: #f0f0f0;
+  --editor-danger-border: #525252;
+  --editor-danger-bg: #1f1f1f;
+  --editor-danger-text: #e8e8e8;
+  --editor-toggle-on-border: #666666;
+  --editor-toggle-on-bg: #1c1c1c;
+  --editor-tag-border: #4a4a4a;
+  --editor-tag-bg: #1c1c1c;
+  --editor-tag-fg: #d6d6d6;
+  --editor-chain-bg: #0e0e0e;
+  --editor-chain-border: #333333;
+  --editor-subprompt-border: #2e2e2e;
+  --editor-placeholder-text: #8c8c8c;
+  --editor-toast-error-border: #525252;
+  --editor-toast-error-bg: #1f1f1f;
+  --editor-toast-error-text: #e8e8e8;
+  --editor-empty-muted: #a3a3a3;
+  --editor-settings-bg: #121212;
+  --editor-settings-border: #3d3d3d;
   --editor-settings-shadow: 0 12px 28px rgb(0 0 0 / 45%);
-  --editor-settings-help: #9ca3af;
-  --editor-settings-heading: #e5e7eb;
-  --editor-settings-checkbox: #e5e7eb;
-  --editor-error-text: #ff9ca9;
+  --editor-settings-help: #9a9a9a;
+  --editor-settings-heading: #e8e8e8;
+  --editor-settings-checkbox: #e8e8e8;
+  --editor-error-text: #b8b8b8;
   --editor-backdrop: rgb(0 0 0 / 35%);
   /*
-   * Frosted glass — values mirror --hud-glass-* in App.css; see “JARVIS frosted glass”
-   * comment there for the full recipe (layers, shadows, accessibility).
+   * Frosted glass — values mirror --hud-glass-* in App.css; achromatic oklch(L 0 0).
    */
-  --editor-glass-surface: oklch(0.14 0.012 268);
-  --editor-glass-border: oklch(0.96 0.01 268 / 0.12);
+  --editor-glass-surface: oklch(0.14 0 0);
+  --editor-glass-border: oklch(0.96 0 0 / 0.12);
   --editor-glass-fill-ratio: 72%;
   --editor-glass-veil: 16%;
   --editor-glass-blur: 56px;
-  --editor-glass-saturate: 1.32;
+  --editor-glass-saturate: 1;
   --editor-glass-brightness: 1.04;
   /* Modest spread: large blur reads as a square halo on transparent Win32 hosts. */
   --editor-glass-shadow:
-    0 10px 36px oklch(0.04 0.03 268 / 0.42),
-    0 2px 10px oklch(0.04 0.03 268 / 0.24);
-  --editor-glass-inset: inset 0 1px 0 oklch(0.97 0.012 268 / 0.22);
-  --editor-glass-hairline: oklch(0.94 0.014 268 / 0.32);
-  --editor-sidebar-tint: oklch(0.17 0.014 268 / 0.55);
-  --editor-accent-soft: oklch(0.58 0.12 286 / 0.35);
-  --editor-accent-soft-solid: oklch(0.62 0.11 286);
-  --editor-scrollbar-thumb: oklch(0.72 0.02 268 / 0.34);
-  --editor-scrollbar-thumb-hover: oklch(0.76 0.022 268 / 0.48);
-  --editor-scrollbar-thumb-active: oklch(0.79 0.023 268 / 0.58);
+    0 10px 36px oklch(0 0 0 / 0.45),
+    0 2px 10px oklch(0 0 0 / 0.28);
+  --editor-glass-inset: inset 0 1px 0 oklch(0.97 0 0 / 0.2);
+  --editor-glass-hairline: oklch(0.92 0 0 / 0.3);
+  --editor-sidebar-tint: oklch(0.18 0 0 / 0.55);
+  --editor-accent-soft: oklch(0.72 0 0 / 0.28);
+  --editor-accent-soft-solid: oklch(0.78 0 0);
+  --editor-scrollbar-thumb: oklch(0.55 0 0 / 0.4);
+  --editor-scrollbar-thumb-hover: oklch(0.62 0 0 / 0.5);
+  --editor-scrollbar-thumb-active: oklch(0.68 0 0 / 0.58);
 }
 
 html[data-theme="light"] {
   color-scheme: light;
-  --editor-bg: #eef3f9;
-  --editor-text: #182231;
+  --editor-bg: #f7f7f5;
+  --editor-text: #141414;
   --editor-panel: #ffffff;
-  --editor-border: #ccd8e6;
-  --editor-header-border: #d6e0ec;
-  --editor-control-bg: #e8eef6;
-  --editor-control-border: #9aa9bc;
-  --editor-control-text: #182231;
-  --editor-label-muted: #3d4a5c;
-  --editor-muted: #4b5568;
-  --editor-surface-row: #f0f4fa;
-  --editor-surface-row-border: #b8c5d6;
-  --editor-node-name: #111827;
-  --editor-node-trigger: #4b5563;
-  --editor-focus-ring: #2563eb;
-  --editor-accent: #2563eb;
+  --editor-border: #d4d4d4;
+  --editor-header-border: #dbdbdb;
+  --editor-control-bg: #f0f0ee;
+  --editor-control-border: #b8b8b8;
+  --editor-control-text: #141414;
+  --editor-label-muted: #5c5c5c;
+  --editor-muted: #6b6b6b;
+  --editor-surface-row: #f2f2f0;
+  --editor-surface-row-border: #c9c9c9;
+  --editor-node-name: #0a0a0a;
+  --editor-node-trigger: #5c5c5c;
+  --editor-focus-ring: #3a3a3a;
+  --editor-accent: #2a2a2a;
   --editor-input-bg: #ffffff;
-  --editor-input-border: #9aa9bc;
-  --editor-input-text: #182231;
-  --editor-danger-border: #c24157;
-  --editor-danger-bg: #fce8eb;
-  --editor-danger-text: #7f1d1d;
-  --editor-toggle-on-border: #15803d;
-  --editor-toggle-on-bg: #dcfce7;
-  --editor-tag-border: #2563eb;
-  --editor-tag-bg: #eff6ff;
-  --editor-tag-fg: #1e3a8a;
-  --editor-chain-bg: #f7fafc;
-  --editor-chain-border: #b8c5d6;
-  --editor-subprompt-border: #c5d0de;
-  --editor-placeholder-text: #6b7280;
-  --editor-toast-error-border: #c24157;
-  --editor-toast-error-bg: #fce8eb;
-  --editor-toast-error-text: #7f1d1d;
-  --editor-empty-muted: #4b5568;
+  --editor-input-border: #b8b8b8;
+  --editor-input-text: #141414;
+  --editor-danger-border: #8a8a8a;
+  --editor-danger-bg: #ebebeb;
+  --editor-danger-text: #2a2a2a;
+  --editor-toggle-on-border: #6b6b6b;
+  --editor-toggle-on-bg: #e8e8e8;
+  --editor-tag-border: #a3a3a3;
+  --editor-tag-bg: #f0f0f0;
+  --editor-tag-fg: #2a2a2a;
+  --editor-chain-bg: #fafafa;
+  --editor-chain-border: #d0d0d0;
+  --editor-subprompt-border: #cfcfcf;
+  --editor-placeholder-text: #8a8a8a;
+  --editor-toast-error-border: #8a8a8a;
+  --editor-toast-error-bg: #ebebeb;
+  --editor-toast-error-text: #2a2a2a;
+  --editor-empty-muted: #6b6b6b;
   --editor-settings-bg: #ffffff;
-  --editor-settings-border: #b8c5d6;
-  --editor-settings-shadow: 0 12px 28px rgb(15 23 42 / 12%);
-  --editor-settings-help: #4b5563;
-  --editor-settings-heading: #111827;
-  --editor-settings-checkbox: #1f2937;
-  --editor-error-text: #b91c1c;
-  --editor-backdrop: rgb(15 23 42 / 25%);
-  --editor-glass-surface: oklch(0.985 0.006 268);
-  --editor-glass-border: oklch(0.35 0.04 268 / 0.14);
+  --editor-settings-border: #d0d0d0;
+  --editor-settings-shadow: 0 12px 28px rgb(0 0 0 / 10%);
+  --editor-settings-help: #5c5c5c;
+  --editor-settings-heading: #141414;
+  --editor-settings-checkbox: #2a2a2a;
+  --editor-error-text: #4a4a4a;
+  --editor-backdrop: rgb(0 0 0 / 18%);
+  --editor-glass-surface: oklch(0.99 0 0);
+  --editor-glass-border: oklch(0.28 0 0 / 0.12);
   --editor-glass-fill-ratio: 82%;
   --editor-glass-veil: 12%;
   --editor-glass-blur: 58px;
-  --editor-glass-saturate: 1.24;
+  --editor-glass-saturate: 1;
   --editor-glass-brightness: 1.02;
   --editor-glass-shadow:
-    0 10px 34px oklch(0.32 0.035 268 / 0.12),
-    0 2px 10px oklch(0.32 0.035 268 / 0.06);
-  --editor-glass-inset: inset 0 1px 0 oklch(1 0.008 268 / 0.78);
-  --editor-glass-hairline: oklch(1 0.006 268 / 0.58);
-  --editor-sidebar-tint: oklch(0.97 0.01 268 / 0.72);
-  --editor-accent-soft: oklch(0.55 0.14 286 / 0.22);
-  --editor-accent-soft-solid: oklch(0.48 0.14 286);
-  --editor-scrollbar-thumb: oklch(0.52 0.02 268 / 0.28);
-  --editor-scrollbar-thumb-hover: oklch(0.48 0.025 268 / 0.4);
-  --editor-scrollbar-thumb-active: oklch(0.44 0.028 268 / 0.5);
+    0 10px 34px oklch(0 0 0 / 0.08),
+    0 2px 10px oklch(0 0 0 / 0.04);
+  --editor-glass-inset: inset 0 1px 0 oklch(1 0 0 / 0.72);
+  --editor-glass-hairline: oklch(0.35 0 0 / 0.12);
+  --editor-sidebar-tint: oklch(0.96 0 0 / 0.72);
+  --editor-accent-soft: oklch(0.55 0 0 / 0.2);
+  --editor-accent-soft-solid: oklch(0.42 0 0);
+  --editor-scrollbar-thumb: oklch(0.55 0 0 / 0.32);
+  --editor-scrollbar-thumb-hover: oklch(0.48 0 0 / 0.42);
+  --editor-scrollbar-thumb-active: oklch(0.42 0 0 / 0.5);
 }
 
 @media (prefers-contrast: more) {
   html[data-theme="dark"] {
-    --editor-border: #4a5870;
-    --editor-surface-row-border: #5a6a85;
-    --editor-control-border: #5a6a85;
-    --editor-input-border: #5a6a85;
-    --editor-settings-border: #5a6a85;
-    --editor-settings-bg: #171b23;
+    --editor-border: #6b6b6b;
+    --editor-surface-row-border: #6b6b6b;
+    --editor-control-border: #6b6b6b;
+    --editor-input-border: #6b6b6b;
+    --editor-settings-border: #6b6b6b;
+    --editor-settings-bg: #111111;
   }
 
   html[data-theme="light"] {
-    --editor-border: #64748b;
-    --editor-surface-row-border: #64748b;
-    --editor-control-border: #475569;
-    --editor-input-border: #475569;
-    --editor-settings-border: #64748b;
+    --editor-border: #525252;
+    --editor-surface-row-border: #525252;
+    --editor-control-border: #525252;
+    --editor-input-border: #525252;
+    --editor-settings-border: #525252;
     --editor-settings-bg: #ffffff;
   }
 
@@ -212,7 +211,7 @@ html[data-theme="light"] {
     background: var(--editor-glass-surface);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
-    box-shadow: 0 1px 0 oklch(0.5 0.02 268 / 0.12);
+    box-shadow: 0 1px 0 oklch(0.5 0 0 / 0.14);
   }
 }
 
@@ -367,13 +366,13 @@ html[data-theme="light"] {
 }
 
 .editor-caption-btn--close:hover {
-  background: #c42b1c;
-  color: #fff;
+  background: color-mix(in oklch, var(--editor-text) 85%, transparent);
+  color: var(--editor-bg);
 }
 
 .editor-caption-btn--close:active {
-  background: #a52318;
-  color: #fff;
+  background: color-mix(in oklch, var(--editor-text) 72%, transparent);
+  color: var(--editor-bg);
 }
 
 .editor-caption-icon-svg {
