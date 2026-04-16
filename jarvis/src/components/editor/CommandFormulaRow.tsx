@@ -395,7 +395,6 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   const [appQuery, setAppQuery] = useState(() => ("open_app" in action ? action.open_app.name : ""));
   const [appHits, setAppHits] = useState<AppIndexEntry[]>([]);
   const [appOpen, setAppOpen] = useState(false);
-  const [appLoading, setAppLoading] = useState(false);
   const [appHasSearched, setAppHasSearched] = useState(false);
   const [appEditing, setAppEditing] = useState(
     () => !("open_app" in action) || action.open_app.path.trim().length === 0,
@@ -426,7 +425,6 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     if (!("open_app" in action) || !appOpen) return;
     if (appTimer.current) window.clearTimeout(appTimer.current);
     appTimer.current = window.setTimeout(() => {
-      setAppLoading(true);
       void invoke<AppIndexEntry[]>("search_app_index", searchAppIndexInvokeArgs(appQuery, 56))
         .then((hits) => {
           setAppHits(hits);
@@ -435,9 +433,8 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
         .catch(() => {
           setAppHits([]);
           setAppHasSearched(true);
-        })
-        .finally(() => setAppLoading(false));
-    }, 160);
+        });
+    }, 200);
     return () => {
       if (appTimer.current) window.clearTimeout(appTimer.current);
     };
@@ -474,7 +471,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   const appSearchMeta = deriveAppSearchMeta({
     isOpen: appOpen,
     query: appQuery,
-    isLoading: appLoading,
+    isLoading: false,
     hasSearched: appHasSearched,
     hitCount: appHits.length,
   });
@@ -517,26 +514,15 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
             className={formulaArgInputClass()}
             value={appQuery}
             onChange={(e) => {
-              setAppQuery(e.target.value);
-              setAppHasSearched(false);
+              const v = e.target.value;
+              setAppQuery(v);
               setAppEditing(true);
               onChange({
-                open_app: { name: e.target.value, path: "" },
+                open_app: { name: v, path: "" },
               });
             }}
             onFocus={() => {
               setAppOpen(true);
-              setAppLoading(true);
-              void invoke<AppIndexEntry[]>("search_app_index", searchAppIndexInvokeArgs(appQuery, 56))
-                .then((hits) => {
-                  setAppHits(hits);
-                  setAppHasSearched(true);
-                })
-                .catch(() => {
-                  setAppHits([]);
-                  setAppHasSearched(true);
-                })
-                .finally(() => setAppLoading(false));
             }}
             onBlur={() => window.setTimeout(() => setAppOpen(false), 120)}
             placeholder="Search app…"

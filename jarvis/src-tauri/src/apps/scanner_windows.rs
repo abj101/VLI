@@ -14,7 +14,9 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_RAWPATH};
 use winreg::enums::*;
+use winreg::types::FromRegValue;
 use winreg::RegKey;
+use winreg::RegValue;
 
 struct ComApartment;
 
@@ -44,7 +46,103 @@ pub fn scan() -> Result<Vec<AppEntry>, String> {
     scan_uninstall_registry(&mut map)?;
     let _com = ComApartment::new()?;
     scan_start_menu(&mut map)?;
+    seed_windows_accessories(&mut map);
     Ok(map.into_values().collect())
+}
+
+/// Expand common `%...%` segments in registry paths (e.g. App Paths default `%SystemRoot%\\system32\\notepad.exe`).
+fn expand_windows_env_path(raw: &str) -> String {
+    let mut s = raw.to_string();
+    if let Ok(v) = std::env::var("SystemRoot") {
+        for pat in ["%SystemRoot%", "%SYSTEMROOT%", "%systemroot%"] {
+            s = s.replace(pat, &v);
+        }
+    }
+    if let Ok(v) = std::env::var("WINDIR") {
+        for pat in ["%WINDIR%", "%windir%"] {
+            s = s.replace(pat, &v);
+        }
+    }
+    if let Ok(v) = std::env::var("ProgramFiles") {
+        s = s.replace("%ProgramFiles%", &v);
+        s = s.replace("%PROGRAMFILES%", &v);
+    }
+    if let Ok(v) = std::env::var("ProgramFiles(x86)") {
+        s = s.replace("%ProgramFiles(x86)%", &v);
+        s = s.replace("%PROGRAMFILES(X86)%", &v);
+    }
+    if let Ok(v) = std::env::var("ProgramW6432") {
+        s = s.replace("%ProgramW6432%", &v);
+    }
+    if let Ok(v) = std::env::var("CommonProgramFiles") {
+        s = s.replace("%CommonProgramFiles%", &v);
+    }
+    if let Ok(v) = std::env::var("LOCALAPPDATA") {
+        s = s.replace("%LOCALAPPDATA%", &v);
+        s = s.replace("%localappdata%", &v);
+    }
+    if let Ok(v) = std::env::var("APPDATA") {
+        s = s.replace("%APPDATA%", &v);
+    }
+    if let Ok(v) = std::env::var("USERPROFILE") {
+        s = s.replace("%USERPROFILE%", &v);
+    }
+    if let Ok(v) = std::env::var("PUBLIC") {
+        s = s.replace("%PUBLIC%", &v);
+    }
+    s
+}
+
+fn reg_value_as_expanded_string(val: &RegValue) -> Option<String> {
+    let s = String::from_reg_value(val).ok()?;
+    let t = s.trim().trim_matches('"');
+    if t.is_empty() {
+        return None;
+    }
+    Some(expand_windows_env_path(t))
+}
+
+/// Reads the subkey's default `(Default)` value; `get_value("")` misses some builds, and values may be REG_EXPAND_SZ.
+fn reg_subkey_default_target(sub: &RegKey) -> Option<String> {
+    for res in sub.enum_values() {
+        let (name, val) = res.ok()?;
+        if !name.is_empty() {
+            continue;
+        }
+        if let Some(s) = reg_value_as_expanded_string(&val) {
+            return Some(s);
+        }
+    }
+    sub.get_value::<String, _>("")
+        .ok()
+        .map(|s| expand_windows_env_path(s.trim().trim_matches('"')))
+}
+
+fn seed_windows_accessories(map: &mut HashMap<String, AppEntry>) {
+    let sys = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("WINDIR"))
+        .unwrap_or_default();
+    if sys.is_empty() {
+        return;
+    }
+    const PAIRS: &[(&str, &str)] = &[
+        ("Notepad", r"System32\notepad.exe"),
+        ("Paint", r"System32\mspaint.exe"),
+        ("Snipping Tool", r"System32\SnippingTool.exe"),
+        ("Character Map", r"System32\charmap.exe"),
+        ("Windows Media Player", r"System32\wmplayer.exe"),
+    ];
+    for (name, rel) in PAIRS {
+        let p = Path::new(&sys).join(rel);
+        if !p.is_file() {
+            continue;
+        }
+        let exe_norm = std::fs::canonicalize(&p)
+            .unwrap_or_else(|_| p.to_path_buf())
+            .to_string_lossy()
+            .to_string();
+        insert_entry(map, exe_norm, (*name).into(), None);
+    }
 }
 
 /// `App Paths` maps `something.exe` → default value full path (broad coverage vs Uninstall alone).
@@ -69,8 +167,7 @@ fn scan_app_paths_registry(map: &mut HashMap<String, AppEntry>) -> Result<(), St
             let Ok(sub) = app_paths.open_subkey(&exe_key) else {
                 continue;
             };
-            // Default value holds the target path.
-            let Ok(target) = sub.get_value::<String, _>("") else {
+            let Some(target) = reg_subkey_default_target(&sub) else {
                 continue;
             };
             let t = target.trim().trim_matches('"');
@@ -145,19 +242,23 @@ fn scan_uninstall_registry(map: &mut HashMap<String, AppEntry>) -> Result<(), St
                 }
                 Err(_) => continue,
             };
+            let install_loc = sub
+                .get_value::<String, _>("InstallLocation")
+                .ok()
+                .map(|loc| expand_windows_env_path(loc.trim()));
             let exe = sub
                 .get_value::<String, _>("DisplayIcon")
                 .ok()
                 .and_then(|s| display_icon_to_exe(&s))
                 .or_else(|| {
-                    sub.get_value::<String, _>("InstallLocation")
-                        .ok()
-                        .and_then(|loc| install_location_guess(&display_name, &loc))
+                    install_loc
+                        .as_deref()
+                        .and_then(|loc| install_location_guess(&display_name, loc))
                 })
                 .or_else(|| {
-                    sub.get_value::<String, _>("InstallLocation")
-                        .ok()
-                        .and_then(|loc| install_dir_primary_exe(&loc, &display_name))
+                    install_loc
+                        .as_deref()
+                        .and_then(|loc| install_dir_primary_exe(loc, &display_name))
                 });
             let Some(exe_path) = exe else {
                 continue;
@@ -174,7 +275,8 @@ fn scan_uninstall_registry(map: &mut HashMap<String, AppEntry>) -> Result<(), St
 }
 
 fn display_icon_to_exe(raw: &str) -> Option<String> {
-    let trimmed = raw.trim().trim_matches('"');
+    let trimmed = expand_windows_env_path(raw.trim());
+    let trimmed = trimmed.trim_matches('"');
     let first = trimmed.split(',').next()?.trim();
     if first.is_empty() {
         return None;
@@ -499,5 +601,22 @@ mod tests {
         std::fs::write(dir.path().join("Tool.exe"), [0u8]).unwrap();
         let hit = install_dir_primary_exe(&dir.path().to_string_lossy(), "Unknown Product").expect("exe");
         assert!(hit.to_lowercase().ends_with("tool.exe"));
+    }
+
+    #[test]
+    fn expand_windows_env_path_replaces_systemroot() {
+        let Ok(sr) = std::env::var("SystemRoot") else {
+            return;
+        };
+        let out = super::expand_windows_env_path(r"%SystemRoot%\system32\notepad.exe");
+        assert!(
+            !out.contains('%'),
+            "expected expanded path, got {out:?}"
+        );
+        assert!(out.to_lowercase().contains("notepad.exe"));
+        assert!(
+            out.to_lowercase().starts_with(&sr.to_lowercase()),
+            "expected path under SystemRoot, got {out:?}"
+        );
     }
 }
