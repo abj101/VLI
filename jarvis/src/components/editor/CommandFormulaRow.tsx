@@ -19,6 +19,7 @@ import {
   type ActionKind,
   type FormModel,
 } from "./NodeForm.logic";
+import { searchAppIndexInvokeArgs } from "./appIndexInvoke";
 
 export type AppIndexEntry = {
   display_name: string;
@@ -355,6 +356,35 @@ type SegmentProps = {
   canRemove: boolean;
 };
 
+function AppIconImg({
+  iconUrl,
+  label,
+  className,
+}: {
+  iconUrl: string | null | undefined;
+  label: string;
+  className: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (!iconUrl || failed) {
+    return (
+      <span className={`${className} ${className}--fallback`} aria-hidden>
+        {label.trim().charAt(0).toUpperCase() || "A"}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={iconUrl}
+      alt=""
+      className={className}
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: SegmentProps) {
   const kind = getActionKind(action);
   const [kindQuery, setKindQuery] = useState(
@@ -373,6 +403,8 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   const [selectedAppIcon, setSelectedAppIcon] = useState<string | null>(null);
   const appTimer = useRef<number | null>(null);
 
+  /* Local pickers mirror `action` / `kind` from the parent when the node reloads or the segment kind changes. */
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional props → local state sync */
   useEffect(() => {
     if ("open_app" in action) {
       setAppQuery(action.open_app.name);
@@ -388,13 +420,14 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   useEffect(() => {
     setKindQuery(ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind);
   }, [kind]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (!("open_app" in action) || !appOpen) return;
     if (appTimer.current) window.clearTimeout(appTimer.current);
     appTimer.current = window.setTimeout(() => {
       setAppLoading(true);
-      void invoke<AppIndexEntry[]>("search_app_index", { query: appQuery, limit: 24 })
+      void invoke<AppIndexEntry[]>("search_app_index", searchAppIndexInvokeArgs(appQuery, 24))
         .then((hits) => {
           setAppHits(hits);
           setAppHasSearched(true);
@@ -460,26 +493,20 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
           <button
             type="button"
             className={`${formulaArgInputClass()} editor-formula-confirmed-chip`}
+            title={action.open_app.name || "App"}
             onClick={() => {
               setAppEditing(true);
               setAppOpen(false);
               setAppHasSearched(false);
             }}
-            aria-label={`Selected app ${action.open_app.name}. Click to edit.`}
+            aria-label={`Selected app ${action.open_app.name}. Click to change app.`}
           >
-            {selectedAppIcon ? (
-              <img
-                src={selectedAppIcon}
-                alt=""
-                className="editor-formula-suggest-icon"
-                loading="lazy"
-              />
-            ) : (
-              <span className="editor-formula-suggest-icon editor-formula-suggest-icon--fallback" aria-hidden>
-                {action.open_app.name.trim().charAt(0).toUpperCase() || "A"}
-              </span>
-            )}
-            <span className="editor-formula-confirmed-chip-label">{action.open_app.name || "App"}</span>
+            <AppIconImg
+              key={selectedAppIcon ?? `fallback:${action.open_app.path}`}
+              iconUrl={selectedAppIcon}
+              label={action.open_app.name || "App"}
+              className="editor-formula-suggest-icon"
+            />
           </button>
         );
       }
@@ -500,7 +527,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
             onFocus={() => {
               setAppOpen(true);
               setAppLoading(true);
-              void invoke<AppIndexEntry[]>("search_app_index", { query: appQuery, limit: 24 })
+              void invoke<AppIndexEntry[]>("search_app_index", searchAppIndexInvokeArgs(appQuery, 24))
                 .then((hits) => {
                   setAppHits(hits);
                   setAppHasSearched(true);
@@ -532,7 +559,9 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
                   <button
                     type="button"
                     role="option"
-                    className="editor-formula-suggest-btn"
+                    className="editor-formula-suggest-btn editor-formula-suggest-btn--icon-only"
+                    title={h.display_name}
+                    aria-label={`${h.display_name}, ${h.exe_path}`}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
                       onChange({ open_app: { name: h.display_name, path: h.exe_path } });
@@ -543,23 +572,13 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
                       setAppOpen(false);
                     }}
                   >
-                    <span className="editor-formula-suggest-app">
-                      {h.icon_data_url ? (
-                        <img
-                          src={h.icon_data_url}
-                          alt=""
-                          className="editor-formula-suggest-icon"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <span className="editor-formula-suggest-icon editor-formula-suggest-icon--fallback" aria-hidden>
-                          {h.display_name.trim().charAt(0).toUpperCase() || "A"}
-                        </span>
-                      )}
-                      <span>
-                        <span className="editor-formula-suggest-title">{h.display_name}</span>
-                        <span className="editor-formula-suggest-sub">{h.exe_path}</span>
-                      </span>
+                    <span className="editor-formula-suggest-app editor-formula-suggest-app--icon-only">
+                      <AppIconImg
+                        key={`${h.exe_path}:${h.icon_data_url ?? ""}`}
+                        iconUrl={h.icon_data_url}
+                        label={h.display_name}
+                        className="editor-formula-suggest-icon"
+                      />
                     </span>
                   </button>
                 </li>

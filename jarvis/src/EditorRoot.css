@@ -1461,15 +1461,20 @@ html[data-theme="light"] {
 .editor-formula-confirmed-chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  justify-content: flex-start;
+  justify-content: center;
+  gap: 0;
+  min-width: 36px;
+  padding-left: 8px;
+  padding-right: 8px;
 }
 
-.editor-formula-confirmed-chip-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.editor-formula-suggest-btn--icon-only {
+  justify-content: center;
+  padding: 6px 8px;
+}
+
+.editor-formula-suggest-app--icon-only {
+  justify-content: center;
 }
 
 .editor-formula-input--narrow {
