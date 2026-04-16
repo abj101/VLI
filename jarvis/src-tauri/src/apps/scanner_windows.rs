@@ -38,11 +38,77 @@ impl Drop for ComApartment {
 }
 
 pub fn scan() -> Result<Vec<AppEntry>, String> {
-    let _com = ComApartment::new()?;
     let mut map: HashMap<String, AppEntry> = HashMap::new();
+    // Fast registry pass: fills most launchers without shell COM (icons added later by merge).
+    scan_app_paths_registry(&mut map)?;
     scan_uninstall_registry(&mut map)?;
+    let _com = ComApartment::new()?;
     scan_start_menu(&mut map)?;
     Ok(map.into_values().collect())
+}
+
+/// `App Paths` maps `something.exe` → default value full path (broad coverage vs Uninstall alone).
+fn scan_app_paths_registry(map: &mut HashMap<String, AppEntry>) -> Result<(), String> {
+    const SUBPATH: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths";
+    const SUBPATH_WOW64: &str = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths";
+
+    for (root, subpath) in [
+        (HKEY_LOCAL_MACHINE, SUBPATH),
+        (HKEY_LOCAL_MACHINE, SUBPATH_WOW64),
+        (HKEY_CURRENT_USER, SUBPATH),
+    ] {
+        let hkey = RegKey::predef(root);
+        let Ok(app_paths) = hkey.open_subkey(subpath) else {
+            continue;
+        };
+        for exe_key in app_paths.enum_keys().filter_map(|e| e.ok()) {
+            let lower = exe_key.to_lowercase();
+            if !lower.ends_with(".exe") {
+                continue;
+            }
+            let Ok(sub) = app_paths.open_subkey(&exe_key) else {
+                continue;
+            };
+            // Default value holds the target path.
+            let Ok(target) = sub.get_value::<String, _>("") else {
+                continue;
+            };
+            let t = target.trim().trim_matches('"');
+            if t.is_empty() {
+                continue;
+            }
+            let path = Path::new(t);
+            if !path.is_absolute() {
+                continue;
+            }
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if !ext.eq_ignore_ascii_case("exe") || !path.exists() {
+                continue;
+            }
+            let exe_norm = std::fs::canonicalize(path)
+                .unwrap_or_else(|_| path.to_path_buf())
+                .to_string_lossy()
+                .to_string();
+            let display_name = display_name_from_app_paths_key(&exe_key);
+            // Skip per-exe icon extraction here (hundreds of keys); merge from Uninstall/Start Menu when present.
+            insert_entry(map, exe_norm, display_name, None);
+        }
+    }
+    Ok(())
+}
+
+fn display_name_from_app_paths_key(exe_key: &str) -> String {
+    let stem = if exe_key.len() >= 4 && exe_key[exe_key.len() - 4..].eq_ignore_ascii_case(".exe") {
+        &exe_key[..exe_key.len() - 4]
+    } else {
+        exe_key
+    };
+    let stem = stem.replace('_', " ");
+    let mut it = stem.chars();
+    match it.next() {
+        None => exe_key.to_string(),
+        Some(c) => c.to_uppercase().chain(it).collect(),
+    }
 }
 
 fn scan_uninstall_registry(map: &mut HashMap<String, AppEntry>) -> Result<(), String> {
@@ -87,6 +153,11 @@ fn scan_uninstall_registry(map: &mut HashMap<String, AppEntry>) -> Result<(), St
                     sub.get_value::<String, _>("InstallLocation")
                         .ok()
                         .and_then(|loc| install_location_guess(&display_name, &loc))
+                })
+                .or_else(|| {
+                    sub.get_value::<String, _>("InstallLocation")
+                        .ok()
+                        .and_then(|loc| install_dir_primary_exe(&loc, &display_name))
                 });
             let Some(exe_path) = exe else {
                 continue;
@@ -148,6 +219,86 @@ fn install_location_guess(display_name: &str, loc: &str) -> Option<String> {
     None
 }
 
+fn install_dir_skipped_stem(stem: &str) -> bool {
+    let s = stem.to_lowercase();
+    const SKIP: &[&str] = &[
+        "uninstall",
+        "unins000",
+        "unins001",
+        "unins002",
+        "setup",
+        "install",
+        "update",
+        "maintenanceservice",
+        "crashreporter",
+        "elevate",
+        "vc_redist",
+    ];
+    SKIP.iter().any(|p| s.contains(p))
+}
+
+/// When `DisplayIcon` / `{Name}.exe` in install dir miss, pick a plausible `.exe` in that folder.
+fn install_dir_primary_exe(install_loc: &str, display_name: &str) -> Option<String> {
+    let dir = Path::new(install_loc.trim());
+    if !dir.is_dir() {
+        return None;
+    }
+    let exes: Vec<PathBuf> = std::fs::read_dir(dir).ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.extension()
+                    .and_then(|x| x.to_str())
+                    .map(|x| x.eq_ignore_ascii_case("exe"))
+                    .unwrap_or(false)
+        })
+        .filter(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|st| !install_dir_skipped_stem(st))
+                .unwrap_or(true)
+        })
+        .collect();
+    if exes.is_empty() {
+        return None;
+    }
+    let dn = display_name.to_lowercase();
+    let mut best: Option<(usize, PathBuf)> = None;
+    for p in exes.iter() {
+        let stem = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if stem.len() < 2 {
+            continue;
+        }
+        let score = if dn.contains(&stem) {
+            1000 + stem.len()
+        } else {
+            0
+        };
+        if score == 0 {
+            continue;
+        }
+        let replace = match &best {
+            None => true,
+            Some((s, _)) => score > *s,
+        };
+        if replace {
+            best = Some((score, p.clone()));
+        }
+    }
+    if let Some((_, p)) = best {
+        return Some(p.to_string_lossy().to_string());
+    }
+    if exes.len() == 1 {
+        return Some(exes[0].to_string_lossy().to_string());
+    }
+    None
+}
+
 fn scan_start_menu(map: &mut HashMap<String, AppEntry>) -> Result<(), String> {
     let shell_link: IShellLinkW =
         unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }
@@ -160,6 +311,12 @@ fn scan_start_menu(map: &mut HashMap<String, AppEntry>) -> Result<(), String> {
     }
     if let Ok(ad) = std::env::var("APPDATA") {
         roots.push(PathBuf::from(ad).join(r"Microsoft\Windows\Start Menu\Programs"));
+    }
+    if let Ok(la) = std::env::var("LOCALAPPDATA") {
+        roots.push(PathBuf::from(la).join(r"Microsoft\Windows\Start Menu\Programs"));
+    }
+    if let Ok(public) = std::env::var("PUBLIC") {
+        roots.push(PathBuf::from(public).join("Desktop"));
     }
 
     for root in roots {
@@ -305,5 +462,42 @@ mod tests {
             stored.icon_data_url.as_deref(),
             Some("data:image/png;base64,AAA=")
         );
+    }
+
+    #[test]
+    fn display_name_from_app_paths_key_title_cases_stem() {
+        assert_eq!(display_name_from_app_paths_key("firefox.exe"), "Firefox");
+        assert_eq!(display_name_from_app_paths_key("WINWORD.EXE"), "WINWORD");
+        assert_eq!(display_name_from_app_paths_key("code.exe"), "Code");
+    }
+
+    #[test]
+    fn install_dir_primary_exe_prefers_stem_contained_in_display_name() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Discord.exe"), [0u8]).unwrap();
+        std::fs::write(dir.path().join("Uninstall.exe"), [0u8]).unwrap();
+        std::fs::write(dir.path().join("Helper.exe"), [0u8]).unwrap();
+        let hit = install_dir_primary_exe(
+            &dir.path().to_string_lossy(),
+            "Discord (some channel)",
+        )
+        .expect("match");
+        assert!(hit.to_lowercase().contains("discord.exe"));
+    }
+
+    #[test]
+    fn install_dir_primary_exe_none_when_only_installer_exes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Uninstall.exe"), [0u8]).unwrap();
+        std::fs::write(dir.path().join("Setup.exe"), [0u8]).unwrap();
+        assert!(install_dir_primary_exe(&dir.path().to_string_lossy(), "Some App").is_none());
+    }
+
+    #[test]
+    fn install_dir_primary_exe_picks_sole_survivor() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Tool.exe"), [0u8]).unwrap();
+        let hit = install_dir_primary_exe(&dir.path().to_string_lossy(), "Unknown Product").expect("exe");
+        assert!(hit.to_lowercase().ends_with("tool.exe"));
     }
 }

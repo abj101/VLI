@@ -427,7 +427,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     if (appTimer.current) window.clearTimeout(appTimer.current);
     appTimer.current = window.setTimeout(() => {
       setAppLoading(true);
-      void invoke<AppIndexEntry[]>("search_app_index", searchAppIndexInvokeArgs(appQuery, 24))
+      void invoke<AppIndexEntry[]>("search_app_index", searchAppIndexInvokeArgs(appQuery, 56))
         .then((hits) => {
           setAppHits(hits);
           setAppHasSearched(true);
@@ -527,7 +527,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
             onFocus={() => {
               setAppOpen(true);
               setAppLoading(true);
-              void invoke<AppIndexEntry[]>("search_app_index", searchAppIndexInvokeArgs(appQuery, 24))
+              void invoke<AppIndexEntry[]>("search_app_index", searchAppIndexInvokeArgs(appQuery, 56))
                 .then((hits) => {
                   setAppHits(hits);
                   setAppHasSearched(true);
@@ -555,7 +555,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
                 </li>
               )}
               {appHits.map((h) => (
-                <li key={h.exe_path} role="none" className="editor-formula-suggest-li--icon">
+                <li key={h.exe_path} role="none">
                   <button
                     type="button"
                     role="option"
@@ -579,9 +579,6 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
                         label={h.display_name}
                         className="editor-formula-suggest-icon"
                       />
-                      <span className="editor-formula-suggest-hover-label" aria-hidden="true">
-                        {h.display_name}
-                      </span>
                     </span>
                   </button>
                 </li>

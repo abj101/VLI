@@ -1350,7 +1350,20 @@ fn search_app_index(
         .map_err(|_| "app index store poisoned".to_string())?;
     let q = payload.query.trim().to_lowercase();
     if q.is_empty() {
-        return Ok(entries.iter().take(limit).cloned().collect());
+        let mut idx: Vec<usize> = (0..entries.len()).collect();
+        idx.sort_by(|&i, &j| {
+            entries[i]
+                .display_name
+                .to_lowercase()
+                .cmp(&entries[j].display_name.to_lowercase())
+                .then_with(|| entries[i].exe_path.cmp(&entries[j].exe_path))
+        });
+        return Ok(
+            idx.into_iter()
+                .take(limit)
+                .map(|i| entries[i].clone())
+                .collect(),
+        );
     }
     Ok(entries
         .iter()
