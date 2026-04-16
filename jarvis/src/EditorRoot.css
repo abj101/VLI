@@ -86,20 +86,29 @@ html[data-theme="dark"] {
   --editor-settings-checkbox: #e5e7eb;
   --editor-error-text: #ff9ca9;
   --editor-backdrop: rgb(0 0 0 / 35%);
-  /* Frosted glass — same recipe as HUD (.hud-root) for luxury-quiet continuity */
+  /*
+   * Frosted glass — values mirror --hud-glass-* in App.css; see “JARVIS frosted glass”
+   * comment there for the full recipe (layers, shadows, accessibility).
+   */
   --editor-glass-surface: oklch(0.14 0.012 268);
   --editor-glass-border: oklch(0.96 0.01 268 / 0.12);
   --editor-glass-fill-ratio: 93%;
   --editor-glass-veil: 20%;
-  --editor-glass-blur: 52px;
-  --editor-glass-saturate: 1.32;
-  /* Tighter than before: large outer blur reads as a square halo on transparent Win32 hosts. */
-  --editor-glass-shadow: 0 8px 28px oklch(0.04 0.03 268 / 0.32);
+  --editor-glass-blur: 50px;
+  --editor-glass-saturate: 1.28;
+  --editor-glass-brightness: 1.03;
+  /* Modest spread: large blur reads as a square halo on transparent Win32 hosts. */
+  --editor-glass-shadow:
+    0 10px 36px oklch(0.04 0.03 268 / 0.42),
+    0 2px 10px oklch(0.04 0.03 268 / 0.24);
   --editor-glass-inset: inset 0 1px 0 oklch(0.97 0.012 268 / 0.22);
   --editor-glass-hairline: oklch(0.94 0.014 268 / 0.32);
   --editor-sidebar-tint: oklch(0.17 0.014 268 / 0.55);
   --editor-accent-soft: oklch(0.58 0.12 286 / 0.35);
   --editor-accent-soft-solid: oklch(0.62 0.11 286);
+  --editor-scrollbar-thumb: oklch(0.72 0.02 268 / 0.34);
+  --editor-scrollbar-thumb-hover: oklch(0.76 0.022 268 / 0.48);
+  --editor-scrollbar-thumb-active: oklch(0.79 0.023 268 / 0.58);
 }
 
 html[data-theme="light"] {
@@ -151,14 +160,20 @@ html[data-theme="light"] {
   --editor-glass-border: oklch(0.35 0.04 268 / 0.14);
   --editor-glass-fill-ratio: 96%;
   --editor-glass-veil: 14%;
-  --editor-glass-blur: 56px;
-  --editor-glass-saturate: 1.2;
-  --editor-glass-shadow: 0 6px 22px oklch(0.32 0.035 268 / 0.1);
+  --editor-glass-blur: 54px;
+  --editor-glass-saturate: 1.22;
+  --editor-glass-brightness: 1.01;
+  --editor-glass-shadow:
+    0 10px 34px oklch(0.32 0.035 268 / 0.12),
+    0 2px 10px oklch(0.32 0.035 268 / 0.06);
   --editor-glass-inset: inset 0 1px 0 oklch(1 0.008 268 / 0.78);
   --editor-glass-hairline: oklch(1 0.006 268 / 0.58);
   --editor-sidebar-tint: oklch(0.97 0.01 268 / 0.72);
   --editor-accent-soft: oklch(0.55 0.14 286 / 0.22);
   --editor-accent-soft-solid: oklch(0.48 0.14 286);
+  --editor-scrollbar-thumb: oklch(0.52 0.02 268 / 0.28);
+  --editor-scrollbar-thumb-hover: oklch(0.48 0.025 268 / 0.4);
+  --editor-scrollbar-thumb-active: oklch(0.44 0.028 268 / 0.5);
 }
 
 @media (prefers-contrast: more) {
@@ -207,6 +222,37 @@ html[data-theme="light"] {
   }
 }
 
+.editor-app *,
+.editor-app *::before,
+.editor-app *::after {
+  scrollbar-width: thin;
+  scrollbar-color: var(--editor-scrollbar-thumb) transparent;
+}
+
+.editor-app *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.editor-app *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.editor-app *::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  background-color: var(--editor-scrollbar-thumb);
+}
+
+.editor-app *::-webkit-scrollbar-thumb:hover {
+  background-color: var(--editor-scrollbar-thumb-hover);
+}
+
+.editor-app *::-webkit-scrollbar-thumb:active {
+  background-color: var(--editor-scrollbar-thumb-active);
+}
+
 .editor-app {
   box-sizing: border-box;
   height: 100%;
@@ -226,7 +272,7 @@ html[data-theme="light"] {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 212px minmax(0, 1fr);
+  grid-template-columns: 120px minmax(0, 1fr);
   grid-template-rows: 34px minmax(0, 1fr);
   overflow: hidden;
   border-radius: var(--editor-shell-radius);
@@ -347,8 +393,8 @@ html[data-theme="light"] {
   grid-row: 2;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 12px 10px 14px;
+  gap: 12px;
+  padding: 10px 8px 12px;
   min-height: 0;
   border-right: 1px solid color-mix(in oklch, var(--editor-glass-hairline) 75%, transparent);
   background: color-mix(in oklch, var(--editor-sidebar-tint) 88%, transparent);
@@ -386,32 +432,33 @@ html[data-theme="light"] {
 .editor-app-nav-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .editor-app-nav-label {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--editor-muted);
-  padding: 0 8px 4px;
+  padding: 0 6px 2px;
 }
 
 .editor-app-nav-btn {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
   margin: 0;
-  padding: 6px 8px;
+  padding: 5px 7px;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: var(--editor-text);
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1.25;
   text-align: left;
   cursor: pointer;
 }
@@ -450,13 +497,20 @@ html[data-theme="light"] {
   color: var(--editor-text);
   background:
     linear-gradient(
+      165deg,
+      color-mix(in oklch, var(--editor-glass-hairline) 38%, transparent) 0%,
+      transparent 40%
+    ),
+    linear-gradient(
       180deg,
       color-mix(in oklch, var(--editor-glass-surface) calc(var(--editor-glass-veil) + 6%), transparent) 0%,
       transparent 48%
     ),
     color-mix(in oklch, var(--editor-glass-surface) var(--editor-glass-fill-ratio), transparent);
-  backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate));
-  -webkit-backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate));
+  backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate))
+    brightness(var(--editor-glass-brightness));
+  -webkit-backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate))
+    brightness(var(--editor-glass-brightness));
   box-shadow:
     var(--editor-glass-shadow),
     var(--editor-glass-inset),
@@ -647,13 +701,18 @@ html[data-theme="light"] {
   border: 1px solid var(--editor-glass-border);
   background:
     linear-gradient(
+      165deg,
+      color-mix(in oklch, var(--editor-glass-hairline) 38%, transparent) 0%,
+      transparent 40%
+    ),
+    linear-gradient(
       180deg,
       color-mix(in oklch, var(--editor-glass-surface) calc(var(--editor-glass-veil) + 4%), transparent) 0%,
       transparent 40%
     ),
     color-mix(in oklch, var(--editor-glass-surface) 94%, transparent);
-  backdrop-filter: blur(28px) saturate(1.2);
-  -webkit-backdrop-filter: blur(28px) saturate(1.2);
+  backdrop-filter: blur(28px) saturate(1.2) brightness(var(--editor-glass-brightness));
+  -webkit-backdrop-filter: blur(28px) saturate(1.2) brightness(var(--editor-glass-brightness));
   box-shadow: var(--editor-glass-shadow), var(--editor-glass-inset), inset 0 0 0 1px var(--editor-glass-hairline);
 }
 
@@ -803,8 +862,17 @@ html[data-theme="light"] {
   border: 1px solid var(--editor-tag-border);
   background: var(--editor-tag-bg);
   color: var(--editor-tag-fg);
-  border-radius: 999px;
+  border-radius: 8px;
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 110px;
   font-size: 11px;
+  line-height: 1.3;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   padding: 6px 10px;
   cursor: pointer;
   min-height: 36px;
@@ -942,13 +1010,20 @@ html[data-theme="light"] {
   color: var(--editor-text);
   background:
     linear-gradient(
+      165deg,
+      color-mix(in oklch, var(--editor-glass-hairline) 38%, transparent) 0%,
+      transparent 40%
+    ),
+    linear-gradient(
       180deg,
       color-mix(in oklch, var(--editor-glass-surface) calc(var(--editor-glass-veil) + 6%), transparent) 0%,
       transparent 48%
     ),
     color-mix(in oklch, var(--editor-glass-surface) var(--editor-glass-fill-ratio), transparent);
-  backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate));
-  -webkit-backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate));
+  backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate))
+    brightness(var(--editor-glass-brightness));
+  -webkit-backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate))
+    brightness(var(--editor-glass-brightness));
   box-shadow:
     var(--editor-glass-shadow),
     var(--editor-glass-inset),
@@ -1196,13 +1271,20 @@ html[data-theme="light"] {
   color: var(--editor-text);
   background:
     linear-gradient(
+      165deg,
+      color-mix(in oklch, var(--editor-glass-hairline) 38%, transparent) 0%,
+      transparent 40%
+    ),
+    linear-gradient(
       180deg,
       color-mix(in oklch, var(--editor-glass-surface) calc(var(--editor-glass-veil) + 6%), transparent) 0%,
       transparent 48%
     ),
     color-mix(in oklch, var(--editor-glass-surface) var(--editor-glass-fill-ratio), transparent);
-  backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate));
-  -webkit-backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate));
+  backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate))
+    brightness(var(--editor-glass-brightness));
+  -webkit-backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate))
+    brightness(var(--editor-glass-brightness));
   box-shadow:
     var(--editor-glass-shadow),
     var(--editor-glass-inset),
@@ -1350,15 +1432,52 @@ html[data-theme="light"] {
   min-width: 120px;
 }
 
+.editor-formula-input--phrase {
+  min-width: 7ch;
+  max-width: min(36ch, 100%);
+  flex: 0 1 14ch;
+  width: auto;
+  field-sizing: content;
+}
+
+.editor-formula-input--kind {
+  min-width: 9ch;
+  max-width: min(18ch, 100%);
+  flex: 0 1 12ch;
+  width: auto;
+  field-sizing: content;
+}
+
 .editor-formula-input--arg {
   min-width: 140px;
   flex: 1 1 160px;
+  padding-right: 30px;
+}
+
+.editor-formula-input--autogrow {
+  width: auto;
+  field-sizing: content;
+}
+
+.editor-formula-confirmed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.editor-formula-confirmed-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editor-formula-input--narrow {
   min-width: 72px;
   max-width: 100px;
   flex: none;
+  padding-right: 30px;
 }
 
 .editor-formula-eq {
@@ -1424,6 +1543,7 @@ html[data-theme="light"] {
   display: flex;
   align-items: flex-start;
   min-width: 0;
+  position: relative;
 }
 
 .editor-formula-suggest {
@@ -1441,21 +1561,25 @@ html[data-theme="light"] {
   border: 1px solid var(--editor-glass-border);
   background:
     linear-gradient(
+      165deg,
+      color-mix(in oklch, var(--editor-glass-hairline) 38%, transparent) 0%,
+      transparent 40%
+    ),
+    linear-gradient(
       180deg,
       color-mix(in oklch, var(--editor-glass-surface) calc(var(--editor-glass-veil) + 4%), transparent) 0%,
       transparent 40%
     ),
     color-mix(in oklch, var(--editor-glass-surface) 94%, transparent);
-  backdrop-filter: blur(24px) saturate(1.15);
-  -webkit-backdrop-filter: blur(24px) saturate(1.15);
+  backdrop-filter: blur(24px) saturate(1.15) brightness(var(--editor-glass-brightness));
+  -webkit-backdrop-filter: blur(24px) saturate(1.15) brightness(var(--editor-glass-brightness));
   box-shadow: var(--editor-glass-shadow), inset 0 0 0 1px var(--editor-glass-hairline);
 }
 
 .editor-formula-suggest-btn {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   margin: 0;
   padding: 8px 9px;
@@ -1473,11 +1597,49 @@ html[data-theme="light"] {
   background: color-mix(in oklch, var(--editor-control-bg) 55%, transparent);
 }
 
+.editor-formula-suggest-meta {
+  font-size: 10px;
+  color: var(--editor-muted);
+  padding: 5px 9px 4px;
+}
+
+.editor-formula-suggest-status {
+  font-size: 12px;
+  color: var(--editor-muted);
+  padding: 8px 9px;
+}
+
+.editor-formula-suggest-app {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.editor-formula-suggest-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  flex: none;
+}
+
+.editor-formula-suggest-icon--fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in oklch, var(--editor-control-bg) 70%, transparent);
+  color: var(--editor-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .editor-formula-suggest-title {
+  display: block;
   font-weight: 600;
 }
 
 .editor-formula-suggest-sub {
+  display: block;
   font-size: 10px;
   color: var(--editor-muted);
   word-break: break-all;
@@ -1505,17 +1667,37 @@ html[data-theme="light"] {
   background: color-mix(in oklch, var(--editor-control-bg) 40%, transparent);
 }
 
-.editor-formula-remove {
-  min-width: 32px;
-  min-height: 32px;
-  border-radius: 6px;
-  border: 1px solid var(--editor-control-border);
-  background: var(--editor-control-bg);
+.editor-formula-remove-inline {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
   color: var(--editor-muted);
   cursor: pointer;
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1;
+  border-radius: 4px;
   padding: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.editor-formula-remove-inline:hover {
+  color: var(--editor-error-text);
+  background: color-mix(in oklch, var(--editor-danger-bg) 28%, transparent);
+}
+
+.editor-formula-segment:hover .editor-formula-remove-inline,
+.editor-formula-segment:focus-within .editor-formula-remove-inline {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .editor-command-trail {

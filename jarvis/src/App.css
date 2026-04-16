@@ -71,6 +71,35 @@ body {
   background-color: var(--app-scrollbar-thumb-active);
 }
 
+/*
+ * -----------------------------------------------------------------------------
+ * JARVIS frosted glass (shared finish)
+ * -----------------------------------------------------------------------------
+ * Canonical token names live on the HUD scope below (--hud-glass-*). The editor
+ * mirrors the same *values* as --editor-glass-* in EditorRoot.css so overlays
+ * and the command editor read as one system.
+ *
+ * Recipe (apply in this order):
+ *   1. Optional diagonal sheen (uses --*-glass-hairline) — catches light on the
+ *      top-leading edge without a second border radius (avoids clashing with
+ *      the Win32/DWM window curve).
+ *   2. Vertical veil — slightly denser frost at the top; ties to --*-glass-veil.
+ *   3. Base tint — color-mix(surface, --*-glass-fill-ratio); high ratio keeps
+ *      the panel readable over busy wallpapers.
+ *   4. backdrop-filter — blur + saturate + brightness; blur/saturation sell
+ *      the glass; brightness lifts dark tints slightly.
+ *   5. box-shadow — ambient + contact (comma-separated), then inset top lip,
+ *      then 1px inner hairline. Keep outer spread modest on transparent hosts
+ *      (avoids a square halo vs DWM rounding).
+ *   6. border — 1px using --hud-border / --editor-glass-border (HUD only uses
+ *      border on .hud-root; editor panels often omit outer border on nested
+ *      glass).
+ *
+ * Accessibility: @media (prefers-contrast: more) should drop blur and use flat
+ * --*-surface / --editor-bg.
+ * -----------------------------------------------------------------------------
+ */
+
 /* HUD tokens: scoped so system light/dark can swap without touching the editor shell. */
 .hud-panel-fill {
   width: 100%;
@@ -94,12 +123,15 @@ body {
   --hud-tag-border: oklch(0.72 0.06 250 / 0.35);
   --hud-tag-text: oklch(0.86 0.04 250);
   --hud-match-text: oklch(0.82 0.05 248);
-  /* Frosted glass: heavy blur + very high-opacity tint (dense frost, not a wash). */
+  /* Frosted glass — keep in sync with --editor-glass-* in EditorRoot.css */
   --hud-glass-fill-ratio: 93%;
   --hud-glass-veil: 20%;
-  --hud-glass-blur: 52px;
-  --hud-glass-saturate: 1.32;
-  --hud-glass-shadow: 0 14px 44px oklch(0.04 0.03 268 / 0.62);
+  --hud-glass-blur: 50px;
+  --hud-glass-saturate: 1.28;
+  --hud-glass-brightness: 1.03;
+  --hud-glass-shadow:
+    0 10px 36px oklch(0.04 0.03 268 / 0.42),
+    0 2px 10px oklch(0.04 0.03 268 / 0.24);
   --hud-glass-inset: inset 0 1px 0 oklch(0.97 0.012 268 / 0.22);
   /* Inner hairline: slightly brighter than --hud-border so the frosted edge catches light. */
   --hud-glass-hairline: oklch(0.94 0.014 268 / 0.32);
@@ -131,9 +163,12 @@ body {
     --hud-match-text: oklch(0.4 0.08 255);
     --hud-glass-fill-ratio: 96%;
     --hud-glass-veil: 14%;
-    --hud-glass-blur: 56px;
-    --hud-glass-saturate: 1.2;
-    --hud-glass-shadow: 0 14px 40px oklch(0.32 0.035 268 / 0.16);
+    --hud-glass-blur: 54px;
+    --hud-glass-saturate: 1.22;
+    --hud-glass-brightness: 1.01;
+    --hud-glass-shadow:
+      0 10px 34px oklch(0.32 0.035 268 / 0.12),
+      0 2px 10px oklch(0.32 0.035 268 / 0.06);
     --hud-glass-inset: inset 0 1px 0 oklch(1 0.008 268 / 0.78);
     --hud-glass-hairline: oklch(1 0.006 268 / 0.58);
   }
@@ -152,19 +187,26 @@ body {
   color: var(--hud-text);
   background:
     linear-gradient(
+      165deg,
+      color-mix(in oklch, var(--hud-glass-hairline) 38%, transparent) 0%,
+      transparent 40%
+    ),
+    linear-gradient(
       180deg,
       color-mix(in oklch, var(--hud-surface) calc(var(--hud-glass-veil) + 6%), transparent) 0%,
       transparent 48%
     ),
     color-mix(in oklch, var(--hud-surface) var(--hud-glass-fill-ratio), transparent);
-  backdrop-filter: blur(var(--hud-glass-blur)) saturate(var(--hud-glass-saturate));
-  -webkit-backdrop-filter: blur(var(--hud-glass-blur)) saturate(var(--hud-glass-saturate));
+  backdrop-filter: blur(var(--hud-glass-blur)) saturate(var(--hud-glass-saturate))
+    brightness(var(--hud-glass-brightness));
+  -webkit-backdrop-filter: blur(var(--hud-glass-blur)) saturate(var(--hud-glass-saturate))
+    brightness(var(--hud-glass-brightness));
   box-shadow:
     var(--hud-glass-shadow),
     var(--hud-glass-inset),
     inset 0 0 0 1px var(--hud-glass-hairline);
   border: 1px solid var(--hud-border);
-  border-radius: var(--hud-shell-radius);
+  border-radius: 0;
   isolation: isolate;
   transform: translateZ(0);
 }
