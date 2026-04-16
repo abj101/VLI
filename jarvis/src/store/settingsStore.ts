@@ -2,12 +2,14 @@ import { create } from "zustand";
 
 export type SettingsUiState = {
   appIndexCount: number | null;
-  setAppIndexCount: (count: number) => void;
+  appIndexScanning: boolean;
+  setAppIndexStatus: (status: { count: number; scanning: boolean }) => void;
 };
 
 export const useSettingsStore = create<SettingsUiState>((set) => ({
   appIndexCount: null,
-  setAppIndexCount(count) {
-    set({ appIndexCount: count });
+  appIndexScanning: false,
+  setAppIndexStatus({ count, scanning }) {
+    set({ appIndexCount: count, appIndexScanning: scanning });
   },
 }));

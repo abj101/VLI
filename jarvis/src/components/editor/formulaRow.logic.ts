@@ -34,6 +34,10 @@ type DeriveAppSearchMetaInput = {
   isLoading: boolean;
   hasSearched: boolean;
   hitCount: number;
+  /** Known installed-app index size. `null` = not yet reported, `0` = empty. */
+  indexCount?: number | null;
+  /** Is a background scan currently running? */
+  isScanning?: boolean;
 };
 
 type AppSearchMeta = {
@@ -48,12 +52,23 @@ export function deriveAppSearchMeta(input: DeriveAppSearchMetaInput): AppSearchM
   if (input.isLoading) {
     return { statusText: "Searching…", countText: null };
   }
+  // Tell the user we're scanning **only** while a scan is actually in flight
+  // or the index has never reported (`null`). Once a scan has finished with
+  // a result — even zero entries — we fall through to the usual no-match
+  // messaging so the dropdown isn't stuck on "Indexing apps…" forever.
+  const countKnown = input.indexCount !== undefined && input.indexCount !== null;
+  if (input.isScanning || (!countKnown && input.hitCount === 0)) {
+    return { statusText: "Indexing apps…", countText: null };
+  }
   const hasQuery = input.query.trim().length > 0;
   if (!hasQuery || !input.hasSearched) {
     return { statusText: null, countText: null };
   }
   if (input.hitCount === 0) {
-    return { statusText: "No apps found", countText: null };
+    return {
+      statusText: `No apps match "${input.query.trim()}"`,
+      countText: null,
+    };
   }
   return {
     statusText: null,

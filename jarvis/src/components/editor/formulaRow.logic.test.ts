@@ -25,8 +25,45 @@ describe("deriveAppSearchMeta", () => {
       isLoading: false,
       hasSearched: true,
       hitCount: 0,
+      indexCount: 120,
     });
-    expect(meta.statusText).toBe("No apps found");
+    expect(meta.statusText).toBe('No apps match "missing app"');
+  });
+
+  it("shows indexing status when the app index has not been populated yet", () => {
+    const pending = deriveAppSearchMeta({
+      isOpen: true,
+      query: "notepad",
+      isLoading: false,
+      hasSearched: true,
+      hitCount: 0,
+      indexCount: null,
+    });
+    expect(pending.statusText).toBe("Indexing apps…");
+
+    const scanning = deriveAppSearchMeta({
+      isOpen: true,
+      query: "",
+      isLoading: false,
+      hasSearched: false,
+      hitCount: 0,
+      indexCount: 0,
+      isScanning: true,
+    });
+    expect(scanning.statusText).toBe("Indexing apps…");
+  });
+
+  it("stops showing indexing status once a scan has completed even if empty", () => {
+    const scanDoneButEmpty = deriveAppSearchMeta({
+      isOpen: true,
+      query: "notepad",
+      isLoading: false,
+      hasSearched: true,
+      hitCount: 0,
+      indexCount: 0,
+      isScanning: false,
+    });
+    expect(scanDoneButEmpty.statusText).toBe('No apps match "notepad"');
   });
 
   it("shows found-count feedback when matches exist", () => {

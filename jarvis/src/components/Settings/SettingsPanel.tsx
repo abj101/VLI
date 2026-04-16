@@ -59,6 +59,8 @@ export function SettingsPanel({
   activeNav,
 }: SettingsPanelProps) {
   const appIndexCount = useSettingsStore((s) => s.appIndexCount);
+  const appIndexScanning = useSettingsStore((s) => s.appIndexScanning);
+  const [rescanning, setRescanning] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [hotkey, setHotkey] = useState("ctrl+shift+j");
@@ -736,8 +738,27 @@ export function SettingsPanel({
                 <section className="editor-settings-section">
                   <h4>App index</h4>
                   <p className="editor-settings-help" role="status">
-                    Indexed apps: {appIndexCount === null ? "…" : appIndexCount}
+                    Indexed apps:{" "}
+                    {appIndexCount === null
+                      ? "…"
+                      : appIndexCount.toLocaleString()}
+                    {appIndexScanning ? " (scanning…)" : ""}
                   </p>
+                  <button
+                    type="button"
+                    className="editor-settings-secondary-btn"
+                    disabled={rescanning || appIndexScanning}
+                    onClick={() => {
+                      setRescanning(true);
+                      void invoke("rescan_app_index")
+                        .catch((err: unknown) => {
+                          setToastText(formatUserError(err, "Rescan failed."));
+                        })
+                        .finally(() => setRescanning(false));
+                    }}
+                  >
+                    {rescanning || appIndexScanning ? "Rescanning…" : "Rescan now"}
+                  </button>
                 </section>
               </div>
             )}

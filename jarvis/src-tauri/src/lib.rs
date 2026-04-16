@@ -47,6 +47,13 @@ type CommandCache = Arc<RwLock<Vec<db::CommandNode>>>;
 /// Cached installed-app entries for `OpenApp` resolution (path optional).
 type AppIndexStore = Arc<RwLock<Vec<apps::AppEntry>>>;
 
+/// `true` while a background app-index scan is in-flight. The settings panel
+/// reads this via [`get_app_index_status`] to render "Indexing apps…" only
+/// while a scan is actually running — previously the UI had no way to
+/// distinguish "scan finished with 0 apps" from "scan still working".
+#[derive(Default)]
+struct AppIndexScanning(AtomicBool);
+
 const APP_INDEX_CACHE_MAX_AGE_SECS: u64 = 24 * 60 * 60;
 
 fn now_unix_secs() -> i64 {
@@ -75,24 +82,68 @@ fn refresh_app_index_on_startup(app: &AppHandle, store: &AppIndexStore) -> Resul
         .read()
         .map_err(|_| "app index lock poisoned".to_string())?
         .len();
-    let _ = app.emit(APP_INDEX_READY_EVENT, serde_json::json!({ "count": count }));
+    let _ = app.emit(
+        APP_INDEX_READY_EVENT,
+        serde_json::json!({ "count": count, "scanning": stale || count == 0 }),
+    );
     if stale || count == 0 {
-        let app_h = app.clone();
-        let st = Arc::clone(store);
-        std::thread::spawn(move || {
-            let scanned = apps::scan_installed_apps();
-            let unix = now_unix_secs();
-            if let Ok(conn) = open_db_connection(&app_h) {
-                let _ = db::replace_app_index(&conn, &scanned, unix);
-            }
-            if let Ok(mut g) = st.write() {
-                *g = scanned;
-            }
-            let n = st.read().map(|g| g.len()).unwrap_or(0);
-            let _ = app_h.emit(APP_INDEX_READY_EVENT, serde_json::json!({ "count": n }));
-        });
+        spawn_app_index_scan(app.clone(), Arc::clone(store));
     }
     Ok(())
+}
+
+/// Launch a background scan that preserves the previous index if the fresh
+/// scan yields 0 entries (so a transient failure never wipes a good cache),
+/// flips the `AppIndexScanning` flag for the duration, and emits
+/// `app-index-ready` with `{ count, scanning }` at both the start and end.
+fn spawn_app_index_scan(app: AppHandle, store: AppIndexStore) {
+    let scanning_state = app.state::<AppIndexScanning>();
+    if scanning_state
+        .0
+        .swap(true, Ordering::SeqCst)
+    {
+        // Another scan is already running — let it finish rather than stack them.
+        return;
+    }
+    let pre_count = store.read().map(|g| g.len()).unwrap_or(0);
+    let _ = app.emit(
+        APP_INDEX_READY_EVENT,
+        serde_json::json!({ "count": pre_count, "scanning": true }),
+    );
+    std::thread::spawn(move || {
+        let previous = store.read().map(|g| g.clone()).unwrap_or_default();
+        let started = Instant::now();
+        let scanned = apps::scan_installed_apps();
+        let use_entries = if scanned.is_empty() && !previous.is_empty() {
+            log::warn!(
+                "app index scan returned 0 entries; keeping previous {} entries",
+                previous.len()
+            );
+            previous
+        } else {
+            scanned
+        };
+        let unix = now_unix_secs();
+        if let Ok(conn) = open_db_connection(&app) {
+            let _ = db::replace_app_index(&conn, &use_entries, unix);
+        }
+        if let Ok(mut g) = store.write() {
+            *g = use_entries;
+        }
+        let n = store.read().map(|g| g.len()).unwrap_or(0);
+        log::info!(
+            "app index scan complete: {} entries in {:?}",
+            n,
+            started.elapsed()
+        );
+        app.state::<AppIndexScanning>()
+            .0
+            .store(false, Ordering::SeqCst);
+        let _ = app.emit(
+            APP_INDEX_READY_EVENT,
+            serde_json::json!({ "count": n, "scanning": false }),
+        );
+    });
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1350,36 +1401,57 @@ fn search_app_index(
         .map_err(|_| "app index store poisoned".to_string())?;
     let q = payload.query.trim().to_lowercase();
     if q.is_empty() {
-        let mut idx: Vec<usize> = (0..entries.len()).collect();
-        idx.sort_by(|&i, &j| {
-            entries[i]
-                .display_name
-                .to_lowercase()
-                .cmp(&entries[j].display_name.to_lowercase())
-                .then_with(|| entries[i].exe_path.cmp(&entries[j].exe_path))
-        });
-        return Ok(
-            idx.into_iter()
-                .take(limit)
-                .map(|i| entries[i].clone())
-                .collect(),
-        );
+        return Ok(apps::sorted_app_name_slice(&entries, limit));
     }
-    Ok(entries
-        .iter()
-        .filter(|e| {
-            let name = e.display_name.to_lowercase();
-            let path = e.exe_path.to_lowercase();
-            let stem = std::path::Path::new(&e.exe_path)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            name.contains(&q) || path.contains(&q) || stem.contains(&q)
-        })
-        .take(limit)
-        .cloned()
-        .collect())
+    Ok(apps::filter_app_entries_substring(&entries, &q, limit))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppIndexStatus {
+    count: usize,
+    scanning: bool,
+}
+
+/// Current size of the in-memory app index, plus whether a background scan is running.
+/// Used by the Settings panel / picker to render "Indexing apps…" only while `scanning`.
+#[tauri::command]
+fn get_app_index_status(
+    store: State<'_, AppIndexStore>,
+    scanning: State<'_, AppIndexScanning>,
+) -> Result<AppIndexStatus, String> {
+    let count = store
+        .read()
+        .map_err(|_| "app index store poisoned".to_string())?
+        .len();
+    let is_scanning = scanning.0.load(Ordering::Relaxed);
+    Ok(AppIndexStatus {
+        count,
+        scanning: is_scanning,
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetAppIconPayload {
+    path: String,
+}
+
+/// Lazy icon extraction for a single app — the scanner no longer extracts
+/// icons inline (it was slow enough to stall the "Indexing apps…" UI for
+/// many seconds). Call this from the picker when an app is selected.
+#[tauri::command]
+fn get_app_icon(payload: GetAppIconPayload) -> Result<Option<String>, String> {
+    Ok(apps::get_app_icon(&payload.path))
+}
+
+/// Trigger a background rescan of installed apps. Emits `app-index-ready`
+/// with `{ count, scanning }` before and after the scan.
+#[tauri::command]
+fn rescan_app_index(app: AppHandle, store: State<'_, AppIndexStore>) -> Result<(), String> {
+    let st = Arc::clone(store.inner());
+    spawn_app_index_scan(app, st);
+    Ok(())
 }
 
 /// `true` when this binary was built with a Whisper GPU backend (Vulkan / CUDA / Metal).
@@ -1506,6 +1578,7 @@ pub fn run() {
         .manage(Arc::clone(&is_paused))
         .manage(command_cache.clone())
         .manage(app_index_store.clone())
+        .manage(AppIndexScanning::default())
         .manage(HotkeyBindingState {
             current: Mutex::new(DEFAULT_HOTKEY.to_string()),
         })
@@ -1657,6 +1730,9 @@ pub fn run() {
             set_hotkey,
             get_settings,
             search_app_index,
+            get_app_index_status,
+            get_app_icon,
+            rescan_app_index,
             whisper_gpu_compile_supported,
             update_settings,
             save_api_key,

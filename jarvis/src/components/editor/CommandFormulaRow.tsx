@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ActionPayload, CommandNodePayload } from "../../types";
 import { formatUserError } from "../../utils/userErrors";
 import { useEditorStore } from "../../store/editorStore";
+import { useSettingsStore } from "../../store/settingsStore";
 import { ACTION_KIND_OPTIONS, getActionKind } from "./actionCatalog";
 import {
   deriveAppSearchMeta,
@@ -421,6 +422,30 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   }, [kind]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  // Lazy icon fetch for already-saved open_app actions (scanner no longer
+  // ships icons inline, so they need to be pulled on first render).
+  const selectedAppPath = "open_app" in action ? action.open_app.path : "";
+  useEffect(() => {
+    if (!selectedAppPath || selectedAppPath.startsWith("shell:") || selectedAppPath.includes("://")) {
+      return;
+    }
+    if (selectedAppIcon) return;
+    let cancelled = false;
+    void invoke<string | null>("get_app_icon", { payload: { path: selectedAppPath } })
+      .then((icon) => {
+        if (!cancelled) setSelectedAppIcon(icon ?? null);
+      })
+      .catch(() => {
+        /* fall back to letter */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Only refetch when the underlying path changes; we intentionally skip
+    // `selectedAppIcon` as a dep so a null result doesn't retrigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAppPath]);
+
   useEffect(() => {
     if (!("open_app" in action) || !appOpen) return;
     if (appTimer.current) window.clearTimeout(appTimer.current);
@@ -468,12 +493,16 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     setKindOpen(false);
   };
 
+  const appIndexCount = useSettingsStore((s) => s.appIndexCount);
+  const appIndexScanning = useSettingsStore((s) => s.appIndexScanning);
   const appSearchMeta = deriveAppSearchMeta({
     isOpen: appOpen,
     query: appQuery,
     isLoading: false,
     hasSearched: appHasSearched,
     hitCount: appHits.length,
+    indexCount: appIndexCount,
+    isScanning: appIndexScanning,
   });
   const appDisplayMode =
     "open_app" in action
@@ -556,6 +585,13 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
                       setSelectedAppIcon(h.icon_data_url ?? null);
                       setAppEditing(false);
                       setAppOpen(false);
+                      if (!h.icon_data_url && h.exe_path) {
+                        void invoke<string | null>("get_app_icon", {
+                          payload: { path: h.exe_path },
+                        })
+                          .then((icon) => setSelectedAppIcon(icon ?? null))
+                          .catch(() => setSelectedAppIcon(null));
+                      }
                     }}
                   >
                     <span className="editor-formula-suggest-app editor-formula-suggest-app--icon-only">

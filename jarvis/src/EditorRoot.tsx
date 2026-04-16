@@ -54,7 +54,7 @@ function CaptionCloseIcon() {
 }
 
 export default function EditorRoot() {
-  const setAppIndexCount = useSettingsStore((s) => s.setAppIndexCount);
+  const setAppIndexStatus = useSettingsStore((s) => s.setAppIndexStatus);
   const [section, setSection] = useState<ShellSection>("commands");
   const [isMaximized, setIsMaximized] = useState(false);
 
@@ -80,16 +80,29 @@ export default function EditorRoot() {
     }).then((u) => {
       unlistenOpen = u;
     });
-    void listen<{ count: number }>("app-index-ready", (event) => {
-      setAppIndexCount(event.payload.count);
+    void listen<{ count: number; scanning?: boolean }>("app-index-ready", (event) => {
+      setAppIndexStatus({
+        count: event.payload.count,
+        scanning: event.payload.scanning ?? false,
+      });
     }).then((u) => {
       unlistenIndex = u;
     });
+    // Also pull the current status on mount in case the scan already completed
+    // before the frontend subscribed to the event (opening settings late would
+    // otherwise keep the count stuck at "…").
+    void invoke<{ count: number; scanning: boolean }>("get_app_index_status")
+      .then((status) => {
+        setAppIndexStatus(status);
+      })
+      .catch(() => {
+        /* settings panel will stay on "…" until the next event */
+      });
     return () => {
       unlistenOpen?.();
       unlistenIndex?.();
     };
-  }, [setAppIndexCount]);
+  }, [setAppIndexStatus]);
 
   useEffect(() => {
     let mounted = true;

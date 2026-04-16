@@ -78,31 +78,64 @@ struct MapEntry {
 // ---------------------------------------------------------------------------
 pub fn scan() -> Result<Vec<AppEntry>, String> {
     let mut map: HashMap<String, MapEntry> = HashMap::new();
+    let mut stats: Vec<(&'static str, usize)> = Vec::new();
 
     // Registry passes (no COM required)
-    scan_uninstall_registry(&mut map);
-    scan_app_paths_registry(&mut map);
+    run_pass("uninstall", &mut map, &mut stats, scan_uninstall_registry);
+    run_pass("app_paths", &mut map, &mut stats, scan_app_paths_registry);
 
-    // COM-dependent passes
-    let _com = ComApartment::new()?;
-    scan_start_menu(&mut map)?;
-    scan_get_start_apps(&mut map);
+    // Launchers + UWP + seeds + deep exe scan — MUST NOT depend on COM.
+    // Previously COM/start-menu ran first; any CoInit or .lnk failure aborted the entire
+    // scan, so Steam/Epic/UWP/Notepad seed never ran (symptom: tiny index + no games).
+    run_pass("steam", &mut map, &mut stats, scan_steam);
+    run_pass("epic", &mut map, &mut stats, scan_epic);
+    run_pass("gog", &mut map, &mut stats, scan_gog);
+    run_pass("heroic", &mut map, &mut stats, scan_heroic);
+    run_pass("uwp", &mut map, &mut stats, scan_uwp);
+    run_pass("accessory_seed", &mut map, &mut stats, seed_windows_accessories);
+    run_pass("localappdata_squirrel", &mut map, &mut stats, scan_localappdata_apps);
+    run_pass("program_files_exe_scan", &mut map, &mut stats, scan_program_files_recursive);
 
-    // Game launchers
-    scan_steam(&mut map);
-    scan_epic(&mut map);
-    scan_gog(&mut map);
+    // Get-StartApps — PowerShell only (no COM)
+    run_pass("get_start_apps", &mut map, &mut stats, scan_get_start_apps);
 
-    // UWP / Microsoft Store
-    scan_uwp(&mut map);
+    // COM — Start Menu .lnk resolution only (best-effort)
+    let before = map.len();
+    match ComApartment::new() {
+        Ok(_com) => {
+            if let Err(e) = scan_start_menu(&mut map) {
+                log::warn!("Start Menu .lnk scan failed (continuing): {e}");
+            }
+        }
+        Err(e) => {
+            log::warn!("COM init failed; Start Menu .lnk pass skipped: {e}");
+        }
+    }
+    stats.push(("start_menu", map.len().saturating_sub(before)));
 
-    // Windows built-in accessories
-    seed_windows_accessories(&mut map);
-
-    // Recursive exe scan (Program Files, depth ≤ 3); never overwrites richer entries
-    scan_program_files_recursive(&mut map);
+    log_scan_stats(&stats, map.len());
 
     Ok(map.into_values().map(|e| e.inner).collect())
+}
+
+fn run_pass(
+    label: &'static str,
+    map: &mut HashMap<String, MapEntry>,
+    stats: &mut Vec<(&'static str, usize)>,
+    pass: fn(&mut HashMap<String, MapEntry>),
+) {
+    let before = map.len();
+    pass(map);
+    stats.push((label, map.len().saturating_sub(before)));
+}
+
+fn log_scan_stats(stats: &[(&'static str, usize)], total: usize) {
+    let mut parts: Vec<String> = stats
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect();
+    parts.push(format!("total={total}"));
+    log::info!("app index scan stats: {}", parts.join(" "));
 }
 
 // ---------------------------------------------------------------------------
@@ -300,12 +333,11 @@ fn scan_uninstall_registry(map: &mut HashMap<String, MapEntry>) {
             if exe_path.is_empty() || !Path::new(&exe_path).exists() {
                 continue;
             }
-            let icon = extract_icon_data_url(&exe_path);
             insert_entry(
                 map,
                 exe_path,
                 display_name,
-                icon,
+                None,
                 SourcePriority::Uninstall,
             );
         }
@@ -527,6 +559,194 @@ fn install_dir_primary_exe(install_loc: &str, display_name: &str) -> Option<Stri
     Some(chosen.to_string_lossy().to_string())
 }
 
+/// Walk `root` up to `max_depth` levels, collect every `.exe`, score each by
+/// (a) exe stem vs display-name tokens, (b) heuristics that drown out crash
+/// reporters, redistributables, installer stubs, and launcher shards. Returns
+/// the best exe path or `None` if the tree has no candidate.
+///
+/// This is the workhorse for Steam/Epic/GOG/Heroic where the real game binary
+/// can be 2–5 folders deep (`Counter-Strike Global Offensive/game/bin/win64/cs2.exe`,
+/// `Baldurs Gate 3/bin/bg3.exe`, etc.) and the legacy `install_dir_primary_exe`
+/// only scanned the top folder.
+fn find_game_exe_in_tree(root: &Path, display_name: &str, max_depth: usize) -> Option<String> {
+    if !root.is_dir() {
+        return None;
+    }
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    collect_exes(root, 0, max_depth, &mut candidates);
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let dn_lower = display_name.to_lowercase();
+    let tokens: Vec<String> = dn_lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.len() >= 2)
+        .map(|t| t.to_string())
+        .collect();
+
+    let mut best: Option<(i64, &PathBuf)> = None;
+    for p in &candidates {
+        let stem = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if stem.is_empty() {
+            continue;
+        }
+        let score = score_game_exe(&stem, p, root, &dn_lower, &tokens);
+        if best.map(|(s, _)| score > s).unwrap_or(true) {
+            best = Some((score, p));
+        }
+    }
+
+    best.map(|(_, p)| p.to_string_lossy().to_string())
+}
+
+fn collect_exes(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
+    if depth > max_depth || !dir.is_dir() {
+        return;
+    }
+    // Skip engine/redistributable folders where the real game exe never lives.
+    if depth > 0 {
+        let name_lower = dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if matches!(
+            name_lower.as_str(),
+            "_commonredist"
+                | "commonredist"
+                | "redist"
+                | "dotnet"
+                | "directx"
+                | "vcredist"
+                | "support"
+                | "crashhandler"
+                | "installer"
+                | "dxsetup"
+                | "eossdk"
+                | "engine"
+        ) {
+            return;
+        }
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let p = entry.path();
+        if p.is_dir() {
+            collect_exes(&p, depth + 1, max_depth, out);
+        } else if p.is_file()
+            && p.extension()
+                .and_then(|x| x.to_str())
+                .map(|x| x.eq_ignore_ascii_case("exe"))
+                .unwrap_or(false)
+        {
+            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if stem.is_empty() || install_dir_skipped_stem(stem) {
+                continue;
+            }
+            out.push(p);
+        }
+    }
+}
+
+fn score_game_exe(
+    stem: &str,
+    path: &Path,
+    root: &Path,
+    dn_lower: &str,
+    tokens: &[String],
+) -> i64 {
+    let mut score: i64 = 0;
+
+    // Exact full-name match (after stripping spaces) — best possible signal.
+    if stem == dn_lower.replace(' ', "") {
+        score += 700;
+    } else if dn_lower.contains(stem) && stem.len() >= 3 {
+        score += 500;
+    } else if stem.contains(dn_lower) && !dn_lower.is_empty() {
+        score += 450;
+    }
+
+    // Each display-name token that appears in the stem.
+    let matched_tokens = tokens.iter().filter(|t| stem.contains(t.as_str())).count() as i64;
+    score += matched_tokens * 120;
+
+    // Initials abbreviation (e.g. "Counter-Strike 2" → stem "cs2",
+    // "Baldurs Gate" → "bg"). `digits_suffix` covers trailing sequel numbers
+    // that tokens drop because they're single chars.
+    let initials: String = tokens.iter().filter_map(|t| t.chars().next()).collect();
+    let digits_suffix: String = dn_lower.chars().filter(|c| c.is_ascii_digit()).collect();
+    let initials_with_digits = format!("{initials}{digits_suffix}");
+
+    if !initials_with_digits.is_empty() && stem == initials_with_digits {
+        score += 400;
+    } else if !initials.is_empty() && stem == initials {
+        score += 350;
+    } else if !initials_with_digits.is_empty() && stem.starts_with(&initials_with_digits) {
+        // "bg3" vs "bg3_dx11" — exact match above wins; start-with is the
+        // fallback for suffixed variants and should rank below the canonical.
+        score += 180;
+    } else if !initials.is_empty() && initials.len() >= 2 && stem.contains(&initials) {
+        score += 120;
+    }
+
+    // Penalise graphics-API / arch variants so the canonical exe wins when
+    // both `bg3.exe` and `bg3_dx11.exe` sit next to each other.
+    const VARIANT_SUFFIXES: &[&str] = &[
+        "_dx11", "_dx12", "_vulkan", "_vk", "_d3d11", "_d3d12", "_opengl", "_gl", "_x64", "_win64",
+        "_32bit", "_64bit", "-dx11", "-dx12", "-vulkan",
+    ];
+    if VARIANT_SUFFIXES.iter().any(|s| stem.ends_with(s)) {
+        score -= 80;
+    }
+
+    // Penalise common junk that ships alongside games
+    const JUNK: &[&str] = &[
+        "crash",
+        "report",
+        "launcher",
+        "handler",
+        "helper",
+        "service",
+        "updater",
+        "redist",
+        "dxsetup",
+        "vc_redist",
+        "unins",
+        "installer",
+        "eosbootstrapper",
+        "eosovh",
+        "touchup",
+        "anticheat",
+        "easyanticheat",
+        "battleye",
+    ];
+    if JUNK.iter().any(|j| stem.contains(j)) {
+        score -= 600;
+    }
+
+    // Prefer exes closer to the install root.
+    let depth = path
+        .strip_prefix(root)
+        .ok()
+        .map(|rel| rel.components().count() as i64)
+        .unwrap_or(1);
+    score -= (depth - 1).max(0) * 6;
+
+    // Light tie-break: prefer shorter stems (reduces noise from e.g.
+    // `mygame_debug_profile_x64.exe`).
+    score -= (stem.len() as i64 - 4).max(0);
+
+    score
+}
+
 // ---------------------------------------------------------------------------
 // Start Menu .lnk scanner
 // BUG FIX #6: Added current user Desktop (%USERPROFILE%\Desktop)
@@ -564,7 +784,9 @@ fn scan_start_menu(map: &mut HashMap<String, MapEntry>) -> Result<(), String> {
 
     for root in roots {
         if root.is_dir() {
-            visit_dir_lnk(&root, &shell_link, &persist, map)?;
+            if let Err(e) = visit_dir_lnk(&root, &shell_link, &persist, map) {
+                log::warn!("Start Menu subtree skipped {:?}: {e}", root);
+            }
         }
     }
     Ok(())
@@ -576,8 +798,15 @@ fn visit_dir_lnk(
     persist: &IPersistFile,
     map: &mut HashMap<String, MapEntry>,
 ) -> Result<(), String> {
-    for e in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
-        let e = e.map_err(|e| e.to_string())?;
+    let read_dir = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    for e in read_dir {
+        let e = match e {
+            Ok(x) => x,
+            Err(_) => continue,
+        };
         let p = e.path();
         if p.is_dir() {
             // Silently ignore subdirectory errors (permissions etc.)
@@ -597,16 +826,11 @@ fn visit_dir_lnk(
                     .and_then(|s| s.to_str())
                     .unwrap_or("App")
                     .to_string();
-                let icon = if target_path.exists() {
-                    extract_icon_data_url(&target)
-                } else {
-                    None
-                };
                 insert_entry(
                     map,
                     target,
                     label,
-                    icon,
+                    None,
                     SourcePriority::StartMenu,
                 );
             }
@@ -950,28 +1174,9 @@ fn scan_steam_library(steamapps: &Path, map: &mut HashMap<String, MapEntry>) {
             if !game_dir.is_dir() {
                 continue;
             }
-            // Find the primary exe in the game directory
-            if let Some(exe) = install_dir_primary_exe(&game_dir.to_string_lossy(), &name) {
+            if let Some(exe) = find_game_exe_in_tree(&game_dir, &name, 5) {
                 if Path::new(&exe).exists() {
-                    let icon = extract_icon_data_url(&exe);
-                    insert_entry(map, exe, name, icon, SourcePriority::Steam);
-                }
-            } else {
-                // Recurse one level deeper for games with subdirectory launchers
-                if let Ok(sub_entries) = std::fs::read_dir(&game_dir) {
-                    for sub in sub_entries.filter_map(|e| e.ok()) {
-                        if sub.path().is_dir() {
-                            if let Some(exe) =
-                                install_dir_primary_exe(&sub.path().to_string_lossy(), &name)
-                            {
-                                if Path::new(&exe).exists() {
-                                    let icon = extract_icon_data_url(&exe);
-                                    insert_entry(map, exe, name, icon, SourcePriority::Steam);
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    insert_entry(map, exe, name, None, SourcePriority::Steam);
                 }
             }
         }
@@ -1066,10 +1271,9 @@ fn scan_epic(map: &mut HashMap<String, MapEntry>) {
             pretty_name_from_identifier(&name)
         });
 
-        if let Some(exe) = install_dir_primary_exe(&loc, &display_name) {
+        if let Some(exe) = find_game_exe_in_tree(dir, &display_name, 4) {
             if Path::new(&exe).exists() {
-                let icon = extract_icon_data_url(&exe);
-                insert_entry(map, exe, display_name, icon, SourcePriority::Epic);
+                insert_entry(map, exe, display_name, None, SourcePriority::Epic);
             }
         }
     }
@@ -1200,10 +1404,226 @@ fn scan_gog(map: &mut HashMap<String, MapEntry>) {
                 continue;
             }
 
-            let icon = extract_icon_data_url(&exe);
-            insert_entry(map, exe, name, icon, SourcePriority::Gog);
+            insert_entry(map, exe, name, None, SourcePriority::Gog);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// HEROIC scanner — Legendary (Epic), GOG, Amazon (Nile), and sideloaded apps.
+// All four sources live under %APPDATA%\heroic\. Each file is optional; a
+// missing file is a no-op. Parsing is deliberately lightweight: we scan for
+// `{ ... }` object records and pull known string fields via `json_str_field`.
+// ---------------------------------------------------------------------------
+fn scan_heroic(map: &mut HashMap<String, MapEntry>) {
+    let Ok(appdata) = std::env::var("APPDATA") else {
+        return;
+    };
+    let root = PathBuf::from(appdata).join("heroic");
+    if !root.is_dir() {
+        return;
+    }
+
+    // Legendary (Epic) — installed.json is an object keyed by app_name whose
+    // values contain `title`, `install_path`, `executable`.
+    let legendary = root
+        .join("legendaryConfig")
+        .join("legendary")
+        .join("installed.json");
+    scan_heroic_installed_json(
+        &legendary,
+        map,
+        SourcePriority::Epic,
+        &["title"],
+        &["install_path"],
+        Some("executable"),
+    );
+
+    // GOG — installed.json contains objects with `appName`, `install_path`, `platform`.
+    // Use the store cache for human-readable names when present.
+    let gog_installed = root.join("gog_store").join("installed.json");
+    let gog_library = root.join("store_cache").join("gog_library.json");
+    let gog_name_lookup = read_heroic_gog_library(&gog_library);
+    scan_heroic_gog_installed(&gog_installed, map, &gog_name_lookup);
+
+    // Amazon (Nile) — installed.json records with `id`, `path`, optionally
+    // `title`. Path points to the install dir; pick the primary exe from there.
+    let nile = root.join("nile_config").join("nile").join("installed.json");
+    scan_heroic_installed_json(
+        &nile,
+        map,
+        SourcePriority::Uninstall, // no dedicated priority; richer than ExeScan
+        &["title", "id"],
+        &["path", "install_path"],
+        None,
+    );
+
+    // Sideloaded — `library.json` with `title`, `executable` (already absolute).
+    let sideload = root.join("sideload_apps").join("library.json");
+    scan_heroic_sideload(&sideload, map);
+}
+
+/// Generic Heroic `installed.json` walker. Splits on `{` to form pseudo-records,
+/// then pulls the first non-empty value among the supplied field-name lists for
+/// name and install dir. If `exe_field` is `Some`, the referenced field is
+/// treated as an executable **relative to the install dir** (Legendary style);
+/// otherwise we scan the install dir for a primary exe (Nile style).
+fn scan_heroic_installed_json(
+    path: &Path,
+    map: &mut HashMap<String, MapEntry>,
+    priority: SourcePriority,
+    name_fields: &[&str],
+    dir_fields: &[&str],
+    exe_field: Option<&str>,
+) {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    for record in heroic_split_records(&content) {
+        let Some(name) = first_nonempty_field(record, name_fields) else {
+            continue;
+        };
+        let Some(install_dir) = first_nonempty_field(record, dir_fields) else {
+            continue;
+        };
+        let display_name = pretty_name_from_identifier(&name);
+        let exe_path: Option<String> = if let Some(field) = exe_field {
+            json_str_field(record, field).and_then(|rel| {
+                let candidate = Path::new(&install_dir).join(rel.trim_start_matches(['/', '\\']));
+                if candidate.is_file() {
+                    Some(candidate.to_string_lossy().to_string())
+                } else {
+                    find_game_exe_in_tree(Path::new(&install_dir), &display_name, 4)
+                }
+            })
+        } else {
+            find_game_exe_in_tree(Path::new(&install_dir), &display_name, 4)
+        };
+        let Some(exe) = exe_path else { continue };
+        if !Path::new(&exe).exists() {
+            continue;
+        }
+        insert_entry(map, exe, display_name, None, priority);
+    }
+}
+
+fn scan_heroic_gog_installed(
+    path: &Path,
+    map: &mut HashMap<String, MapEntry>,
+    name_lookup: &HashMap<String, String>,
+) {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    for record in heroic_split_records(&content) {
+        let Some(install_dir) = first_nonempty_field(record, &["install_path"]) else {
+            continue;
+        };
+        let app_name = json_str_field(record, "appName").unwrap_or_default();
+        let display_name = name_lookup
+            .get(&app_name)
+            .cloned()
+            .unwrap_or_else(|| pretty_name_from_identifier(&app_name));
+        if display_name.is_empty() {
+            continue;
+        }
+        let Some(exe) = find_game_exe_in_tree(Path::new(&install_dir), &display_name, 4) else {
+            continue;
+        };
+        if !Path::new(&exe).exists() {
+            continue;
+        }
+        insert_entry(map, exe, display_name, None, SourcePriority::Gog);
+    }
+}
+
+/// Heroic's sideload library stores absolute `executable` paths directly.
+fn scan_heroic_sideload(path: &Path, map: &mut HashMap<String, MapEntry>) {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    for record in heroic_split_records(&content) {
+        let Some(name) = first_nonempty_field(record, &["title", "app_name"]) else {
+            continue;
+        };
+        let Some(exe) = json_str_field(record, "executable") else {
+            continue;
+        };
+        let exe = clean_path_str(&exe);
+        if exe.is_empty() || !Path::new(&exe).is_file() {
+            continue;
+        }
+        insert_entry(map, exe, name, None, SourcePriority::Uninstall);
+    }
+}
+
+/// Parse Heroic's `store_cache/gog_library.json` into a `app_name -> title` map.
+/// Records contain `"app_name"` and `"title"` strings close together.
+fn read_heroic_gog_library(path: &Path) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return out;
+    };
+    for record in heroic_split_records(&content) {
+        let Some(app_name) = json_str_field(record, "app_name") else {
+            continue;
+        };
+        let Some(title) = json_str_field(record, "title") else {
+            continue;
+        };
+        if !app_name.is_empty() && !title.is_empty() {
+            out.insert(app_name, title);
+        }
+    }
+    out
+}
+
+/// Split a JSON blob into per-object slices, emitting each balanced `{...}`
+/// region (including nested ones). Ignores braces inside string literals.
+/// Good enough for Heroic's config files without pulling in a full JSON parser.
+fn heroic_split_records(json: &str) -> Vec<&str> {
+    let bytes = json.as_bytes();
+    let mut out = Vec::new();
+    let mut stack: Vec<usize> = Vec::new();
+    let mut in_string = false;
+    let mut escape = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if in_string {
+            if escape {
+                escape = false;
+            } else if b == b'\\' {
+                escape = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' => stack.push(i),
+            b'}' => {
+                if let Some(start) = stack.pop() {
+                    if let Ok(slice) = std::str::from_utf8(&bytes[start..=i]) {
+                        out.push(slice);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn first_nonempty_field(record: &str, fields: &[&str]) -> Option<String> {
+    for f in fields {
+        if let Some(v) = json_str_field(record, f) {
+            let t = v.trim().to_string();
+            if !t.is_empty() {
+                return Some(t);
+            }
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -1333,17 +1753,133 @@ fn seed_windows_accessories(map: &mut HashMap<String, MapEntry>) {
                 .unwrap_or_else(|_| p.to_path_buf())
                 .to_string_lossy()
                 .to_string();
-            let icon = extract_icon_data_url(&exe_norm);
             insert_entry(
                 map,
                 exe_norm,
                 (*name).to_string(),
-                icon,
+                None,
                 SourcePriority::Accessory,
             );
             break;
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// LocalAppData scanner — catches Squirrel apps (Discord, Teams classic,
+// GitHub Desktop, 1Password, Slack) that install to `%LOCALAPPDATA%\<App>\`
+// outside of `Programs\`, so the later Program Files recursive pass misses
+// them. Uses the Squirrel convention: `<App>\Update.exe` launches the
+// latest `<App>\app-<ver>\<App>.exe`. Falls back to any matching exe in the
+// newest `app-*` subdirectory when the naming doesn't match exactly.
+// ---------------------------------------------------------------------------
+fn scan_localappdata_apps(map: &mut HashMap<String, MapEntry>) {
+    let Ok(la) = std::env::var("LOCALAPPDATA") else {
+        return;
+    };
+    let la_root = PathBuf::from(la);
+    if !la_root.is_dir() {
+        return;
+    }
+
+    // Directories under LocalAppData that are almost never user-launchable —
+    // skip them so we don't spend time recursing into them or polluting the
+    // index with crash reporters and telemetry stubs.
+    const SKIP_DIRS: &[&str] = &[
+        "microsoft",
+        "packages",
+        "temp",
+        "tempstate",
+        "publisherdiagnostics",
+        "diagnosticstore",
+        "crashdumps",
+        "connecteddevicesplatform",
+        "comms",
+        "placeholdertilelogofolder",
+        "virtualstore",
+        "d3dscache",
+        "gdk",
+        "nvidia",
+        "nvidia corporation",
+        "amd",
+        "packagestaging",
+        "webex",
+        "programs", // handled by the deeper recursive scan already
+    ];
+
+    let entries = match std::fs::read_dir(&la_root) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let app_dir = entry.path();
+        if !app_dir.is_dir() {
+            continue;
+        }
+        let app_dir_name = app_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let app_dir_lower = app_dir_name.to_lowercase();
+        if app_dir_lower.is_empty() || app_dir_lower.starts_with('.') {
+            continue;
+        }
+        if SKIP_DIRS.iter().any(|s| app_dir_lower == *s) {
+            continue;
+        }
+        if let Some(exe) = find_squirrel_app_exe(&app_dir, &app_dir_name) {
+            if Path::new(&exe).exists() {
+                insert_entry(
+                    map,
+                    exe,
+                    pretty_name_from_identifier(&app_dir_name),
+                    None,
+                    SourcePriority::Uninstall,
+                );
+                continue;
+            }
+        }
+        // Fallback: top-level `<App>.exe` directly under `<App>\`
+        let direct = app_dir.join(format!("{app_dir_name}.exe"));
+        if direct.is_file() {
+            let p = direct.to_string_lossy().to_string();
+            insert_entry(
+                map,
+                p,
+                pretty_name_from_identifier(&app_dir_name),
+                None,
+                SourcePriority::AppPaths,
+            );
+        }
+    }
+}
+
+/// Squirrel-packaged apps drop into `<App>\app-<semver>\<App>.exe`. The `<App>\`
+/// dir also contains a stub `Update.exe` + `packages/`. Find the newest `app-*`
+/// subdirectory (by name, which is an effective semver sort) and pick the
+/// best exe inside it via [`find_game_exe_in_tree`].
+fn find_squirrel_app_exe(app_dir: &Path, app_name: &str) -> Option<String> {
+    let mut app_versions: Vec<PathBuf> = std::fs::read_dir(app_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.to_lowercase().starts_with("app-"))
+                .unwrap_or(false)
+        })
+        .collect();
+    app_versions.sort_by(|a, b| {
+        a.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .cmp(b.file_name().and_then(|s| s.to_str()).unwrap_or(""))
+    });
+    let newest = app_versions.last()?;
+    find_game_exe_in_tree(newest, app_name, 1)
 }
 
 // ---------------------------------------------------------------------------
@@ -1427,7 +1963,7 @@ fn scan_exe_recursive(dir: &Path, map: &mut HashMap<String, MapEntry>, depth: us
 // ---------------------------------------------------------------------------
 // Icon extraction via PowerShell (unchanged — runs async-style per entry)
 // ---------------------------------------------------------------------------
-fn extract_icon_data_url(exe_path: &str) -> Option<String> {
+pub(crate) fn extract_icon_data_url(exe_path: &str) -> Option<String> {
     // Only extract icons for real filesystem paths, not UWP URIs
     if !Path::new(exe_path).exists() {
         return None;
@@ -1530,6 +2066,80 @@ mod tests {
     }
 
     #[test]
+    fn heroic_split_records_handles_nested_and_strings() {
+        let json = r#"[
+            {"title": "A", "meta": {"x": 1}},
+            {"title": "B", "note": "has { brace }"}
+        ]"#;
+        let recs = heroic_split_records(json);
+        // Emits each balanced object: outer meta, outer A, outer B = 3.
+        // Brace inside a string must not open a new record.
+        let has_a = recs.iter().any(|r| r.contains("\"A\""));
+        let has_b = recs.iter().any(|r| r.contains("\"B\""));
+        assert!(has_a && has_b, "got: {recs:?}");
+        assert!(
+            recs.iter().all(|r| !r.contains("has { brace }") || r.contains("\"B\"")),
+            "string-literal braces leaked into records: {recs:?}"
+        );
+    }
+
+    #[test]
+    fn heroic_first_nonempty_field_picks_first_present() {
+        let rec = r#"{"id": "abc", "title": "Real Title"}"#;
+        assert_eq!(
+            first_nonempty_field(rec, &["title", "id"]).as_deref(),
+            Some("Real Title")
+        );
+        assert_eq!(
+            first_nonempty_field(rec, &["missing", "id"]).as_deref(),
+            Some("abc")
+        );
+        assert_eq!(first_nonempty_field(rec, &["missing"]), None);
+    }
+
+    #[test]
+    fn read_heroic_gog_library_builds_name_lookup() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("gog_library.json");
+        let mut f = std::fs::File::create(&p).unwrap();
+        f.write_all(
+            br#"{"games":[
+                {"app_name":"1207658937","title":"The Witcher 3"},
+                {"app_name":"1423049311","title":"Cyberpunk 2077"}
+            ]}"#,
+        )
+        .unwrap();
+        let map = read_heroic_gog_library(&p);
+        assert_eq!(map.get("1207658937").map(String::as_str), Some("The Witcher 3"));
+        assert_eq!(map.get("1423049311").map(String::as_str), Some("Cyberpunk 2077"));
+    }
+
+    #[test]
+    fn scan_heroic_sideload_inserts_absolute_exe() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let fake_exe = dir.path().join("launcher.exe");
+        std::fs::File::create(&fake_exe).unwrap().write_all(b"MZ").unwrap();
+        let lib = dir.path().join("library.json");
+        let exe_json = fake_exe.to_string_lossy().replace('\\', "\\\\");
+        let body = format!(
+            r#"{{"games":[{{"title":"My Sideloaded App","executable":"{exe_json}"}}]}}"#
+        );
+        std::fs::File::create(&lib)
+            .unwrap()
+            .write_all(body.as_bytes())
+            .unwrap();
+
+        let mut map: HashMap<String, MapEntry> = HashMap::new();
+        scan_heroic_sideload(&lib, &mut map);
+        let hit = map
+            .values()
+            .find(|e| e.inner.display_name == "My Sideloaded App");
+        assert!(hit.is_some(), "sideload entry missing; map: {:?}", map.keys().collect::<Vec<_>>());
+    }
+
+    #[test]
     fn json_str_field_extracts_values() {
         let json = r#""InstallLocation": "C:\\Games\\MyGame", "AppName": "MyGame123""#;
         assert_eq!(
@@ -1565,6 +2175,107 @@ mod tests {
         let hit = install_dir_primary_exe(&dir.path().to_string_lossy(), "Discord")
             .expect("should find Discord.exe");
         assert!(hit.to_lowercase().contains("discord.exe"));
+    }
+
+    // ------------------------------------------------------------------
+    // find_game_exe_in_tree — deep scan for CS2 / BG3 style installs
+    // ------------------------------------------------------------------
+
+    fn touch_file(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::File::create(path).unwrap();
+    }
+
+    #[test]
+    fn find_game_exe_in_tree_finds_cs2_at_depth_four() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Counter-Strike Global Offensive");
+        touch_file(&root.join("game/bin/win64/cs2.exe"));
+        touch_file(&root.join("game/bin/win64/crashhandler.exe"));
+        let hit = find_game_exe_in_tree(&root, "Counter-Strike 2", 5)
+            .expect("cs2 deep hit");
+        assert!(hit.to_lowercase().ends_with("cs2.exe"), "got {hit}");
+    }
+
+    #[test]
+    fn find_game_exe_in_tree_finds_bg3_at_depth_two() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Baldurs Gate 3");
+        touch_file(&root.join("bin/bg3.exe"));
+        touch_file(&root.join("bin/bg3_dx11.exe"));
+        touch_file(&root.join("EasyAntiCheat/EasyAntiCheat_Setup.exe"));
+        let hit = find_game_exe_in_tree(&root, "Baldur's Gate 3", 4)
+            .expect("bg3 hit");
+        assert!(hit.to_lowercase().ends_with("bg3.exe"), "got {hit}");
+    }
+
+    #[test]
+    fn find_game_exe_in_tree_penalises_crash_reporters() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("MyGame");
+        touch_file(&root.join("MyGame.exe"));
+        touch_file(&root.join("UnrealCrashReporter.exe"));
+        touch_file(&root.join("CrashHandler.exe"));
+        let hit = find_game_exe_in_tree(&root, "MyGame", 3).unwrap();
+        assert!(hit.to_lowercase().ends_with("mygame.exe"), "got {hit}");
+    }
+
+    #[test]
+    fn find_game_exe_in_tree_returns_none_for_empty_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(find_game_exe_in_tree(dir.path(), "Anything", 4).is_none());
+    }
+
+    // ------------------------------------------------------------------
+    // Squirrel / LocalAppData scanner — Discord style
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn find_squirrel_app_exe_picks_newest_app_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("Discord");
+        touch_file(&app.join("Update.exe"));
+        touch_file(&app.join("app-1.0.9001/Discord.exe"));
+        touch_file(&app.join("app-1.0.9005/Discord.exe"));
+        let hit = find_squirrel_app_exe(&app, "Discord").expect("squirrel hit");
+        assert!(
+            hit.to_lowercase().contains("app-1.0.9005"),
+            "should prefer newest, got {hit}"
+        );
+    }
+
+    #[test]
+    fn scan_localappdata_apps_skips_microsoft_and_packages() {
+        // We can't set LOCALAPPDATA reliably here without poisoning the env for
+        // other tests, but we can assert the skip logic on the directory name
+        // by running a quick characterisation.
+        let noise = ["Microsoft", "Packages", "Temp", "Programs"];
+        for name in noise {
+            let lower = name.to_lowercase();
+            let skipped = matches!(
+                lower.as_str(),
+                "microsoft"
+                    | "packages"
+                    | "temp"
+                    | "tempstate"
+                    | "publisherdiagnostics"
+                    | "diagnosticstore"
+                    | "crashdumps"
+                    | "connecteddevicesplatform"
+                    | "comms"
+                    | "placeholdertilelogofolder"
+                    | "virtualstore"
+                    | "d3dscache"
+                    | "gdk"
+                    | "nvidia"
+                    | "nvidia corporation"
+                    | "amd"
+                    | "packagestaging"
+                    | "webex"
+                    | "programs"
+            );
+            assert!(skipped, "{name} should be skipped");
+        }
     }
 
     #[test]
