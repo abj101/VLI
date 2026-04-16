@@ -555,7 +555,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
                 </li>
               )}
               {appHits.map((h) => (
-                <li key={h.exe_path} role="none">
+                <li key={h.exe_path} role="none" className="editor-formula-suggest-li--icon">
                   <button
                     type="button"
                     role="option"
@@ -579,6 +579,9 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
                         label={h.display_name}
                         className="editor-formula-suggest-icon"
                       />
+                      <span className="editor-formula-suggest-hover-label" aria-hidden="true">
+                        {h.display_name}
+                      </span>
                     </span>
                   </button>
                 </li>
@@ -691,21 +694,8 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     return null;
   };
 
-  const openAppIconMode =
-    "open_app" in action &&
-    deriveOpenAppDisplayMode({
-      isEditing: appEditing,
-      selectedPath: action.open_app.path,
-    }) === "confirmed";
-
   return (
-    <div
-      className={
-        openAppIconMode
-          ? "editor-formula-segment editor-formula-segment--icon-arg"
-          : "editor-formula-segment"
-      }
-    >
+    <div className="editor-formula-segment">
       <div className="editor-formula-kind-wrap">
         <input
           type="text"
@@ -751,19 +741,17 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
           </ul>
         )}
       </div>
-      <div className="editor-formula-arg-slot">
-        {renderArg()}
-        {canRemove && (
-          <button
-            type="button"
-            className="editor-formula-remove-inline"
-            onClick={onRemove}
-            aria-label={`Remove step ${index + 1}`}
-          >
-            ×
-          </button>
-        )}
-      </div>
+      <div className="editor-formula-arg-slot">{renderArg()}</div>
+      {canRemove && (
+        <button
+          type="button"
+          className="editor-formula-remove-inline"
+          onClick={onRemove}
+          aria-label={`Remove step ${index + 1}`}
+        >
+          ×
+        </button>
+      )}
     </div>
   );
 }
