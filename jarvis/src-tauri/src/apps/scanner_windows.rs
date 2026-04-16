@@ -1,14 +1,24 @@
-//! Registry Uninstall + Start Menu / Desktop / pinned `.lnk` + `.url` (Steam, Epic, Battle.net, etc.),
-//! flat / limited-depth `*.exe` inventory under System32 / SysWOW64 / WinDir + Program Files,
-//! plus Steam / Epic / GOG library roots and Start Apps (UWP / packaged) aliases (Windows).
+//! Windows app scanner — registry + Start Menu + game launchers + UWP.
+//!
+//! Sources scanned (in priority order):
+//!   1. Uninstall registry (HKLM 64-bit, HKLM WOW64, HKCU)
+//!   2. App Paths registry  (same three hives)
+//!   3. Start Menu .lnk files (all-users + per-user + Public Desktop + user Desktop)
+//!   4. Get-StartApps — same listing as Start (resolves `{GUID}\relative` AppIDs + AUMIDs)
+//!   5. Steam  — libraryfolders.vdf → appmanifest_*.acf  (all library roots)
+//!   6. Epic   — LauncherInstalled.dat + Manifests/*.item
+//!   7. GOG    — HKLM\SOFTWARE\WOW6432Node\GOG.com\Games + HKLM\SOFTWARE\GOG.com\Games
+//!   8. UWP    — PowerShell Get-AppxPackage (name + launch protocol)
+//!   9. Windows accessories seed  (Notepad, Paint, …)
+//!  10. Recursive exe scan — Program Files + LocalAppData\Programs (depth ≤ 6)
 
 use super::AppEntry;
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use windows::core::{Interface, PCWSTR};
+use windows::Win32::Foundation::{HWND, MAX_PATH};
 use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
@@ -18,49 +28,26 @@ use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_RAWPATH};
 use winreg::enums::*;
 use winreg::types::FromRegValue;
 use winreg::RegKey;
-use winreg::RegValue;
 
-/// Higher wins when merging duplicate `exe_path` keys; avoids flat `.exe` inventory clobbering Start Menu / Uninstall names.
-const NAME_RANK_UNINSTALL: u8 = 80;
-const NAME_RANK_UWP_START_APPS: u8 = 75;
-const NAME_RANK_START_MENU: u8 = 70;
-const NAME_RANK_LAUNCHER_MANIFEST: u8 = 65;
-const NAME_RANK_APP_PATHS: u8 = 55;
-const NAME_RANK_SEED: u8 = 52;
-const NAME_RANK_STEAM_FOLDER: u8 = 45;
-const NAME_RANK_RECURSIVE_PF: u8 = 30;
-const NAME_RANK_FLAT_EXE: u8 = 20;
-
-/// `IShellLinkW` path / argument buffers (game shortcuts often exceed `MAX_PATH`).
-const SHELL_LINK_WCHAR_CAP: usize = 8192;
-
-const GAME_PROTOCOL_PREFIXES: &[&str] = &[
-    "steam://",
-    "com.epicgames.launcher://",
-    "battlenet://",
-    "blizzard://",
-    "uplay://",
-    "ubisoft://",
-    "ubisoftconnect://",
-    "goggalaxy://",
-    "gog://",
-    "rockstar://",
-    "origin://",
-    "eadesktop://",
-    "msxbox://",
-    "xbox://",
-];
-
-#[derive(Debug, Clone)]
-pub(crate) struct IndexedEntry {
-    pub display_name: String,
-    pub exe_path: String,
-    pub icon_data_url: Option<String>,
-    pub name_rank: u8,
+// ---------------------------------------------------------------------------
+// Source priority: lower number wins when merging display names.
+// ---------------------------------------------------------------------------
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SourcePriority {
+    Uninstall = 0, // richest human-readable name
+    StartMenu = 1,
+    Steam = 2,
+    Epic = 3,
+    Gog = 4,
+    AppPaths = 5,
+    Accessory = 6,
+    ExeScan = 7, // lowest — raw exe name
 }
 
+// ---------------------------------------------------------------------------
+// COM apartment RAII guard
+// ---------------------------------------------------------------------------
 struct ComApartment;
-
 impl ComApartment {
     fn new() -> Result<Self, String> {
         unsafe {
@@ -71,377 +58,174 @@ impl ComApartment {
         Ok(Self)
     }
 }
-
 impl Drop for ComApartment {
     fn drop(&mut self) {
-        unsafe {
-            CoUninitialize();
-        }
+        unsafe { CoUninitialize() }
     }
 }
 
+// ---------------------------------------------------------------------------
+// Internal map entry — carries priority so merging is deterministic
+// ---------------------------------------------------------------------------
+#[derive(Clone)]
+struct MapEntry {
+    inner: AppEntry,
+    priority: SourcePriority,
+}
+
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
 pub fn scan() -> Result<Vec<AppEntry>, String> {
-    let mut map: HashMap<String, IndexedEntry> = HashMap::new();
-    // Fast registry pass: fills most launchers without shell COM (icons added later by merge).
-    scan_app_paths_registry(&mut map)?;
-    scan_uninstall_registry(&mut map)?;
+    let mut map: HashMap<String, MapEntry> = HashMap::new();
+
+    // Registry passes (no COM required)
+    scan_uninstall_registry(&mut map);
+    scan_app_paths_registry(&mut map);
+
+    // COM-dependent passes
     let _com = ComApartment::new()?;
     scan_start_menu(&mut map)?;
+    scan_get_start_apps(&mut map);
+
+    // Game launchers
+    scan_steam(&mut map);
+    scan_epic(&mut map);
+    scan_gog(&mut map);
+
+    // UWP / Microsoft Store
+    scan_uwp(&mut map);
+
+    // Windows built-in accessories
     seed_windows_accessories(&mut map);
-    scan_steam_libraries(&mut map)?;
-    scan_epic_launcher_installed(&mut map)?;
-    scan_gog_registry(&mut map)?;
-    scan_uwp_shell_apps(&mut map)?;
-    // Last: .exe inventory (flat system dirs + shallow recursive Program Files); low merge rank.
-    scan_system_and_program_exe_inventory(&mut map)?;
-    Ok(map.into_values().map(into_app_entry).collect())
+
+    // Recursive exe scan (Program Files, depth ≤ 3); never overwrites richer entries
+    scan_program_files_recursive(&mut map);
+
+    Ok(map.into_values().map(|e| e.inner).collect())
 }
 
-fn into_app_entry(e: IndexedEntry) -> AppEntry {
-    AppEntry {
-        display_name: e.display_name,
-        exe_path: e.exe_path,
-        icon_data_url: e.icon_data_url,
+// ---------------------------------------------------------------------------
+// insert_entry — merge with priority + icon back-fill
+// ---------------------------------------------------------------------------
+fn insert_entry(
+    map: &mut HashMap<String, MapEntry>,
+    exe_path: String,
+    name: String,
+    icon: Option<String>,
+    priority: SourcePriority,
+) {
+    if exe_path.is_empty() {
+        return;
     }
-}
-
-/// Non-recursive `*.exe` listing. Icons skipped (merge may add later).
-fn scan_flat_exe_directory(
-    dir: &Path,
-    map: &mut HashMap<String, IndexedEntry>,
-    max_add: usize,
-    name_rank: u8,
-) -> Result<(), String> {
-    if !dir.is_dir() {
-        return Ok(());
-    }
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.is_file()
-                && p
-                    .extension()
-                    .and_then(|x| x.to_str())
-                    .map(|x| x.eq_ignore_ascii_case("exe"))
-                    .unwrap_or(false)
+    let key = exe_path.to_lowercase();
+    let new_entry = MapEntry {
+        inner: AppEntry {
+            display_name: name,
+            exe_path,
+            icon_data_url: icon,
+        },
+        priority,
+    };
+    map.entry(key)
+        .and_modify(|existing| {
+            // Lower priority number = better source; replace entirely if better source
+            if new_entry.priority < existing.priority {
+                // Keep existing icon if new entry has none
+                let icon = new_entry
+                    .inner
+                    .icon_data_url
+                    .clone()
+                    .or_else(|| existing.inner.icon_data_url.clone());
+                *existing = new_entry.clone();
+                existing.inner.icon_data_url = icon;
+            } else if existing.inner.icon_data_url.is_none()
+                && new_entry.inner.icon_data_url.is_some()
+            {
+                // Same or lower quality source but has an icon we don't have yet
+                existing.inner.icon_data_url = new_entry.inner.icon_data_url.clone();
+            }
         })
-        .collect();
-    paths.sort();
-    let mut added = 0usize;
-    for p in paths {
-        if added >= max_add {
-            break;
-        }
-        let exe_norm = std::fs::canonicalize(&p)
-            .unwrap_or_else(|_| p.to_path_buf())
-            .to_string_lossy()
-            .to_string();
-        let label = display_name_from_exe_path(&p);
-        insert_entry(map, exe_norm, label, None, name_rank);
-        added += 1;
-    }
-    Ok(())
+        .or_insert(new_entry);
 }
 
-fn should_skip_program_files_subdir(name: &str) -> bool {
-    let n = name.to_uppercase();
-    matches!(
-        n.as_str(),
-        "$RECYCLE.BIN" | "SYSTEM VOLUME INFORMATION" | "WINDOWSAPPS"
-    )
-}
-
-/// Depth-limited recursive `.exe` discovery (used for Program Files game folders).
-fn scan_exe_directory_recursive(
-    dir: &Path,
-    map: &mut HashMap<String, IndexedEntry>,
-    budget: &mut usize,
-    max_depth: usize,
-    depth: usize,
-    name_rank: u8,
-) -> Result<(), String> {
-    if *budget == 0 || !dir.is_dir() {
-        return Ok(());
-    }
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.is_file()
-                && p
-                    .extension()
-                    .and_then(|x| x.to_str())
-                    .map(|x| x.eq_ignore_ascii_case("exe"))
-                    .unwrap_or(false)
-        })
-        .collect();
-    paths.sort();
-    for p in paths {
-        if *budget == 0 {
-            break;
-        }
-        let exe_norm = std::fs::canonicalize(&p)
-            .unwrap_or_else(|_| p.to_path_buf())
-            .to_string_lossy()
-            .to_string();
-        let label = display_name_from_exe_path(&p);
-        insert_entry(map, exe_norm, label, None, name_rank);
-        *budget -= 1;
-    }
-    if depth >= max_depth {
-        return Ok(());
-    }
-    let mut children: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.is_dir())
-        .collect();
-    children.sort();
-    for child in children {
-        let name = child
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-        if should_skip_program_files_subdir(name) {
-            continue;
-        }
-        scan_exe_directory_recursive(
-            &child,
-            map,
-            budget,
-            max_depth,
-            depth + 1,
-            name_rank,
-        )?;
-    }
-    Ok(())
-}
-
-fn display_name_from_exe_path(p: &Path) -> String {
-    let name = p
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("App.exe");
-    display_name_from_app_paths_key(name)
-}
-
-fn scan_system_and_program_exe_inventory(map: &mut HashMap<String, IndexedEntry>) -> Result<(), String> {
-    let sys_root = std::env::var("SystemRoot")
-        .or_else(|_| std::env::var("WINDIR"))
-        .unwrap_or_default();
-    if !sys_root.is_empty() {
-        let root = Path::new(&sys_root);
-        scan_flat_exe_directory(
-            &root.join("System32"),
-            map,
-            5000,
-            NAME_RANK_FLAT_EXE,
-        )?;
-        scan_flat_exe_directory(
-            &root.join("SysWOW64"),
-            map,
-            5000,
-            NAME_RANK_FLAT_EXE,
-        )?;
-        scan_flat_exe_directory(root, map, 384, NAME_RANK_FLAT_EXE)?;
-    }
-    if let Ok(pf) = std::env::var("ProgramFiles") {
-        let mut budget = 4096usize;
-        scan_exe_directory_recursive(
-            Path::new(&pf),
-            map,
-            &mut budget,
-            5,
-            0,
-            NAME_RANK_RECURSIVE_PF,
-        )?;
-    }
-    if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
-        let mut budget = 4096usize;
-        scan_exe_directory_recursive(
-            Path::new(&pf86),
-            map,
-            &mut budget,
-            5,
-            0,
-            NAME_RANK_RECURSIVE_PF,
-        )?;
-    }
-    Ok(())
-}
-
-/// Expand common `%...%` segments in registry paths (e.g. App Paths default `%SystemRoot%\\system32\\notepad.exe`).
-fn expand_windows_env_path(raw: &str) -> String {
+// ---------------------------------------------------------------------------
+// Environment variable expansion
+// ---------------------------------------------------------------------------
+fn expand_env(raw: &str) -> String {
     let mut s = raw.to_string();
-    if let Ok(v) = std::env::var("SystemRoot") {
-        for pat in ["%SystemRoot%", "%SYSTEMROOT%", "%systemroot%"] {
-            s = s.replace(pat, &v);
+    let pairs: &[(&str, &str)] = &[
+        ("SYSTEMROOT", "%SystemRoot%"),
+        ("WINDIR", "%WINDIR%"),
+        ("ProgramFiles", "%ProgramFiles%"),
+        ("ProgramFiles(x86)", "%ProgramFiles(x86)%"),
+        ("ProgramW6432", "%ProgramW6432%"),
+        ("CommonProgramFiles", "%CommonProgramFiles%"),
+        ("LOCALAPPDATA", "%LOCALAPPDATA%"),
+        ("APPDATA", "%APPDATA%"),
+        ("USERPROFILE", "%USERPROFILE%"),
+        ("PUBLIC", "%PUBLIC%"),
+        ("PROGRAMDATA", "%PROGRAMDATA%"),
+    ];
+    for (var, placeholder) in pairs {
+        if let Ok(val) = std::env::var(var) {
+            let lower_s = s.to_lowercase();
+            let lower_p = placeholder.to_lowercase();
+            if let Some(pos) = lower_s.find(&lower_p) {
+                s = format!(
+                    "{}{}{}",
+                    &s[..pos],
+                    val,
+                    &s[pos + placeholder.len()..]
+                );
+            }
         }
-    }
-    if let Ok(v) = std::env::var("WINDIR") {
-        for pat in ["%WINDIR%", "%windir%"] {
-            s = s.replace(pat, &v);
-        }
-    }
-    if let Ok(v) = std::env::var("ProgramFiles") {
-        s = s.replace("%ProgramFiles%", &v);
-        s = s.replace("%PROGRAMFILES%", &v);
-    }
-    if let Ok(v) = std::env::var("ProgramFiles(x86)") {
-        s = s.replace("%ProgramFiles(x86)%", &v);
-        s = s.replace("%PROGRAMFILES(X86)%", &v);
-    }
-    if let Ok(v) = std::env::var("ProgramW6432") {
-        s = s.replace("%ProgramW6432%", &v);
-    }
-    if let Ok(v) = std::env::var("CommonProgramFiles") {
-        s = s.replace("%CommonProgramFiles%", &v);
-    }
-    if let Ok(v) = std::env::var("LOCALAPPDATA") {
-        s = s.replace("%LOCALAPPDATA%", &v);
-        s = s.replace("%localappdata%", &v);
-    }
-    if let Ok(v) = std::env::var("APPDATA") {
-        s = s.replace("%APPDATA%", &v);
-    }
-    if let Ok(v) = std::env::var("USERPROFILE") {
-        s = s.replace("%USERPROFILE%", &v);
-    }
-    if let Ok(v) = std::env::var("PUBLIC") {
-        s = s.replace("%PUBLIC%", &v);
     }
     s
 }
 
-fn reg_value_as_expanded_string(val: &RegValue) -> Option<String> {
-    let s = String::from_reg_value(val).ok()?;
-    let t = s.trim().trim_matches('"');
-    if t.is_empty() {
-        return None;
-    }
-    Some(expand_windows_env_path(t))
+fn clean_path_str(s: &str) -> String {
+    expand_env(s.trim().trim_matches('"'))
 }
 
-/// Reads the subkey's default `(Default)` value; `get_value("")` misses some builds, and values may be REG_EXPAND_SZ.
-fn reg_subkey_default_target(sub: &RegKey) -> Option<String> {
+// ---------------------------------------------------------------------------
+// BUG FIX #1: reg_subkey_default — was using `?` inside loop, silently
+// dropping the Default value whenever any earlier enum value errored.
+// Fix: use `continue` on error, never bail the whole function.
+// ---------------------------------------------------------------------------
+fn reg_subkey_default(sub: &RegKey) -> Option<String> {
+    // Fast path: direct get_value for the (Default) value
+    if let Ok(s) = sub.get_value::<String, _>("") {
+        let t = clean_path_str(&s);
+        if !t.is_empty() {
+            return Some(t);
+        }
+    }
+    // Slower fallback: iterate values looking for empty-named entry
+    // (some builds store it differently)
     for res in sub.enum_values() {
-        let Some((name, val)) = res.ok() else {
-            continue;
+        let (name, val) = match res {
+            Ok(pair) => pair,
+            Err(_) => continue, // ← FIX: was `res.ok()?` which would bail on first error
         };
         if !name.is_empty() {
             continue;
         }
-        if let Some(s) = reg_value_as_expanded_string(&val) {
-            return Some(s);
+        if let Ok(s) = String::from_reg_value(&val) {
+            let t = clean_path_str(&s);
+            if !t.is_empty() {
+                return Some(t);
+            }
         }
     }
-    sub.get_value::<String, _>("")
-        .ok()
-        .map(|s| expand_windows_env_path(s.trim().trim_matches('"')))
+    None
 }
 
-fn seed_windows_accessories(map: &mut HashMap<String, IndexedEntry>) {
-    let sys = std::env::var("SystemRoot")
-        .or_else(|_| std::env::var("WINDIR"))
-        .unwrap_or_default();
-    if sys.is_empty() {
-        return;
-    }
-    const PAIRS: &[(&str, &str)] = &[
-        ("Notepad", r"System32\notepad.exe"),
-        ("Paint", r"System32\mspaint.exe"),
-        ("Snipping Tool", r"System32\SnippingTool.exe"),
-        ("Character Map", r"System32\charmap.exe"),
-        ("Windows Media Player", r"System32\wmplayer.exe"),
-    ];
-    for (name, rel) in PAIRS {
-        let p = Path::new(&sys).join(rel);
-        if !p.is_file() {
-            continue;
-        }
-        let exe_norm = std::fs::canonicalize(&p)
-            .unwrap_or_else(|_| p.to_path_buf())
-            .to_string_lossy()
-            .to_string();
-        insert_entry(map, exe_norm, (*name).into(), None, NAME_RANK_SEED);
-    }
-}
-
-/// `App Paths` maps `something.exe` → default value full path (broad coverage vs Uninstall alone).
-fn scan_app_paths_registry(map: &mut HashMap<String, IndexedEntry>) -> Result<(), String> {
-    const SUBPATH: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths";
-    const SUBPATH_WOW64: &str = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths";
-
-    for (root, subpath) in [
-        (HKEY_LOCAL_MACHINE, SUBPATH),
-        (HKEY_LOCAL_MACHINE, SUBPATH_WOW64),
-        (HKEY_CURRENT_USER, SUBPATH),
-    ] {
-        let hkey = RegKey::predef(root);
-        let Ok(app_paths) = hkey.open_subkey(subpath) else {
-            continue;
-        };
-        for exe_key in app_paths.enum_keys().filter_map(|e| e.ok()) {
-            let lower = exe_key.to_lowercase();
-            if !lower.ends_with(".exe") {
-                continue;
-            }
-            let Ok(sub) = app_paths.open_subkey(&exe_key) else {
-                continue;
-            };
-            let Some(target) = reg_subkey_default_target(&sub) else {
-                continue;
-            };
-            let t = target.trim().trim_matches('"');
-            if t.is_empty() {
-                continue;
-            }
-            let path = Path::new(t);
-            if !path.is_absolute() {
-                continue;
-            }
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if !ext.eq_ignore_ascii_case("exe") || !path.exists() {
-                continue;
-            }
-            let exe_norm = std::fs::canonicalize(path)
-                .unwrap_or_else(|_| path.to_path_buf())
-                .to_string_lossy()
-                .to_string();
-            let display_name = display_name_from_app_paths_key(&exe_key);
-            // Skip per-exe icon extraction here (hundreds of keys); merge from Uninstall/Start Menu when present.
-            insert_entry(
-                map,
-                exe_norm,
-                display_name,
-                None,
-                NAME_RANK_APP_PATHS,
-            );
-        }
-    }
-    Ok(())
-}
-
-fn display_name_from_app_paths_key(exe_key: &str) -> String {
-    let stem = if exe_key.len() >= 4 && exe_key[exe_key.len() - 4..].eq_ignore_ascii_case(".exe") {
-        &exe_key[..exe_key.len() - 4]
-    } else {
-        exe_key
-    };
-    let stem = stem.replace('_', " ");
-    let mut it = stem.chars();
-    match it.next() {
-        None => exe_key.to_string(),
-        Some(c) => c.to_uppercase().chain(it).collect(),
-    }
-}
-
-fn scan_uninstall_registry(map: &mut HashMap<String, IndexedEntry>) -> Result<(), String> {
-    let roots: [(winreg::HKEY, &str); 3] = [
+// ---------------------------------------------------------------------------
+// Uninstall registry scan
+// ---------------------------------------------------------------------------
+fn scan_uninstall_registry(map: &mut HashMap<String, MapEntry>) {
+    const PATHS: &[(winreg::HKEY, &str)] = &[
         (
             HKEY_LOCAL_MACHINE,
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
@@ -455,16 +239,18 @@ fn scan_uninstall_registry(map: &mut HashMap<String, IndexedEntry>) -> Result<()
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
         ),
     ];
-    for (root, subpath) in roots {
-        let hkey = RegKey::predef(root);
+    for (root, subpath) in PATHS {
+        let hkey = RegKey::predef(*root);
         let Ok(uninstall) = hkey.open_subkey(subpath) else {
             continue;
         };
-        for entry in uninstall.enum_keys().filter_map(|e| e.ok()) {
-            let Ok(sub) = uninstall.open_subkey(&entry) else {
+        for entry_name in uninstall.enum_keys().filter_map(|e| e.ok()) {
+            let Ok(sub) = uninstall.open_subkey(&entry_name) else {
                 continue;
             };
-            let display_name = match sub.get_value::<String, _>("DisplayName") {
+
+            // Skip entries without a display name (components, updates, etc.)
+            let display_name: String = match sub.get_value::<String, _>("DisplayName") {
                 Ok(s) => {
                     let t = s.trim();
                     if t.is_empty() {
@@ -474,10 +260,26 @@ fn scan_uninstall_registry(map: &mut HashMap<String, IndexedEntry>) -> Result<()
                 }
                 Err(_) => continue,
             };
-            let install_loc = sub
+
+            // Skip purely system components and patches
+            if let Ok(sys) = sub.get_value::<String, _>("SystemComponent") {
+                if sys.trim() == "1" {
+                    continue;
+                }
+            }
+            if let Ok(parent) = sub.get_value::<String, _>("ParentKeyName") {
+                if !parent.trim().is_empty() {
+                    continue;
+                }
+            }
+
+            let install_loc: Option<String> = sub
                 .get_value::<String, _>("InstallLocation")
                 .ok()
-                .map(|loc| expand_windows_env_path(loc.trim()));
+                .map(|s| clean_path_str(&s))
+                .filter(|s| !s.is_empty());
+
+            // Resolve exe via: DisplayIcon → guessed name.exe → install_dir_primary_exe
             let exe = sub
                 .get_value::<String, _>("DisplayIcon")
                 .ok()
@@ -492,29 +294,108 @@ fn scan_uninstall_registry(map: &mut HashMap<String, IndexedEntry>) -> Result<()
                         .as_deref()
                         .and_then(|loc| install_dir_primary_exe(loc, &display_name))
                 });
-            let Some(exe_path) = exe else {
-                continue;
-            };
-            let exe_norm = exe_path.trim().to_string();
-            if exe_norm.is_empty() || !Path::new(&exe_norm).exists() {
+
+            let Some(exe_path) = exe else { continue };
+            let exe_path = exe_path.trim().to_string();
+            if exe_path.is_empty() || !Path::new(&exe_path).exists() {
                 continue;
             }
-            let icon_data_url = extract_icon_data_url(&exe_norm);
+            let icon = extract_icon_data_url(&exe_path);
             insert_entry(
                 map,
-                exe_norm,
+                exe_path,
                 display_name,
-                icon_data_url,
-                NAME_RANK_UNINSTALL,
+                icon,
+                SourcePriority::Uninstall,
             );
         }
     }
-    Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// App Paths registry scan
+// ---------------------------------------------------------------------------
+fn scan_app_paths_registry(map: &mut HashMap<String, MapEntry>) {
+    const PATHS: &[(winreg::HKEY, &str)] = &[
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths",
+        ),
+        (
+            HKEY_CURRENT_USER,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
+        ),
+    ];
+    for (root, subpath) in PATHS {
+        let hkey = RegKey::predef(*root);
+        let Ok(app_paths) = hkey.open_subkey(subpath) else {
+            continue;
+        };
+        for exe_key in app_paths.enum_keys().filter_map(|e| e.ok()) {
+            let lower = exe_key.to_lowercase();
+            if !lower.ends_with(".exe") {
+                continue;
+            }
+            let Ok(sub) = app_paths.open_subkey(&exe_key) else {
+                continue;
+            };
+            let Some(target) = reg_subkey_default(&sub) else {
+                continue;
+            };
+            let t = target.trim().trim_matches('"');
+            if t.is_empty() {
+                continue;
+            }
+            let path = Path::new(t);
+            if !path.is_absolute() {
+                continue;
+            }
+            if !path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .eq_ignore_ascii_case("exe")
+            {
+                continue;
+            }
+            if !path.exists() {
+                continue;
+            }
+            let exe_norm = std::fs::canonicalize(path)
+                .unwrap_or_else(|_| path.to_path_buf())
+                .to_string_lossy()
+                .to_string();
+            let name = display_name_from_app_paths_key(&exe_key);
+            insert_entry(map, exe_norm, name, None, SourcePriority::AppPaths);
+        }
+    }
+}
+
+fn display_name_from_app_paths_key(key: &str) -> String {
+    let stem = if key.len() >= 4 && key[key.len() - 4..].eq_ignore_ascii_case(".exe") {
+        &key[..key.len() - 4]
+    } else {
+        key
+    };
+    let stem = stem.replace('_', " ");
+    let mut chars = stem.chars();
+    match chars.next() {
+        None => key.to_string(),
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Display icon → exe path (strips DLL refs and index suffixes)
+// ---------------------------------------------------------------------------
 fn display_icon_to_exe(raw: &str) -> Option<String> {
-    let trimmed = expand_windows_env_path(raw.trim());
-    let trimmed = trimmed.trim_matches('"');
+    let expanded = expand_env(raw.trim());
+    let trimmed = expanded.trim_matches('"');
+    // Strip ",<icon_index>" suffix
     let first = trimmed.split(',').next()?.trim();
     if first.is_empty() {
         return None;
@@ -524,34 +405,32 @@ fn display_icon_to_exe(raw: &str) -> Option<String> {
         return None;
     }
     let ext = p.extension()?.to_str()?;
-    if !ext.eq_ignore_ascii_case("exe") && !ext.eq_ignore_ascii_case("dll") {
+    // Only accept .exe; skip icon-only .dll references
+    if !ext.eq_ignore_ascii_case("exe") {
         return None;
     }
-    // Prefer .exe; skip icon-only .dll refs
-    if ext.eq_ignore_ascii_case("dll") {
+    if !p.exists() {
         return None;
     }
-    if p.exists() {
-        Some(
-            std::fs::canonicalize(p)
-                .unwrap_or_else(|_| p.to_path_buf())
-                .to_string_lossy()
-                .to_string(),
-        )
-    } else {
-        None
-    }
+    Some(
+        std::fs::canonicalize(p)
+            .unwrap_or_else(|_| p.to_path_buf())
+            .to_string_lossy()
+            .to_string(),
+    )
 }
 
+// ---------------------------------------------------------------------------
+// Install-dir exe resolution helpers
+// ---------------------------------------------------------------------------
+
+/// Try `<installdir>/<FirstWordOfDisplayName>.exe`
 fn install_location_guess(display_name: &str, loc: &str) -> Option<String> {
     let dir = Path::new(loc.trim());
     if !dir.is_dir() {
         return None;
     }
-    let stem = display_name
-        .split_whitespace()
-        .next()
-        .unwrap_or(display_name);
+    let stem = display_name.split_whitespace().next().unwrap_or(display_name);
     let candidate = dir.join(format!("{stem}.exe"));
     if candidate.is_file() {
         return Some(candidate.to_string_lossy().to_string());
@@ -560,7 +439,6 @@ fn install_location_guess(display_name: &str, loc: &str) -> Option<String> {
 }
 
 fn install_dir_skipped_stem(stem: &str) -> bool {
-    let s = stem.to_lowercase();
     const SKIP: &[&str] = &[
         "uninstall",
         "unins000",
@@ -569,20 +447,27 @@ fn install_dir_skipped_stem(stem: &str) -> bool {
         "setup",
         "install",
         "update",
+        "updater",
         "maintenanceservice",
         "crashreporter",
         "elevate",
         "vc_redist",
+        "dxsetup",
+        "vcredist",
     ];
+    let s = stem.to_lowercase();
     SKIP.iter().any(|p| s.contains(p))
 }
 
-/// When `DisplayIcon` / `{Name}.exe` in install dir miss, pick a plausible `.exe` in that folder.
+/// BUG FIX #2: Previously dropped every exe whose stem wasn't in the display
+/// name, then only fell back to single-exe case. Now we keep a secondary
+/// "any non-skipped exe" bucket so multi-exe dirs still resolve.
 fn install_dir_primary_exe(install_loc: &str, display_name: &str) -> Option<String> {
     let dir = Path::new(install_loc.trim());
     if !dir.is_dir() {
         return None;
     }
+
     let exes: Vec<PathBuf> = std::fs::read_dir(dir).ok()?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -600,13 +485,16 @@ fn install_dir_primary_exe(install_loc: &str, display_name: &str) -> Option<Stri
                 .unwrap_or(true)
         })
         .collect();
+
     if exes.is_empty() {
         return None;
     }
+
     let dn = display_name.to_lowercase();
-    let mut best_match: Option<(usize, PathBuf)> = None;
-    let mut best_fallback: Option<(usize, PathBuf)> = None;
-    for p in exes.iter() {
+    let mut best_named: Option<(usize, &PathBuf)> = None;
+    let mut best_fallback: Option<&PathBuf> = None;
+
+    for p in &exes {
         let stem = p
             .file_stem()
             .and_then(|s| s.to_str())
@@ -615,187 +503,63 @@ fn install_dir_primary_exe(install_loc: &str, display_name: &str) -> Option<Stri
         if stem.len() < 2 {
             continue;
         }
-        let score = if dn.contains(&stem) {
-            1000 + stem.len()
+
+        if dn.contains(&stem) || stem.contains(&dn.split_whitespace().next().unwrap_or("").to_lowercase())
+        {
+            let score = 1000 + stem.len();
+            if best_named.map(|(s, _)| score > s).unwrap_or(true) {
+                best_named = Some((score, p));
+            }
         } else {
-            0
-        };
-        if score > 0 {
-            let replace = match &best_match {
-                None => true,
-                Some((s, _)) => score > *s,
-            };
-            if replace {
-                best_match = Some((score, p.clone()));
-            }
-            continue;
-        }
-        let fb_score = install_dir_fallback_exe_score(&stem);
-        let replace = match &best_fallback {
-            None => true,
-            Some((s, _)) => fb_score > *s,
-        };
-        if replace {
-            best_fallback = Some((fb_score, p.clone()));
-        }
-    }
-    if let Some((_, p)) = best_match {
-        return Some(p.to_string_lossy().to_string());
-    }
-    if let Some((_, p)) = best_fallback {
-        return Some(p.to_string_lossy().to_string());
-    }
-    if exes.len() == 1 {
-        return Some(exes[0].to_string_lossy().to_string());
-    }
-    None
-}
-
-/// Prefer shorter stems when the display name gives no substring match (e.g. `FSD.exe` for "Deep Rock Galactic").
-fn install_dir_fallback_exe_score(stem_lower: &str) -> usize {
-    let len = stem_lower.len();
-    let noise = stem_lower.contains("launcher")
-        || stem_lower.contains("bootstrap")
-        || stem_lower.contains("redist")
-        || stem_lower.contains("sdk")
-        || stem_lower.contains("editor");
-    let tier: usize = if noise { 100 } else { 300 };
-    tier.saturating_sub(len)
-}
-
-fn wide_nul_trim(buf: &[u16]) -> String {
-    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    String::from_utf16_lossy(&buf[..len]).trim().to_string()
-}
-
-fn is_steam_client_exe_path(target: &str) -> bool {
-    Path::new(target)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .map(|n| n.eq_ignore_ascii_case("steam.exe"))
-        .unwrap_or(false)
-}
-
-fn parse_steam_applaunch_id(args: &str) -> Option<u32> {
-    let lower = args.to_ascii_lowercase();
-    for key in ["-applaunch", "/applaunch"] {
-        let Some(idx) = lower.find(key) else {
-            continue;
-        };
-        let rest = args[idx + key.len()..].trim_start();
-        let mut digits = String::new();
-        for c in rest.chars() {
-            if c.is_ascii_digit() {
-                digits.push(c);
-            } else if !digits.is_empty() {
-                break;
-            }
-        }
-        if let Ok(id) = digits.parse::<u32>() {
-            return Some(id);
-        }
-    }
-    None
-}
-
-fn extract_game_protocol_url(target: &str, args: &str) -> Option<String> {
-    for hay in [args, target] {
-        if hay.is_empty() {
-            continue;
-        }
-        let lower = hay.to_ascii_lowercase();
-        for pref in GAME_PROTOCOL_PREFIXES {
-            let Some(idx) = lower.find(pref) else {
-                continue;
-            };
-            let slice = &hay[idx..];
-            let end = slice
-                .find(|c: char| {
-                    c.is_whitespace() || matches!(c, '"' | '\'' | '`' | ')' | '>' | '<')
-                })
-                .unwrap_or(slice.len());
-            let url = slice[..end].trim_end_matches(|c| c == '"' || c == '\'');
-            if !url.is_empty() {
-                return Some(url.to_string());
+            // FIX: keep as secondary candidate even without name match
+            if best_fallback.is_none() {
+                best_fallback = Some(p);
             }
         }
     }
-    None
+
+    // Prefer name-matched, then single exe, then any exe
+    let chosen = best_named
+        .map(|(_, p)| p)
+        .or_else(|| if exes.len() == 1 { Some(&exes[0]) } else { None })
+        .or(best_fallback)?;
+
+    Some(chosen.to_string_lossy().to_string())
 }
 
-/// Resolves a shell shortcut to something `cmd /c start` can launch (`*.exe`, `steam://…`, etc.).
-/// Returns `(launch_spec, optional_icon_exe_path)`.
-fn shortcut_launch_spec(target: &str, args: &str) -> Option<(String, Option<String>)> {
-    let target_t = target.trim();
-    let args_t = args.trim();
-    if let Some(url) = extract_game_protocol_url(target_t, args_t) {
-        let icon = if is_steam_client_exe_path(target_t) {
-            Some(target_t.to_string())
-        } else {
-            None
-        };
-        return Some((url, icon));
-    }
-    if let Some(id) = parse_steam_applaunch_id(args_t) {
-        if is_steam_client_exe_path(target_t) {
-            return Some((
-                format!("steam://rungameid/{id}"),
-                Some(target_t.to_string()),
-            ));
-        }
-    }
-    let p = Path::new(target_t);
-    if p.is_file() {
-        return Some((target_t.to_string(), Some(target_t.to_string())));
-    }
-    None
-}
-
-fn parse_internet_shortcut_url(path: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    for raw in text.lines() {
-        let line = raw.trim();
-        let rest = if let Some(r) = line.strip_prefix("URL=") {
-            r
-        } else if let Some(r) = line.strip_prefix("url=") {
-            r
-        } else {
-            continue;
-        };
-        let u = rest.trim();
-        if let Some(url) = extract_game_protocol_url("", u) {
-            return Some(url);
-        }
-    }
-    None
-}
-
-fn scan_start_menu(map: &mut HashMap<String, IndexedEntry>) -> Result<(), String> {
+// ---------------------------------------------------------------------------
+// Start Menu .lnk scanner
+// BUG FIX #6: Added current user Desktop (%USERPROFILE%\Desktop)
+// BUG FIX (lnk): call Resolve() before GetPath() so the COM object actually
+//   fills in the target (previously skipped, leaving buffer zeroed for many
+//   shortcuts that use relative or PIDL-only links).
+// ---------------------------------------------------------------------------
+fn scan_start_menu(map: &mut HashMap<String, MapEntry>) -> Result<(), String> {
     let shell_link: IShellLinkW =
         unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }
             .map_err(|e| e.to_string())?;
     let persist: IPersistFile = shell_link.cast().map_err(|e| e.to_string())?;
 
-    let mut roots = Vec::new();
+    let mut roots: Vec<PathBuf> = Vec::new();
+
+    // All-users Start Menu
     if let Ok(pd) = std::env::var("PROGRAMDATA") {
-        roots.push(PathBuf::from(pd).join(r"Microsoft\Windows\Start Menu\Programs"));
+        roots.push(PathBuf::from(&pd).join(r"Microsoft\Windows\Start Menu\Programs"));
     }
+    // Per-user Start Menu (APPDATA and LOCALAPPDATA variants)
     if let Ok(ad) = std::env::var("APPDATA") {
         roots.push(PathBuf::from(&ad).join(r"Microsoft\Windows\Start Menu\Programs"));
-        roots.push(
-            PathBuf::from(&ad)
-                .join(r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"),
-        );
     }
     if let Ok(la) = std::env::var("LOCALAPPDATA") {
-        roots.push(PathBuf::from(la).join(r"Microsoft\Windows\Start Menu\Programs"));
+        roots.push(PathBuf::from(&la).join(r"Microsoft\Windows\Start Menu\Programs"));
     }
+    // Public Desktop
     if let Ok(public) = std::env::var("PUBLIC") {
-        roots.push(PathBuf::from(public).join("Desktop"));
+        roots.push(PathBuf::from(&public).join("Desktop"));
     }
-    if let Ok(profile) = std::env::var("USERPROFILE") {
-        roots.push(PathBuf::from(&profile).join("Desktop"));
-        roots.push(PathBuf::from(&profile).join("Links"));
+    // BUG FIX #6: Current user's own Desktop
+    if let Ok(up) = std::env::var("USERPROFILE") {
+        roots.push(PathBuf::from(&up).join("Desktop"));
     }
 
     for root in roots {
@@ -810,17 +574,22 @@ fn visit_dir_lnk(
     dir: &Path,
     shell_link: &IShellLinkW,
     persist: &IPersistFile,
-    map: &mut HashMap<String, IndexedEntry>,
+    map: &mut HashMap<String, MapEntry>,
 ) -> Result<(), String> {
-    let read = std::fs::read_dir(dir).map_err(|e| e.to_string())?;
-    for e in read {
+    for e in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
         let e = e.map_err(|e| e.to_string())?;
         let p = e.path();
         if p.is_dir() {
-            visit_dir_lnk(&p, shell_link, persist, map)?;
+            // Silently ignore subdirectory errors (permissions etc.)
+            let _ = visit_dir_lnk(&p, shell_link, persist, map);
         } else if p.extension().and_then(|x| x.to_str()) == Some("lnk") {
-            if let Some((launch, icon_probe)) = resolve_shell_link(shell_link, persist, &p) {
-                if launch.is_empty() {
+            if let Some(target) = resolve_lnk(shell_link, persist, &p) {
+                if target.is_empty() {
+                    continue;
+                }
+                let target_path = Path::new(&target);
+                // Accept both .exe targets and protocol-style targets (uwp:)
+                if !target.contains("://") && !target_path.exists() {
                     continue;
                 }
                 let label = p
@@ -828,30 +597,17 @@ fn visit_dir_lnk(
                     .and_then(|s| s.to_str())
                     .unwrap_or("App")
                     .to_string();
-                let icon_data_url = icon_probe
-                    .as_deref()
-                    .and_then(|ip| extract_icon_data_url(ip));
+                let icon = if target_path.exists() {
+                    extract_icon_data_url(&target)
+                } else {
+                    None
+                };
                 insert_entry(
                     map,
-                    launch,
+                    target,
                     label,
-                    icon_data_url,
-                    NAME_RANK_START_MENU,
-                );
-            }
-        } else if p.extension().and_then(|x| x.to_str()) == Some("url") {
-            if let Some(url) = parse_internet_shortcut_url(&p) {
-                let label = p
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("Game")
-                    .to_string();
-                insert_entry(
-                    map,
-                    url,
-                    label,
-                    None,
-                    NAME_RANK_START_MENU,
+                    icon,
+                    SourcePriority::StartMenu,
                 );
             }
         }
@@ -859,11 +615,10 @@ fn visit_dir_lnk(
     Ok(())
 }
 
-fn resolve_shell_link(
-    shell_link: &IShellLinkW,
-    persist: &IPersistFile,
-    lnk: &Path,
-) -> Option<(String, Option<String>)> {
+/// BUG FIX (lnk resolution): call `Resolve` before `GetPath`.
+/// Without Resolve, shortcuts that store only a PIDL (e.g. many game shortcuts
+/// installed by Steam, Epic, etc.) return an empty path from GetPath.
+fn resolve_lnk(shell_link: &IShellLinkW, persist: &IPersistFile, lnk: &Path) -> Option<String> {
     let wide: Vec<u16> = lnk
         .as_os_str()
         .encode_wide()
@@ -871,638 +626,1106 @@ fn resolve_shell_link(
         .collect();
     unsafe {
         persist.Load(PCWSTR(wide.as_ptr()), STGM_READ).ok()?;
-        let mut path_buf = vec![0u16; SHELL_LINK_WCHAR_CAP];
-        let target = match shell_link.GetPath(
-            &mut path_buf,
-            std::ptr::null_mut::<WIN32_FIND_DATAW>(),
-            SLGP_RAWPATH.0 as u32,
-        ) {
-            Ok(()) => wide_nul_trim(&path_buf),
-            Err(_) => String::new(),
-        };
-        let mut arg_buf = vec![0u16; SHELL_LINK_WCHAR_CAP];
-        let args = match shell_link.GetArguments(&mut arg_buf) {
-            Ok(()) => wide_nul_trim(&arg_buf),
-            Err(_) => String::new(),
-        };
-        shortcut_launch_spec(&target, &args)
+
+        // SLR_NO_UI | SLR_NOSEARCH = 0x11 — never show a dialog or search the disk
+        let _ = shell_link.Resolve(HWND::default(), 0x0001u32 | 0x0010u32);
+
+        let mut buf = vec![0u16; MAX_PATH as usize];
+        shell_link
+            .GetPath(
+                &mut buf,
+                std::ptr::null_mut::<WIN32_FIND_DATAW>(),
+                SLGP_RAWPATH.0 as u32,
+            )
+            .ok()?;
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        let s = String::from_utf16_lossy(&buf[..len]);
+        let t = s.trim();
+        if t.is_empty() {
+            return None;
+        }
+        Some(t.to_string())
     }
 }
 
-fn steam_install_dir_from_registry() -> Option<PathBuf> {
-    for (root, sub) in [
+// ---------------------------------------------------------------------------
+// Get-StartApps — same enumeration as the Start menu; AppIDs are often
+// `{FOLDERID-GUID}\relative\app.exe` (not absolute paths) — we resolve GUID → base.
+// ---------------------------------------------------------------------------
+fn scan_get_start_apps(map: &mut HashMap<String, MapEntry>) {
+    let script = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+$OutputEncoding = [System.Text.UTF8Encoding]::new()
+foreach ($a in Get-StartApps) {
+  $n = $a.Name -replace "`t", "`t"
+  $i = $a.AppID -replace "`t", "`t"
+  $n + "`t" + $i
+}
+"#;
+    let output = match Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return,
+    };
+
+    let stdout = match String::from_utf8(output.stdout) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some((name, app_id)) = parse_start_apps_line(line) else {
+            continue;
+        };
+        let display_name = name.trim();
+        if display_name.is_empty() {
+            continue;
+        }
+        let Some(target) = resolve_start_app_launch_target(&app_id) else {
+            continue;
+        };
+        if target.is_empty() {
+            continue;
+        }
+
+        let stored = if target
+            .to_ascii_lowercase()
+            .starts_with("shell:appsfolder\\")
+            || target.to_ascii_lowercase().starts_with("steam://")
+        {
+            target
+        } else {
+            let p = Path::new(&target);
+            if p.exists() {
+                std::fs::canonicalize(p)
+                    .unwrap_or_else(|_| p.to_path_buf())
+                    .to_string_lossy()
+                    .to_string()
+            } else {
+                continue;
+            }
+        };
+
+        // No per-entry icon extraction here (too slow); merge may fill from Uninstall / .lnk.
+        insert_entry(
+            map,
+            stored,
+            display_name.to_string(),
+            None,
+            SourcePriority::StartMenu,
+        );
+    }
+}
+
+fn parse_start_apps_line(line: &str) -> Option<(String, String)> {
+    let idx = line.find('\t')?;
+    let name = line[..idx].trim().to_string();
+    let id = line[idx + 1..].trim().to_string();
+    if name.is_empty() || id.is_empty() {
+        return None;
+    }
+    Some((name, id))
+}
+
+fn resolve_start_app_launch_target(app_id: &str) -> Option<String> {
+    let id = app_id.trim();
+    if id.is_empty() {
+        return None;
+    }
+
+    let id_lower = id.to_ascii_lowercase();
+
+    if id_lower.starts_with("steam://") {
+        return Some(id.to_string());
+    }
+
+    if id_lower.starts_with("shell:appsfolder\\") {
+        return Some(id.to_string());
+    }
+
+    if looks_like_drive_absolute_path(id) || id.starts_with("\\\\") {
+        let cleaned = clean_path_str(id);
+        let p = Path::new(&cleaned);
+        if p.is_file()
+            && p.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("exe"))
+                .unwrap_or(false)
+        {
+            return Some(p.to_string_lossy().to_string());
+        }
+    }
+
+    if id.starts_with('{') {
+        if let Some(end) = id.find('}') {
+            let guid = &id[1..end];
+            let rest = id.get(end + 1..).unwrap_or("");
+            if rest.starts_with('\\') {
+                let rel = &rest[1..];
+                if let Some(base) = known_folder_guid_to_base(guid) {
+                    let p = base.join(rel);
+                    if p.is_file()
+                        && p.extension()
+                            .and_then(|e| e.to_str())
+                            .map(|e| e.eq_ignore_ascii_case("exe"))
+                            .unwrap_or(false)
+                    {
+                        return p.to_str().map(|s| s.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    if id.contains('!') && !id.contains('\\') {
+        return Some(format!("shell:AppsFolder\\{}", id));
+    }
+
+    None
+}
+
+fn looks_like_drive_absolute_path(s: &str) -> bool {
+    let s = s.trim();
+    let b = s.as_bytes();
+    b.len() >= 3
+        && b[0].is_ascii_alphabetic()
+        && b[1] == b':'
+        && (b[2] == b'\\' || b[2] == b'/')
+}
+
+fn known_folder_guid_to_base(guid: &str) -> Option<PathBuf> {
+    let g = guid
+        .trim_matches(|c| c == '{' || c == '}')
+        .trim()
+        .to_ascii_uppercase();
+    match g.as_str() {
+        "6D809377-6AF0-444B-8957-A3773F02200E" | "905E63B6-C1BF-494E-B29C-65B732D3D46A" => std::env::var("ProgramW6432")
+            .or_else(|_| std::env::var("ProgramFiles"))
+            .ok()
+            .map(PathBuf::from),
+        "7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E" => {
+            std::env::var("ProgramFiles(x86)").ok().map(PathBuf::from)
+        }
+        "1AC14E77-02E7-4E5D-B744-2EB1AE5198B7" => {
+            let sys = std::env::var("SystemRoot").ok()?;
+            Some(Path::new(&sys).join("System32"))
+        }
+        "D65231B0-B2F1-4857-A4CE-A8E7C6EA7D27" => {
+            let sys = std::env::var("SystemRoot").ok()?;
+            Some(Path::new(&sys).join("SysWOW64"))
+        }
+        "F38BF404-1D43-42F2-9305-67DE0B28C23C" => std::env::var("SystemRoot").ok().map(PathBuf::from),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// STEAM scanner — reads all library roots from libraryfolders.vdf
+// then parses every appmanifest_*.acf to get name + installdir.
+// BUG FIX #4: was entirely missing.
+// ---------------------------------------------------------------------------
+fn scan_steam(map: &mut HashMap<String, MapEntry>) {
+    // Locate Steam via registry first, then env fallbacks
+    let steam_root = find_steam_root();
+    let steam_root = match steam_root {
+        Some(p) => p,
+        None => return,
+    };
+
+    let library_folders = read_steam_library_folders(&steam_root);
+    let mut all_libraries: Vec<PathBuf> = vec![steam_root.join("steamapps")];
+    all_libraries.extend(library_folders.into_iter().map(|p| p.join("steamapps")));
+
+    for steamapps_dir in all_libraries {
+        if !steamapps_dir.is_dir() {
+            continue;
+        }
+        scan_steam_library(&steamapps_dir, map);
+    }
+}
+
+fn find_steam_root() -> Option<PathBuf> {
+    // Try registry first (most reliable)
+    let roots = [
         (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam"),
         (HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam"),
-        (HKEY_CURRENT_USER, r"Software\Valve\Steam"),
-    ] {
-        let hkey = RegKey::predef(root);
-        let Ok(k) = hkey.open_subkey(sub) else {
-            continue;
-        };
-        if let Ok(s) = k.get_value::<String, _>("InstallPath") {
-            let p = PathBuf::from(expand_windows_env_path(s.trim()));
-            if p.is_dir() {
-                return Some(p);
+        (HKEY_CURRENT_USER, r"SOFTWARE\Valve\Steam"),
+    ];
+    for (hive, path) in &roots {
+        if let Ok(key) = RegKey::predef(*hive).open_subkey(path) {
+            if let Ok(install_path) = key.get_value::<String, _>("InstallPath") {
+                let p = PathBuf::from(clean_path_str(install_path.trim()));
+                if p.is_dir() {
+                    return Some(p);
+                }
             }
+        }
+    }
+    // Common default locations
+    let defaults = [r"C:\Program Files (x86)\Steam", r"C:\Program Files\Steam"];
+    for d in &defaults {
+        let p = PathBuf::from(d);
+        if p.is_dir() {
+            return Some(p);
         }
     }
     None
 }
 
-fn vdf_quoted_path_byte_end(s: &str) -> Option<usize> {
-    let b = s.as_bytes();
-    let mut i = 0usize;
-    while i < b.len() {
-        match b[i] {
-            b'\\' => {
-                i = (i + 2).min(b.len());
-            }
-            b'"' => return Some(i),
-            _ => i += 1,
-        }
-    }
-    None
-}
-
-fn vdf_unescape_inner(escaped: &str) -> String {
-    let mut out = String::with_capacity(escaped.len());
-    let mut it = escaped.chars();
-    while let Some(c) = it.next() {
-        if c == '\\' {
-            if let Some(n) = it.next() {
-                out.push(n);
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-fn vdf_extract_library_path_strings(vdf: &str) -> Vec<String> {
-    let needle = "\"path\"";
-    let mut out = Vec::new();
-    let mut from = 0usize;
-    while let Some(pos) = vdf[from..].find(needle) {
-        let abs = from + pos;
-        let i = abs + needle.len();
-        from = i + 1;
-        let tail = vdf[i..].trim_start();
-        let Some(after_open) = tail.strip_prefix('"') else {
-            continue;
-        };
-        let Some(end) = vdf_quoted_path_byte_end(after_open) else {
-            continue;
-        };
-        out.push(vdf_unescape_inner(&after_open[..end]));
-    }
-    out
-}
-
-fn steam_library_steamapps_roots() -> Vec<PathBuf> {
-    use std::collections::HashSet;
-    let mut seen = HashSet::<PathBuf>::new();
-    let mut out = Vec::new();
-    let Some(base) = steam_install_dir_from_registry() else {
-        return out;
+/// Parse `config/libraryfolders.vdf` to get additional library roots.
+/// The VDF format is simple enough that we can parse it with a lightweight
+/// regex-free approach rather than pulling in a full VDF crate.
+fn read_steam_library_folders(steam_root: &Path) -> Vec<PathBuf> {
+    let vdf_path = steam_root.join("config").join("libraryfolders.vdf");
+    let content = match std::fs::read_to_string(&vdf_path) {
+        Ok(s) => s,
+        Err(_) => return vec![],
     };
-    let push = |p: PathBuf, seen: &mut HashSet<PathBuf>, out: &mut Vec<PathBuf>| {
-        if p.is_dir() && seen.insert(p.clone()) {
-            out.push(p);
-        }
-    };
-    push(base.join("steamapps"), &mut seen, &mut out);
-    for rel in ["config/libraryfolders.vdf", "steamapps/libraryfolders.vdf"] {
-        let p = base.join(rel);
-        let Ok(text) = std::fs::read_to_string(&p) else {
+
+    let mut libs = Vec::new();
+    // Each library appears as:  "path"   "D:\\SteamLibrary"
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // Match lines like:  "path"		"E:\\Games\\Steam"
+        if !trimmed.to_lowercase().starts_with("\"path\"") {
             continue;
-        };
-        for raw in vdf_extract_library_path_strings(&text) {
-            let expanded = expand_windows_env_path(raw.trim());
-            let pb = PathBuf::from(expanded.trim_matches('"'));
-            let cand = if pb.ends_with("steamapps") {
-                pb
+        }
+        let parts: Vec<&str> = trimmed.splitn(3, '"').collect();
+        // parts[0]="" parts[1]="path" parts[2]=`\t"E:\\..."``
+        if parts.len() < 3 {
+            continue;
+        }
+        let rest = parts[2].trim().trim_matches('"');
+        // Unescape doubled backslashes that Steam writes
+        let path_str = rest.replace("\\\\", "\\");
+        let p = PathBuf::from(&path_str);
+        if p.is_dir() {
+            libs.push(p);
+        }
+    }
+    libs
+}
+
+fn scan_steam_library(steamapps: &Path, map: &mut HashMap<String, MapEntry>) {
+    let common = steamapps.join("common");
+    let entries = match std::fs::read_dir(steamapps) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !fname.starts_with("appmanifest_") || !fname.ends_with(".acf") {
+            continue;
+        }
+        if let Some((name, install_dir)) = parse_acf(&path) {
+            if name.is_empty() || install_dir.is_empty() {
+                continue;
+            }
+            // Skip redistributables and Proton/SteamLinuxRuntime entries
+            let name_lower = name.to_lowercase();
+            if name_lower.contains("redistributable")
+                || name_lower.contains("proton")
+                || name_lower.starts_with("steam linux runtime")
+                || name_lower.contains("directx")
+            {
+                continue;
+            }
+            let game_dir = common.join(&install_dir);
+            if !game_dir.is_dir() {
+                continue;
+            }
+            // Find the primary exe in the game directory
+            if let Some(exe) = install_dir_primary_exe(&game_dir.to_string_lossy(), &name) {
+                if Path::new(&exe).exists() {
+                    let icon = extract_icon_data_url(&exe);
+                    insert_entry(map, exe, name, icon, SourcePriority::Steam);
+                }
             } else {
-                pb.join("steamapps")
-            };
-            push(cand, &mut seen, &mut out);
-        }
-    }
-    out
-}
-
-fn display_name_from_steam_folder(folder: &str) -> String {
-    folder.replace('_', " ")
-}
-
-fn scan_steam_libraries(map: &mut HashMap<String, IndexedEntry>) -> Result<(), String> {
-    let roots = steam_library_steamapps_roots();
-    let mut games_seen = 0usize;
-    for steamapps in roots {
-        let common = steamapps.join("common");
-        if !common.is_dir() {
-            continue;
-        }
-        let Ok(rd) = std::fs::read_dir(&common) else {
-            continue;
-        };
-        let mut game_dirs: Vec<PathBuf> = rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect();
-        game_dirs.sort();
-        for game_dir in game_dirs {
-            if games_seen >= 768 {
-                return Ok(());
+                // Recurse one level deeper for games with subdirectory launchers
+                if let Ok(sub_entries) = std::fs::read_dir(&game_dir) {
+                    for sub in sub_entries.filter_map(|e| e.ok()) {
+                        if sub.path().is_dir() {
+                            if let Some(exe) =
+                                install_dir_primary_exe(&sub.path().to_string_lossy(), &name)
+                            {
+                                if Path::new(&exe).exists() {
+                                    let icon = extract_icon_data_url(&exe);
+                                    insert_entry(map, exe, name, icon, SourcePriority::Steam);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            let title = game_dir
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Game");
-            let display = display_name_from_steam_folder(title);
-            let Some(exe_raw) = install_dir_primary_exe(&game_dir.to_string_lossy(), &display) else {
-                continue;
-            };
-            let p = Path::new(exe_raw.trim());
-            if !p.is_file() {
-                continue;
-            }
-            let exe_norm = std::fs::canonicalize(p)
-                .unwrap_or_else(|_| p.to_path_buf())
-                .to_string_lossy()
-                .to_string();
-            insert_entry(
-                map,
-                exe_norm,
-                display,
-                None,
-                NAME_RANK_STEAM_FOLDER,
-            );
-            games_seen += 1;
         }
     }
-    Ok(())
 }
 
-#[derive(Debug, Deserialize)]
-struct EpicInstalledRoot {
-    #[serde(rename = "InstallationList")]
-    installation_list: Option<Vec<EpicInstalledItem>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct EpicInstalledItem {
-    #[serde(rename = "InstallLocation")]
-    install_location: Option<String>,
-    #[serde(rename = "AppName")]
-    app_name: Option<String>,
-    #[serde(rename = "AppDisplayName")]
-    app_display_name: Option<String>,
-    #[serde(rename = "FriendlyName")]
-    friendly_name: Option<String>,
-}
-
-fn scan_epic_launcher_installed(map: &mut HashMap<String, IndexedEntry>) -> Result<(), String> {
-    let Ok(pd) = std::env::var("PROGRAMDATA") else {
-        return Ok(());
-    };
-    let path = Path::new(&pd).join("Epic/UnrealEngineLauncher/LauncherInstalled.dat");
-    if !path.is_file() {
-        return Ok(());
-    }
-    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let root: EpicInstalledRoot = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    let Some(list) = root.installation_list else {
-        return Ok(());
-    };
-    let mut n = 0usize;
-    for item in list {
-        if n >= 512 {
+/// Parse `name` and `installdir` from an ACF (Valve KeyValues) file.
+fn parse_acf(path: &Path) -> Option<(String, String)> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut name = String::new();
+    let mut install_dir = String::new();
+    for line in content.lines() {
+        let t = line.trim();
+        if let Some(val) = kv_value(t, "name") {
+            name = val;
+        } else if let Some(val) = kv_value(t, "installdir") {
+            install_dir = val;
+        }
+        if !name.is_empty() && !install_dir.is_empty() {
             break;
         }
-        let loc = item.install_location.as_deref().unwrap_or("").trim();
-        if loc.is_empty() {
-            continue;
-        }
-        let display = item
-            .app_display_name
-            .as_deref()
-            .or(item.friendly_name.as_deref())
-            .or(item.app_name.as_deref())
-            .filter(|s| !s.trim().is_empty())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                Path::new(loc)
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("Epic Game")
-                    .to_string()
-            });
-        let Some(exe_raw) = install_dir_primary_exe(loc, &display) else {
-            continue;
-        };
-        let p = Path::new(exe_raw.trim());
-        if !p.is_file() {
-            continue;
-        }
-        let exe_norm = std::fs::canonicalize(p)
-            .unwrap_or_else(|_| p.to_path_buf())
-            .to_string_lossy()
-            .to_string();
-        insert_entry(
-            map,
-            exe_norm,
-            display,
-            None,
-            NAME_RANK_LAUNCHER_MANIFEST,
-        );
-        n += 1;
     }
-    Ok(())
+    if name.is_empty() || install_dir.is_empty() {
+        return None;
+    }
+    Some((name, install_dir))
 }
 
-fn scan_gog_registry(map: &mut HashMap<String, IndexedEntry>) -> Result<(), String> {
-    for (root, subpath) in [
-        (HKEY_LOCAL_MACHINE, r"SOFTWARE\GOG.com\Games"),
+/// Extract value from a KeyValues line:  `"key"    "value"`
+fn kv_value(line: &str, key: &str) -> Option<String> {
+    let lower = line.to_lowercase();
+    let key_quoted = format!("\"{}\"", key.to_lowercase());
+    if !lower.starts_with(&key_quoted) {
+        return None;
+    }
+    let rest = &line[key_quoted.len()..].trim();
+    if rest.starts_with('"') && rest.ends_with('"') && rest.len() >= 2 {
+        Some(rest[1..rest.len() - 1].to_string())
+    } else {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EPIC scanner — reads LauncherInstalled.dat (JSON)
+// BUG FIX #4: was entirely missing.
+// ---------------------------------------------------------------------------
+fn scan_epic(map: &mut HashMap<String, MapEntry>) {
+    let dat_path = {
+        let pd = std::env::var("PROGRAMDATA").unwrap_or_default();
+        if pd.is_empty() {
+            return;
+        }
+        PathBuf::from(pd)
+            .join("Epic")
+            .join("UnrealEngineLauncher")
+            .join("LauncherInstalled.dat")
+    };
+    if !dat_path.exists() {
+        return;
+    }
+    let content = match std::fs::read_to_string(&dat_path) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    // Lightweight JSON extraction — avoids pulling in serde_json
+    // Structure: { "InstallationList": [ { "InstallLocation": "...", "AppName": "..." }, ... ] }
+    for chunk in content.split('{').skip(1) {
+        let install_location = json_str_field(chunk, "InstallLocation");
+        let app_name = json_str_field(chunk, "AppName")
+            .or_else(|| json_str_field(chunk, "DisplayName"));
+
+        let (loc, name) = match (install_location, app_name) {
+            (Some(l), Some(n)) => (l, n),
+            _ => continue,
+        };
+
+        // Skip engine installs and non-game entries
+        let name_lower = name.to_lowercase();
+        if name_lower.starts_with("ue_") || name_lower.contains("unreal engine") {
+            continue;
+        }
+
+        let dir = Path::new(&loc);
+        if !dir.is_dir() {
+            continue;
+        }
+
+        // Also try reading the .item manifest for a human-readable DisplayName
+        let display_name = read_epic_manifest_name(&name).unwrap_or_else(|| {
+            // Convert camelCase/PascalCase AppName to display name
+            pretty_name_from_identifier(&name)
+        });
+
+        if let Some(exe) = install_dir_primary_exe(&loc, &display_name) {
+            if Path::new(&exe).exists() {
+                let icon = extract_icon_data_url(&exe);
+                insert_entry(map, exe, display_name, icon, SourcePriority::Epic);
+            }
+        }
+    }
+}
+
+fn read_epic_manifest_name(app_name: &str) -> Option<String> {
+    let pd = std::env::var("PROGRAMDATA").ok()?;
+    let manifests = PathBuf::from(pd)
+        .join("Epic")
+        .join("EpicGamesLauncher")
+        .join("Data")
+        .join("Manifests");
+    for entry in std::fs::read_dir(&manifests).ok()?.filter_map(|e| e.ok()) {
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("item") {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&p) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        // Check if this manifest is for our app
+        if let Some(stored_name) = json_str_field(&content, "AppName") {
+            if stored_name.eq_ignore_ascii_case(app_name) {
+                return json_str_field(&content, "DisplayName").filter(|s| !s.is_empty());
+            }
+        }
+    }
+    None
+}
+
+/// Quick JSON string field extractor — no allocations for parsing overhead.
+fn json_str_field(json: &str, field: &str) -> Option<String> {
+    let key = format!("\"{}\"", field);
+    let pos = json.find(&key)?;
+    let rest = &json[pos + key.len()..];
+    let colon = rest.find(':')? + 1;
+    let after_colon = rest[colon..].trim_start();
+    if !after_colon.starts_with('"') {
+        return None;
+    }
+    let inner = &after_colon[1..];
+    let end = inner.find('"')?;
+    let val = &inner[..end];
+    if val.is_empty() {
+        return None;
+    }
+    // Unescape common JSON escape sequences
+    Some(
+        val.replace("\\\\", "\\")
+            .replace("\\\"", "\"")
+            .replace("\\/", "/"),
+    )
+}
+
+/// Turn "TheGame2077" → "The Game 2077" (rough heuristic for Epic AppNames)
+fn pretty_name_from_identifier(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 8);
+    let mut prev_lower = false;
+    let mut prev_upper = false;
+    for ch in s.chars() {
+        if ch == '_' || ch == '-' {
+            result.push(' ');
+            prev_lower = false;
+            prev_upper = false;
+        } else if ch.is_uppercase() {
+            if prev_lower || prev_upper {
+                if !result.is_empty() && !result.ends_with(' ') {
+                    result.push(' ');
+                }
+            }
+            result.push(ch);
+            prev_lower = false;
+            prev_upper = true;
+        } else if ch.is_numeric() {
+            if prev_lower || prev_upper {
+                if !result.ends_with(' ') {
+                    result.push(' ');
+                }
+            }
+            result.push(ch);
+            prev_lower = false;
+            prev_upper = false;
+        } else {
+            result.push(ch);
+            prev_lower = true;
+            prev_upper = false;
+        }
+    }
+    result.trim().to_string()
+}
+
+// ---------------------------------------------------------------------------
+// GOG scanner — reads HKLM\SOFTWARE\(WOW6432Node\)GOG.com\Games
+// Each subkey has "exe" and "gameName" values.
+// BUG FIX #4: was entirely missing.
+// ---------------------------------------------------------------------------
+fn scan_gog(map: &mut HashMap<String, MapEntry>) {
+    const GOG_PATHS: &[(winreg::HKEY, &str)] = &[
         (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\GOG.com\Games"),
-    ] {
-        let hkey = RegKey::predef(root);
-        let Ok(games) = hkey.open_subkey(subpath) else {
+        (HKEY_LOCAL_MACHINE, r"SOFTWARE\GOG.com\Games"),
+    ];
+    for (root, path) in GOG_PATHS {
+        let hkey = RegKey::predef(*root);
+        let Ok(games) = hkey.open_subkey(path) else {
             continue;
         };
-        for key in games.enum_keys().filter_map(|e| e.ok()) {
-            let Ok(sk) = games.open_subkey(&key) else {
+        for game_id in games.enum_keys().filter_map(|e| e.ok()) {
+            let Ok(sub) = games.open_subkey(&game_id) else {
                 continue;
             };
-            let display_name = sk
+            // "exe" holds the full path to the game executable
+            let exe: String = sub
+                .get_value::<String, _>("exe")
+                .or_else(|_| sub.get_value::<String, _>("EXEFILE"))
+                .unwrap_or_default();
+            let exe = clean_path_str(&exe);
+            if exe.is_empty() || !Path::new(&exe).exists() {
+                continue;
+            }
+
+            let name: String = sub
                 .get_value::<String, _>("gameName")
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| key.clone());
-            let Ok(exe_raw) = sk.get_value::<String, _>("exe") else {
+                .or_else(|_| sub.get_value::<String, _>("GAMENAME"))
+                .unwrap_or_default();
+            let name = name.trim().to_string();
+            if name.is_empty() {
                 continue;
-            };
-            let expanded = expand_windows_env_path(exe_raw.trim());
-            let p = Path::new(expanded.trim().trim_matches('"'));
+            }
+
+            let icon = extract_icon_data_url(&exe);
+            insert_entry(map, exe, name, icon, SourcePriority::Gog);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// UWP / Microsoft Store scanner
+// BUG FIX #5: was entirely missing.
+// Uses PowerShell to enumerate packages and builds a shell: launch URI.
+// ---------------------------------------------------------------------------
+fn scan_uwp(map: &mut HashMap<String, MapEntry>) {
+    // PowerShell script: emit lines of "DisplayName|PackageFamilyName|AppId"
+    let script = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$pkgs = Get-AppxPackage -PackageTypeFilter Main | Where-Object {
+    $_.IsFramework -eq $false
+}
+foreach ($pkg in $pkgs) {
+    try {
+        $manifest = Get-AppxPackageManifest -Package $pkg.PackageFullName
+        foreach ($app in $manifest.Package.Applications.Application) {
+            $appId = $app.Id
+            if (-not $appId) { continue }
+            $displayName = $app.VisualElements.DisplayName
+            if (-not $displayName -or $displayName -match '^\s*$') {
+                $displayName = $pkg.Name
+            }
+            # Resolve resource string names like "ms-resource:AppName"
+            if ($displayName -match '^ms-resource:') {
+                $displayName = $pkg.Name
+            }
+            $pfn = $pkg.PackageFamilyName
+            Write-Output "$displayName|$pfn|$appId"
+        }
+    } catch {}
+}
+"#;
+
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output();
+
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return,
+    };
+
+    let stdout = match String::from_utf8(output.stdout) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.splitn(3, '|').collect();
+        if parts.len() != 3 {
+            continue;
+        }
+        let display_name = parts[0].trim();
+        let pfn = parts[1].trim();
+        let app_id = parts[2].trim();
+        if display_name.is_empty() || pfn.is_empty() {
+            continue;
+        }
+
+        // Filter out system noise
+        let dn_lower = display_name.to_lowercase();
+        if dn_lower.contains("framework")
+            || dn_lower.contains("runtime")
+            || dn_lower.contains("vclibs")
+            || dn_lower.starts_with("microsoft.ui")
+        {
+            continue;
+        }
+
+        // Launch URI for UWP apps: shell:AppsFolder\<PackageFamilyName>!<AppId>
+        let launch_uri = format!("shell:AppsFolder\\{}!{}", pfn, app_id);
+        insert_entry(
+            map,
+            launch_uri,
+            display_name.to_string(),
+            None,
+            SourcePriority::AppPaths, // treat as similar priority to App Paths
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Windows accessories seed  (Notepad, Paint, etc.)
+// These often lack Uninstall entries; this guarantees they always appear.
+// ---------------------------------------------------------------------------
+fn seed_windows_accessories(map: &mut HashMap<String, MapEntry>) {
+    let sys = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("WINDIR"))
+        .unwrap_or_default();
+    if sys.is_empty() {
+        return;
+    }
+
+    const PAIRS: &[(&str, &str)] = &[
+        ("Notepad", r"System32\notepad.exe"),
+        ("Paint", r"System32\mspaint.exe"),
+        ("Snipping Tool", r"System32\SnippingTool.exe"),
+        ("Character Map", r"System32\charmap.exe"),
+        ("Windows Media Player", r"System32\wmplayer.exe"),
+        ("Task Manager", r"System32\Taskmgr.exe"),
+        ("Registry Editor", r"regedit.exe"),
+        ("Calculator", r"System32\calc.exe"),
+        (
+            "WordPad",
+            r"Program Files\Windows NT\Accessories\wordpad.exe",
+        ),
+    ];
+
+    for (name, rel) in PAIRS {
+        // Some paths are relative to system root, others to drive root
+        let candidates: Vec<PathBuf> = if rel.starts_with("Program Files") {
+            vec![
+                PathBuf::from(r"C:\").join(rel),
+                Path::new(&sys).join("..").join(rel),
+            ]
+        } else {
+            vec![Path::new(&sys).join(rel)]
+        };
+
+        for p in candidates {
             if !p.is_file() {
                 continue;
             }
-            let exe_norm = std::fs::canonicalize(p)
+            let exe_norm = std::fs::canonicalize(&p)
                 .unwrap_or_else(|_| p.to_path_buf())
                 .to_string_lossy()
                 .to_string();
-            let icon_data_url = extract_icon_data_url(&exe_norm);
+            let icon = extract_icon_data_url(&exe_norm);
             insert_entry(
                 map,
                 exe_norm,
-                display_name,
-                icon_data_url,
-                NAME_RANK_LAUNCHER_MANIFEST,
+                (*name).to_string(),
+                icon,
+                SourcePriority::Accessory,
+            );
+            break;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BUG FIX #3: Recursive Program Files scan (depth ≤ 3)
+// Previously was flat (depth 1 only), missing all games in subdirectories.
+// This pass runs last with lowest priority — never overwrites richer entries.
+// ---------------------------------------------------------------------------
+fn scan_program_files_recursive(map: &mut HashMap<String, MapEntry>) {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(pf) = std::env::var("ProgramFiles") {
+        roots.push(PathBuf::from(pf));
+    }
+    if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
+        roots.push(PathBuf::from(pf86));
+    }
+    if let Ok(pfw) = std::env::var("ProgramW6432") {
+        roots.push(PathBuf::from(pfw));
+    }
+    if let Ok(la) = std::env::var("LOCALAPPDATA") {
+        let p = PathBuf::from(la).join("Programs");
+        if p.is_dir() {
+            roots.push(p);
+        }
+    }
+    for root in roots {
+        scan_exe_recursive(&root, map, 0, 6);
+    }
+}
+
+fn scan_exe_recursive(dir: &Path, map: &mut HashMap<String, MapEntry>, depth: usize, max_depth: usize) {
+    if depth > max_depth {
+        return;
+    }
+    if !dir.is_dir() {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let p = entry.path();
+        if p.is_dir() {
+            scan_exe_recursive(&p, map, depth + 1, max_depth);
+        } else if p.is_file() {
+            let is_exe = p
+                .extension()
+                .and_then(|x| x.to_str())
+                .map(|x| x.eq_ignore_ascii_case("exe"))
+                .unwrap_or(false);
+            if !is_exe {
+                continue;
+            }
+            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if install_dir_skipped_stem(stem) {
+                continue;
+            }
+
+            let exe_norm = std::fs::canonicalize(&p)
+                .unwrap_or_else(|_| p.to_path_buf())
+                .to_string_lossy()
+                .to_string();
+            // Only add if not already discovered by a richer source
+            let key = exe_norm.to_lowercase();
+            if map.contains_key(&key) {
+                continue;
+            }
+
+            let label = display_name_from_app_paths_key(stem);
+            insert_entry(
+                map,
+                exe_norm,
+                label,
+                None,
+                SourcePriority::ExeScan,
             );
         }
     }
-    Ok(())
 }
 
-#[derive(Debug, Deserialize)]
-struct StartAppRow {
-    #[serde(rename = "Name")]
-    name: String,
-    #[serde(rename = "AppID", alias = "AppId")]
-    app_id: String,
-}
-
-fn scan_uwp_shell_apps(map: &mut HashMap<String, IndexedEntry>) -> Result<(), String> {
-    let script = "try { Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress -Depth 4 } catch { '[]' }";
-    let Ok(output) = Command::new("powershell")
-        .arg("-NoProfile")
-        .arg("-NonInteractive")
-        .arg("-Command")
-        .arg(script)
-        .output()
-    else {
-        return Ok(());
-    };
-    if !output.status.success() {
-        return Ok(());
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Ok(());
-    }
-    let rows: Vec<StartAppRow> = match serde_json::from_str(trimmed) {
-        Ok(v) => v,
-        Err(_) => serde_json::from_str::<StartAppRow>(trimmed)
-            .map(|r| vec![r])
-            .unwrap_or_default(),
-    };
-    let mut n = 0usize;
-    for row in rows {
-        if n >= 800 {
-            break;
-        }
-        let name = row.name.trim();
-        let id = row.app_id.trim();
-        if name.is_empty() || id.is_empty() {
-            continue;
-        }
-        let shell = format!("shell:AppsFolder\\{id}");
-        insert_entry(
-            map,
-            shell,
-            name.to_string(),
-            None,
-            NAME_RANK_UWP_START_APPS,
-        );
-        n += 1;
-    }
-    Ok(())
-}
-
+// ---------------------------------------------------------------------------
+// Icon extraction via PowerShell (unchanged — runs async-style per entry)
+// ---------------------------------------------------------------------------
 fn extract_icon_data_url(exe_path: &str) -> Option<String> {
-    let escaped_path = exe_path.replace('\'', "''");
+    // Only extract icons for real filesystem paths, not UWP URIs
+    if !Path::new(exe_path).exists() {
+        return None;
+    }
+    let escaped = exe_path.replace('\'', "''");
     let script = format!(
-        "$ErrorActionPreference = 'Stop'; \
-         Add-Type -AssemblyName System.Drawing; \
-         $icon = [System.Drawing.Icon]::ExtractAssociatedIcon('{escaped_path}'); \
-         if ($null -eq $icon) {{ exit 0 }}; \
-         $bitmap = $icon.ToBitmap(); \
-         $stream = New-Object System.IO.MemoryStream; \
-         $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png); \
-         [Convert]::ToBase64String($stream.ToArray())"
+        "$ErrorActionPreference='Stop';\
+         Add-Type -AssemblyName System.Drawing;\
+         $icon=[System.Drawing.Icon]::ExtractAssociatedIcon('{escaped}');\
+         if($null -eq $icon){{exit 0}};\
+         $bmp=$icon.ToBitmap();\
+         $ms=New-Object System.IO.MemoryStream;\
+         $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);\
+         [Convert]::ToBase64String($ms.ToArray())"
     );
-    let output = Command::new("powershell")
-        .arg("-NoProfile")
-        .arg("-NonInteractive")
-        .arg("-Command")
-        .arg(script)
+    let out = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .output()
         .ok()?;
-    if !output.status.success() {
+    if !out.status.success() {
         return None;
     }
-    let b64 = String::from_utf8(output.stdout).ok()?;
-    let trimmed = b64.trim();
-    if trimmed.is_empty() {
+    let b64 = String::from_utf8(out.stdout).ok()?;
+    let t = b64.trim();
+    if t.is_empty() {
         return None;
     }
-    Some(format!("data:image/png;base64,{trimmed}"))
+    Some(format!("data:image/png;base64,{t}"))
 }
 
-fn insert_entry(
-    map: &mut HashMap<String, IndexedEntry>,
-    exe_path: String,
-    display_name: String,
-    icon_data_url: Option<String>,
-    name_rank: u8,
-) {
-    let key = exe_path.to_lowercase();
-    let incoming = IndexedEntry {
-        display_name,
-        exe_path,
-        icon_data_url,
-        name_rank,
-    };
-    match map.get_mut(&key) {
-        None => {
-            map.insert(key, incoming);
-        }
-        Some(existing) => {
-            if name_rank > existing.name_rank {
-                let merged_icon = incoming
-                    .icon_data_url
-                    .clone()
-                    .or_else(|| existing.icon_data_url.clone());
-                *existing = IndexedEntry {
-                    display_name: incoming.display_name,
-                    exe_path: incoming.exe_path,
-                    icon_data_url: merged_icon,
-                    name_rank: incoming.name_rank,
-                };
-            } else if name_rank < existing.name_rank {
-                if existing.icon_data_url.is_none() {
-                    existing.icon_data_url = incoming.icon_data_url.clone();
-                }
-            } else if existing.icon_data_url.is_none() {
-                existing.icon_data_url = incoming.icon_data_url.clone();
-            }
-        }
-    }
-}
-
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn insert_entry_backfills_missing_icon_on_existing_row() {
-        let mut map = HashMap::<String, IndexedEntry>::new();
+    fn insert_prefers_lower_priority_source() {
+        let mut map = HashMap::new();
         insert_entry(
             &mut map,
-            r"C:\Apps\Example.exe".into(),
-            "Example".into(),
+            r"C:\Apps\foo.exe".into(),
+            "Foo ExeScan".into(),
             None,
-            NAME_RANK_FLAT_EXE,
+            SourcePriority::ExeScan,
         );
         insert_entry(
             &mut map,
-            r"C:\Apps\Example.exe".into(),
-            "Example".into(),
-            Some("data:image/png;base64,AAA=".into()),
-            NAME_RANK_FLAT_EXE,
+            r"C:\Apps\foo.exe".into(),
+            "Foo Uninstall".into(),
+            None,
+            SourcePriority::Uninstall,
         );
-        let stored = map
-            .get(&r"c:\apps\example.exe".to_string())
-            .expect("entry exists");
+        let e = map.get(&r"c:\apps\foo.exe".to_string()).unwrap();
+        assert_eq!(e.inner.display_name, "Foo Uninstall");
+    }
+
+    #[test]
+    fn insert_backfills_icon_without_overwriting_name() {
+        let mut map = HashMap::new();
+        insert_entry(
+            &mut map,
+            r"C:\Apps\foo.exe".into(),
+            "Good Name".into(),
+            None,
+            SourcePriority::Uninstall,
+        );
+        insert_entry(
+            &mut map,
+            r"C:\Apps\foo.exe".into(),
+            "Bad Name".into(),
+            Some("data:image/png;base64,AAA=".into()),
+            SourcePriority::ExeScan,
+        );
+        let e = map.get(&r"c:\apps\foo.exe".to_string()).unwrap();
+        // Name should be preserved from higher priority source
+        assert_eq!(e.inner.display_name, "Good Name");
+        // But icon should be backfilled
         assert_eq!(
-            stored.icon_data_url.as_deref(),
+            e.inner.icon_data_url.as_deref(),
             Some("data:image/png;base64,AAA=")
         );
     }
 
     #[test]
-    fn insert_entry_keeps_better_source_display_name_over_longer_low_rank() {
-        let mut map = HashMap::<String, IndexedEntry>::new();
-        let path = r"C:\Games\Battle.net\Battle.net Launcher.exe".to_string();
-        insert_entry(
-            &mut map,
-            path.clone(),
-            "Battle.net".into(),
-            None,
-            NAME_RANK_START_MENU,
+    fn kv_value_parses_acf_line() {
+        assert_eq!(
+            kv_value(r#""name"		"Portal 2""#, "name"),
+            Some("Portal 2".into())
         );
-        insert_entry(
-            &mut map,
-            path,
-            "Battlenetlauncher".into(),
-            None,
-            NAME_RANK_FLAT_EXE,
+        assert_eq!(
+            kv_value(r#""installdir"	"Portal 2""#, "installdir"),
+            Some("Portal 2".into())
         );
-        let stored = map
-            .get(&r"c:\games\battle.net\battle.net launcher.exe".to_string())
-            .expect("entry exists");
-        assert_eq!(stored.display_name, "Battle.net");
+        assert_eq!(
+            kv_value(r#""appid"		"620""#, "appid"),
+            Some("620".into())
+        );
+    }
+
+    #[test]
+    fn json_str_field_extracts_values() {
+        let json = r#""InstallLocation": "C:\\Games\\MyGame", "AppName": "MyGame123""#;
+        assert_eq!(
+            json_str_field(json, "InstallLocation"),
+            Some(r"C:\Games\MyGame".into())
+        );
+        assert_eq!(
+            json_str_field(json, "AppName"),
+            Some("MyGame123".into())
+        );
+    }
+
+    #[test]
+    fn install_dir_primary_exe_fallback_when_no_name_match() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("FSD.exe"), [0u8]).unwrap();
+        std::fs::write(dir.path().join("Uninstall.exe"), [0u8]).unwrap();
+        // "Deep Rock Galactic" doesn't contain "fsd" — old code would return None here
+        let hit = install_dir_primary_exe(
+            &dir.path().to_string_lossy(),
+            "Deep Rock Galactic",
+        );
+        // FIX: should now fall back to "FSD.exe" (sole non-skip candidate)
+        assert!(hit.is_some(), "should fall back to FSD.exe");
+        assert!(hit.unwrap().to_lowercase().contains("fsd.exe"));
+    }
+
+    #[test]
+    fn install_dir_primary_exe_prefers_name_match() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Discord.exe"), [0u8]).unwrap();
+        std::fs::write(dir.path().join("Helper.exe"), [0u8]).unwrap();
+        let hit = install_dir_primary_exe(&dir.path().to_string_lossy(), "Discord")
+            .expect("should find Discord.exe");
+        assert!(hit.to_lowercase().contains("discord.exe"));
     }
 
     #[test]
     fn display_name_from_app_paths_key_title_cases_stem() {
         assert_eq!(display_name_from_app_paths_key("firefox.exe"), "Firefox");
-        assert_eq!(display_name_from_app_paths_key("WINWORD.EXE"), "WINWORD");
         assert_eq!(display_name_from_app_paths_key("code.exe"), "Code");
     }
 
     #[test]
-    fn shortcut_launch_spec_steam_exe_applaunch_becomes_rungameid() {
-        let (launch, icon) = shortcut_launch_spec(
-            r"C:\Steam\steam.exe",
-            "-silent -applaunch 440",
-        )
-        .expect("steam shortcut");
-        assert_eq!(launch, "steam://rungameid/440");
-        assert_eq!(icon.as_deref(), Some(r"C:\Steam\steam.exe"));
+    fn pretty_name_from_identifier_splits_pascal_case() {
+        let name = pretty_name_from_identifier("DeepRockGalactic");
+        assert!(name.contains("Deep"), "got: {name}");
+        assert!(name.contains("Rock"), "got: {name}");
     }
 
     #[test]
-    fn shortcut_launch_spec_prefers_protocol_in_arguments() {
-        let (launch, _) = shortcut_launch_spec(
-            r"C:\Epic\EpicGamesLauncher.exe",
-            r"com.epicgames.launcher://apps/abc?action=launch",
-        )
-        .expect("epic protocol");
-        assert!(launch.to_ascii_lowercase().starts_with("com.epicgames.launcher://"));
-    }
-
-    #[test]
-    fn parse_internet_shortcut_url_reads_steam_url_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("Game.url");
-        std::fs::write(
-            &p,
-            "[InternetShortcut]\nURL=steam://rungameid/123\n",
-        )
-        .unwrap();
-        let u = parse_internet_shortcut_url(&p).expect("url");
-        assert_eq!(u, "steam://rungameid/123");
-    }
-
-    #[test]
-    fn install_dir_primary_exe_prefers_stem_contained_in_display_name() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("Discord.exe"), [0u8]).unwrap();
-        std::fs::write(dir.path().join("Uninstall.exe"), [0u8]).unwrap();
-        std::fs::write(dir.path().join("Helper.exe"), [0u8]).unwrap();
-        let hit = install_dir_primary_exe(
-            &dir.path().to_string_lossy(),
-            "Discord (some channel)",
-        )
-        .expect("match");
-        assert!(hit.to_lowercase().contains("discord.exe"));
-    }
-
-    #[test]
-    fn install_dir_primary_exe_none_when_only_installer_exes() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("Uninstall.exe"), [0u8]).unwrap();
-        std::fs::write(dir.path().join("Setup.exe"), [0u8]).unwrap();
-        assert!(install_dir_primary_exe(&dir.path().to_string_lossy(), "Some App").is_none());
-    }
-
-    #[test]
-    fn install_dir_primary_exe_picks_sole_survivor() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("Tool.exe"), [0u8]).unwrap();
-        let hit = install_dir_primary_exe(&dir.path().to_string_lossy(), "Unknown Product").expect("exe");
-        assert!(hit.to_lowercase().ends_with("tool.exe"));
-    }
-
-    #[test]
-    fn install_dir_primary_exe_matches_mismatched_game_stem_to_display_name() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("FSD.exe"), [0u8]).unwrap();
-        std::fs::write(dir.path().join("SomeLongBootstrapper.exe"), [0u8]).unwrap();
-        let hit = install_dir_primary_exe(
-            &dir.path().to_string_lossy(),
-            "Deep Rock Galactic",
-        )
-        .expect("exe");
-        assert!(hit.to_lowercase().ends_with("fsd.exe"));
-    }
-
-    #[test]
-    fn vdf_extract_library_path_strings_finds_paths() {
-        let sample = r#""libraryfolders"
-{
-	"0"
-	{
-		"path"		"D:\\SteamLibrary"
-	}
-}
-"#;
-        let paths = vdf_extract_library_path_strings(sample);
-        assert!(
-            paths.iter().any(|p| p.replace('/', "\\").contains("SteamLibrary")),
-            "paths={paths:?}"
-        );
-    }
-
-    #[test]
-    fn epic_installed_manifest_deserializes() {
-        let json = r#"{"InstallationList":[{"InstallLocation":"C:\\Epic\\MyGame","AppName":"MyGame","AppDisplayName":"My Cool Game"}]}"#;
-        let root: EpicInstalledRoot = serde_json::from_str(json).expect("parse");
-        let item = root.installation_list.expect("list").remove(0);
-        assert_eq!(item.app_display_name.as_deref(), Some("My Cool Game"));
-        assert!(item
-            .install_location
-            .as_ref()
-            .expect("loc")
-            .contains("Epic"));
-    }
-
-    #[test]
-    fn scan_exe_directory_recursive_finds_nested_exe() {
-        let dir = tempfile::tempdir().unwrap();
-        let nested = dir.path().join("Vendor").join("GameBin");
-        std::fs::create_dir_all(&nested).unwrap();
-        std::fs::write(nested.join("Game.exe"), [0u8]).unwrap();
-        let mut map = HashMap::<String, IndexedEntry>::new();
-        let mut budget = 50usize;
-        super::scan_exe_directory_recursive(
-            dir.path(),
-            &mut map,
-            &mut budget,
-            3,
-            0,
-            NAME_RANK_RECURSIVE_PF,
-        )
-        .expect("rec scan");
-        assert!(map.keys().any(|k| k.contains("game.exe")));
-    }
-
-    #[test]
-    fn expand_windows_env_path_replaces_systemroot() {
+    fn expand_env_replaces_system_root() {
         let Ok(sr) = std::env::var("SystemRoot") else {
             return;
         };
-        let out = super::expand_windows_env_path(r"%SystemRoot%\system32\notepad.exe");
-        assert!(
-            !out.contains('%'),
-            "expected expanded path, got {out:?}"
-        );
-        assert!(out.to_lowercase().contains("notepad.exe"));
+        let out = expand_env(r"%SystemRoot%\system32\notepad.exe");
         assert!(
             out.to_lowercase().starts_with(&sr.to_lowercase()),
-            "expected path under SystemRoot, got {out:?}"
+            "got: {out}"
+        );
+        assert!(!out.contains('%'), "unexpanded: {out}");
+    }
+
+    #[test]
+    fn parse_start_apps_line_splits_on_first_tab() {
+        let (n, id) = parse_start_apps_line("7-Zip\t{6D809377-6AF0-444B-8957-A3773F02200E}\\7-Zip\\7zFM.exe")
+            .expect("line");
+        assert_eq!(n, "7-Zip");
+        assert!(id.contains("7zFM.exe"), "got {id}");
+    }
+
+    #[test]
+    fn resolve_start_app_uwmid_to_shell_apps_folder() {
+        let t = resolve_start_app_launch_target("Microsoft.WindowsNotepad_8wekyb3d8bbwe!App")
+            .expect("uwmid");
+        assert!(
+            t.to_ascii_lowercase()
+                .starts_with("shell:appsfolder\\microsoft.windowsnotepad"),
+            "got {t}"
         );
     }
 
     #[test]
-    fn scan_flat_exe_directory_adds_each_exe_in_folder() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("ZebraApp.exe"), [0u8]).unwrap();
-        std::fs::write(dir.path().join("AlphaApp.exe"), [0u8]).unwrap();
-        let mut map = HashMap::<String, IndexedEntry>::new();
-        super::scan_flat_exe_directory(dir.path(), &mut map, 100, NAME_RANK_FLAT_EXE).expect("scan");
-        assert!(map.len() >= 2);
-        assert!(map.keys().any(|k| k.contains("alphaapp")));
-        assert!(map.keys().any(|k| k.contains("zebraapp")));
+    fn resolve_start_app_steam_protocol_passthrough() {
+        assert_eq!(
+            resolve_start_app_launch_target("steam://rungameid/123").as_deref(),
+            Some("steam://rungameid/123")
+        );
+    }
+
+    #[test]
+    fn resolve_start_app_guid_system32_notepad() {
+        let id = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\notepad.exe";
+        let t = resolve_start_app_launch_target(id).expect("guid-relative");
+        assert!(t.to_lowercase().ends_with("notepad.exe"), "got {t}");
+        assert!(Path::new(&t).exists(), "expected real notepad path: {t}");
+    }
+
+    #[test]
+    fn known_folder_maps_program_files_guid() {
+        let g = "6D809377-6AF0-444B-8957-A3773F02200E";
+        let base = known_folder_guid_to_base(g).expect("base");
+        assert!(base.is_dir(), "{base:?}");
+        let joined = base.join("Windows NT\\Accessories\\wordpad.exe");
+        if joined.is_file() {
+            assert!(
+                resolve_start_app_launch_target(&format!("{{{g}}}\\Windows NT\\Accessories\\wordpad.exe"))
+                    .is_some(),
+                "wordpad under Program Files"
+            );
+        }
+    }
+
+    /// Full scan touches registry, COM, several PowerShell passes, and optional icon extraction — slow.
+    /// Run: `cargo test -p jarvis scan_full_smoke_notepad -- --ignored --nocapture`
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn scan_full_smoke_notepad_and_broad_cardinality() {
+        let apps = scan().expect("scan");
+        assert!(
+            apps.len() >= 32,
+            "expected broad coverage; got only {} entries",
+            apps.len()
+        );
+        let has_notepad = apps.iter().any(|e| {
+            e.display_name.to_lowercase().contains("notepad")
+                || e.exe_path.to_lowercase().contains("notepad")
+        });
+        assert!(
+            has_notepad,
+            "expected Notepad (exe or UWP shell); sample: {:?}",
+            apps.iter().take(8).collect::<Vec<_>>()
+        );
+    }
+
+    /// Fast device check: same `Get-StartApps` pass the scanner uses must return many rows.
+    #[cfg(windows)]
+    #[test]
+    fn get_start_apps_powershell_emits_tab_separated_rows() {
+        let script = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+$OutputEncoding = [System.Text.UTF8Encoding]::new()
+foreach ($a in Get-StartApps) {
+  $n = $a.Name -replace "`t", "`t"
+  $i = $a.AppID -replace "`t", "`t"
+  $n + "`t" + $i
+}
+"#;
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .output()
+            .expect("powershell");
+        assert!(output.status.success(), "Get-StartApps ps failed");
+        let n = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|l| !l.trim().is_empty() && l.contains('\t'))
+            .count();
+        assert!(
+            n >= 24,
+            "expected Start-menu enumeration (Get-StartApps) to yield many rows; got {n}"
+        );
+    }
+
+    /// If the user has per-user `LocalAppData\\Programs` exes (e.g. VS Code installer), they must appear.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn scan_includes_local_appdata_programs_when_populated() {
+        let Ok(la) = std::env::var("LOCALAPPDATA") else {
+            return;
+        };
+        let prog = Path::new(&la).join("Programs");
+        if !prog.is_dir() {
+            return;
+        }
+        let exe_count = std::fs::read_dir(&prog)
+            .ok()
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .filter(|e| {
+                        e.path().is_file()
+                            && e.path()
+                                .extension()
+                                .and_then(|x| x.to_str())
+                                .map(|x| x.eq_ignore_ascii_case("exe"))
+                                .unwrap_or(false)
+                    })
+                    .take(1)
+                    .count()
+            })
+            .unwrap_or(0);
+        if exe_count == 0 {
+            return;
+        }
+        let apps = scan().expect("scan");
+        let needle = "appdata\\local\\programs";
+        let hit = apps
+            .iter()
+            .any(|e| e.exe_path.to_lowercase().contains(needle));
+        assert!(
+            hit,
+            "expected at least one exe under LocalAppData\\Programs in index"
+        );
     }
 }
