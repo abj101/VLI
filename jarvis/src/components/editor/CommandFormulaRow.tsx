@@ -425,7 +425,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     if (!("open_app" in action) || !appOpen) return;
     if (appTimer.current) window.clearTimeout(appTimer.current);
     appTimer.current = window.setTimeout(() => {
-      void invoke<AppIndexEntry[]>("search_app_index", searchAppIndexInvokeArgs(appQuery, 56))
+      void invoke<AppIndexEntry[]>("search_app_index", searchAppIndexInvokeArgs(appQuery, 120))
         .then((hits) => {
           setAppHits(hits);
           setAppHasSearched(true);

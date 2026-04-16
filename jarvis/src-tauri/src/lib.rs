@@ -1338,13 +1338,13 @@ struct SearchAppIndexPayload {
     limit: Option<usize>,
 }
 
-/// Prefix search for the installed-app index (editor autocomplete). Empty query returns the first `limit` rows.
+/// Substring search on display name, full path, and exe file stem. Empty query returns the first `limit` rows sorted by name (cap 200).
 #[tauri::command]
 fn search_app_index(
     payload: SearchAppIndexPayload,
     store: State<'_, AppIndexStore>,
 ) -> Result<Vec<apps::AppEntry>, String> {
-    let limit = payload.limit.unwrap_or(24).clamp(1, 80) as usize;
+    let limit = payload.limit.unwrap_or(48).clamp(1, 200) as usize;
     let entries = store
         .read()
         .map_err(|_| "app index store poisoned".to_string())?;
@@ -1368,8 +1368,14 @@ fn search_app_index(
     Ok(entries
         .iter()
         .filter(|e| {
-            e.display_name.to_lowercase().contains(&q)
-                || e.exe_path.to_lowercase().contains(&q)
+            let name = e.display_name.to_lowercase();
+            let path = e.exe_path.to_lowercase();
+            let stem = std::path::Path::new(&e.exe_path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            name.contains(&q) || path.contains(&q) || stem.contains(&q)
         })
         .take(limit)
         .cloned()

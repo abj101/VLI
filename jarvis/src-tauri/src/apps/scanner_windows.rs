@@ -1,4 +1,4 @@
-//! Registry Uninstall + Start Menu `.lnk` crawl (Windows).
+//! Registry Uninstall + Start Menu `.lnk` + flat `*.exe` inventory under System32 / SysWOW64 / WinDir + Program Files roots (Windows).
 
 use super::AppEntry;
 use std::collections::HashMap;
@@ -47,7 +47,75 @@ pub fn scan() -> Result<Vec<AppEntry>, String> {
     let _com = ComApartment::new()?;
     scan_start_menu(&mut map)?;
     seed_windows_accessories(&mut map);
+    // Last: flat .exe inventory (System32, etc.); does not overwrite richer names from earlier passes.
+    scan_system_and_program_exe_inventory(&mut map)?;
     Ok(map.into_values().collect())
+}
+
+/// Non-recursive `*.exe` listing (system + Program Files roots). Icons skipped (merge may add later).
+fn scan_flat_exe_directory(
+    dir: &Path,
+    map: &mut HashMap<String, AppEntry>,
+    max_add: usize,
+) -> Result<(), String> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p
+                    .extension()
+                    .and_then(|x| x.to_str())
+                    .map(|x| x.eq_ignore_ascii_case("exe"))
+                    .unwrap_or(false)
+        })
+        .collect();
+    paths.sort();
+    let mut added = 0usize;
+    for p in paths {
+        if added >= max_add {
+            break;
+        }
+        let exe_norm = std::fs::canonicalize(&p)
+            .unwrap_or_else(|_| p.to_path_buf())
+            .to_string_lossy()
+            .to_string();
+        let label = display_name_from_exe_path(&p);
+        insert_entry(map, exe_norm, label, None);
+        added += 1;
+    }
+    Ok(())
+}
+
+fn display_name_from_exe_path(p: &Path) -> String {
+    let name = p
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("App.exe");
+    display_name_from_app_paths_key(name)
+}
+
+fn scan_system_and_program_exe_inventory(map: &mut HashMap<String, AppEntry>) -> Result<(), String> {
+    let sys_root = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("WINDIR"))
+        .unwrap_or_default();
+    if !sys_root.is_empty() {
+        let root = Path::new(&sys_root);
+        scan_flat_exe_directory(&root.join("System32"), map, 5000)?;
+        scan_flat_exe_directory(&root.join("SysWOW64"), map, 5000)?;
+        scan_flat_exe_directory(root, map, 384)?;
+    }
+    if let Ok(pf) = std::env::var("ProgramFiles") {
+        scan_flat_exe_directory(Path::new(&pf), map, 512)?;
+    }
+    if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
+        scan_flat_exe_directory(Path::new(&pf86), map, 512)?;
+    }
+    Ok(())
 }
 
 /// Expand common `%...%` segments in registry paths (e.g. App Paths default `%SystemRoot%\\system32\\notepad.exe`).
@@ -618,5 +686,17 @@ mod tests {
             out.to_lowercase().starts_with(&sr.to_lowercase()),
             "expected path under SystemRoot, got {out:?}"
         );
+    }
+
+    #[test]
+    fn scan_flat_exe_directory_adds_each_exe_in_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ZebraApp.exe"), [0u8]).unwrap();
+        std::fs::write(dir.path().join("AlphaApp.exe"), [0u8]).unwrap();
+        let mut map = HashMap::<String, AppEntry>::new();
+        super::scan_flat_exe_directory(dir.path(), &mut map, 100).expect("scan");
+        assert!(map.len() >= 2);
+        assert!(map.keys().any(|k| k.contains("alphaapp")));
+        assert!(map.keys().any(|k| k.contains("zebraapp")));
     }
 }
