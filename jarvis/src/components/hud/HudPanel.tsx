@@ -31,11 +31,6 @@ function isActiveHudPhase(phase: HudPhase): boolean {
   return LISTENING_PHASES.includes(phase);
 }
 
-/** Opacity pulse while Rust runs matched command chain (not during done fade). */
-function useShowAgentPulse(phase: HudPhase): boolean {
-  return phase === "matched" || phase === "executing";
-}
-
 function useHudCenterInput(): CenterSelectorInput {
   return useHudStore(
     useShallow((s) => ({
@@ -128,15 +123,12 @@ function StopHudButton() {
 
 function RecognizedPhrase({
   phrase,
-  phase,
   motionKey,
 }: {
   phrase: string;
-  phase: HudPhase;
   motionKey: string;
 }) {
   const reduceMotion = useReducedMotion();
-  const pulse = useShowAgentPulse(phase);
 
   return (
     <motion.div
@@ -150,11 +142,7 @@ function RecognizedPhrase({
           : { duration: 0.38, ease: "easeOut" as const }
       }
     >
-      <span
-        className={
-          pulse ? "hud-recognized-text hud-recognized-text--pulse" : "hud-recognized-text"
-        }
-      >
+      <span className="hud-recognized-text">
         {phrase}
       </span>
     </motion.div>
@@ -182,7 +170,6 @@ function CenterContent({
       return (
         <RecognizedPhrase
           phrase={m.matched_phrase}
-          phase={input.phase}
           motionKey={motionKey}
         />
       );
