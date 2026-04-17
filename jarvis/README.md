@@ -36,8 +36,10 @@ Convention: clone the repo, then `**cd jarvis**` for every Node/npm/Tauri comman
 - `npm test` — Vitest
 - `npm run build` — `tsc` + Vite production bundle
 - `npm run dev` — Vite only
-- `npm run tauri dev` — full app
-- `npm run tauri build` — release bundle (run `.\scripts\download-model.ps1` first so the Whisper weights are present)
+- `npm run tauri dev` — full app with auto-selected Whisper GPU backend (`metal`/`cuda`/`vulkan`/CPU fallback) and detected GPU vendor logging
+- `npm run tauri build` — release bundle with auto-selected Whisper GPU backend (run `.\scripts\download-model.ps1` first so the Whisper weights are present)
+- `npm run tauri:dev` / `npm run tauri:build` — explicit aliases to the same wrapper behavior
+- `WHISPER_GPU_BACKEND=auto|metal|cuda|vulkan|none` — optional override for deterministic CI/repro builds (`auto` default)
 
 Rust (from `jarvis/src-tauri/`):
 
@@ -58,6 +60,39 @@ Run in order after a clean checkout (with Rust + Node + CMake + MSVC + LLVM as a
 7. `cargo test`
 8. `cd ..` → `.\scripts\download-model.ps1`
 9. `npm run tauri build`
+
+### Whisper GPU backend auto-selection
+
+`scripts/tauri-whisper-gpu.mjs` chooses one backend per artifact:
+
+- macOS host -> `whisper-metal`
+- Windows/Linux + NVIDIA GPU + CUDA toolchain (`CUDA_PATH`, `nvcc`, or auto-discovered default Windows CUDA install under `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA`) -> `whisper-cuda`
+- Other GPUs (or NVIDIA without CUDA) + Vulkan toolchain -> `whisper-vulkan` (`VULKAN_SDK` is required on Windows; auto-discovered from common install paths when possible)
+- If no backend prerequisites are present -> CPU-only Whisper build (explicit warning logged)
+
+The wrapper runs the Tauri CLI via `node node_modules/@tauri-apps/cli/tauri.js` (not `tauri.cmd`) so `npm run tauri build|dev` reliably continues into the actual build on Windows after GPU detection.
+
+On **Windows**, when an **NVIDIA** GPU is detected and the **CUDA Toolkit** is missing, the wrapper first asks whether to install **`Nvidia.CUDA`** via winget (before Vulkan/other prompts).
+
+When `tauri dev` / `tauri build` needs **Vulkan** or **CUDA** for Whisper and the SDK/toolkit is missing, the wrapper can also prompt:
+
+- `Install … with winget now? [y/N]` — answering `y` runs `winget install` for `KhronosGroup.VulkanSDK` or `Nvidia.CUDA` (large download; may require admin / UAC).
+
+Non-interactive terminals (CI) skip prompts; set `WHISPER_SKIP_PREREQ_PROMPT=1` to skip explicitly, or install SDKs / set `VULKAN_SDK` / `CUDA_PATH` yourself.
+
+Windows wrappers:
+
+```powershell
+.\scripts\build-tauri-with-whisper-gpu.ps1 build
+.\scripts\build-tauri-with-whisper-gpu.ps1 dev
+```
+
+Manual QA matrix (GPU path):
+
+- Windows + NVIDIA (CUDA installed): backend selects `whisper-cuda`, Settings shows GPU available.
+- Windows + Intel/AMD GPU: backend selects `whisper-vulkan`, Settings shows GPU available when Vulkan loader exists.
+- macOS Apple Silicon: backend selects `whisper-metal`, Settings shows GPU available.
+- Any host without required toolchains: CPU-only build, Settings explains GPU backend is unavailable in current build/runtime.
 
 Packaged artifacts appear under `src-tauri/target/release/bundle/` (e.g. `.exe` installer / MSI, depending on Tauri bundler settings).
 

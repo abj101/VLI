@@ -22,6 +22,16 @@ const SILENCE_PEAK_THRESHOLD: f32 = 0.01;
 /// Clear stale decode context after this much continuous silence.
 const SILENCE_RESET_AFTER: Duration = Duration::from_millis(900);
 
+/// Whisper `full` thread count: GPU/Vulkan backends already offload heavy ops; keep CPU threads low
+/// to avoid oversubscription vs the STT worker thread and system audio.
+fn whisper_decode_thread_count(use_accelerator: bool) -> i32 {
+    let avail = std::thread::available_parallelism()
+        .map(|n| n.get() as i32)
+        .unwrap_or(2);
+    let cap = if use_accelerator { 2 } else { 4 };
+    avail.max(1).min(cap)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptUpdate {
     pub text: String,
@@ -106,7 +116,11 @@ fn normalize_peak_f32(samples: &[f32]) -> Vec<f32> {
 
 /// One-shot decode: fresh [`whisper_rs::WhisperState`] per call so sliding-window passes do not
 /// reuse stale KV / prompt state (see `FullParams::set_no_context` / `set_single_segment`).
-fn run_decode(ctx: &WhisperContext, audio_16k: &[f32]) -> Result<String, whisper_rs::WhisperError> {
+fn run_decode(
+    ctx: &WhisperContext,
+    audio_16k: &[f32],
+    use_accelerator: bool,
+) -> Result<String, whisper_rs::WhisperError> {
     if audio_16k.len() < MIN_DECODE_SAMPLES {
         return Ok(String::new());
     }
@@ -120,10 +134,7 @@ fn run_decode(ctx: &WhisperContext, audio_16k: &[f32]) -> Result<String, whisper
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get().min(4) as i32)
-        .unwrap_or(2);
-    params.set_n_threads(threads);
+    params.set_n_threads(whisper_decode_thread_count(use_accelerator));
     state.full(params, &audio)?;
     let n = state.full_n_segments()?;
     let mut s = String::new();
@@ -223,10 +234,18 @@ pub fn spawn_stt_thread(
     pcm_rx: Receiver<Vec<f32>>,
     input_sample_rate: u32,
     hud_session_id: u64,
+    use_whisper_accelerator: bool,
 ) -> JoinHandle<()> {
     let app_err = app.clone();
     std::thread::spawn(move || {
-        if let Err(e) = stt_loop(app, ctx, pcm_rx, input_sample_rate, hud_session_id) {
+        if let Err(e) = stt_loop(
+            app,
+            ctx,
+            pcm_rx,
+            input_sample_rate,
+            hud_session_id,
+            use_whisper_accelerator,
+        ) {
             let _ = app_err.emit("audio-error", serde_json::json!({ "message": e }));
         }
     })
@@ -238,6 +257,7 @@ fn stt_loop(
     pcm_rx: Receiver<Vec<f32>>,
     input_sample_rate: u32,
     hud_session_id: u64,
+    use_whisper_accelerator: bool,
 ) -> Result<(), String> {
     let mut buffer_16k: Vec<f32> = Vec::new();
     let mut last_decode = Instant::now() - INFER_EVERY;
@@ -259,7 +279,7 @@ fn stt_loop(
         }
         last_decode = Instant::now();
 
-        let text = match run_decode(&ctx, &buffer_16k) {
+        let text = match run_decode(&ctx, &buffer_16k, use_whisper_accelerator) {
             Ok(t) => t,
             Err(e) => {
                 let _ = app.emit(
@@ -305,7 +325,7 @@ fn stt_loop(
 
     // Channel closed: final pass (best effort).
     if buffer_16k.len() >= MIN_DECODE_SAMPLES {
-        if let Ok(text) = run_decode(&ctx, &buffer_16k) {
+        if let Ok(text) = run_decode(&ctx, &buffer_16k, use_whisper_accelerator) {
             if let Some(text) = normalize_transcript_candidate(&text) {
                 debug!(
                     "stt: emit transcript-update final chars={} preview={:?}",

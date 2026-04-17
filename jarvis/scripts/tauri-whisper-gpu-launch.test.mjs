@@ -3,59 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildWindowsTerminateByExecutablePathScript,
   buildWingetInstallArgs,
-  formatVulkanSdkTauriCmdBody,
   isWingetInstallSuccessStatus,
-  quoteBatchArgWindows,
-  quoteBatchPathWindows,
+  prependWindowsPathEntries,
+  shouldReleaseWindowsJarvisExeLockForSubcommand,
 } from "./tauri-whisper-gpu-launch.mjs";
-
-describe("quoteBatchPathWindows", () => {
-  it("doubles internal quotes for cmd.exe rules", () => {
-    expect(quoteBatchPathWindows(`C:\\a"b\\c`)).toBe(`"C:\\a""b\\c"`);
-  });
-
-  it("wraps Program Files node path", () => {
-    const p = "C:\\Program Files\\nodejs\\node.exe";
-    expect(quoteBatchPathWindows(p)).toBe(`"${p}"`);
-  });
-});
-
-describe("quoteBatchArgWindows", () => {
-  it("leaves whisper-vulkan bare", () => {
-    expect(quoteBatchArgWindows("whisper-vulkan")).toBe("whisper-vulkan");
-  });
-
-  it("quotes args with spaces", () => {
-    expect(quoteBatchArgWindows("a b")).toBe(`"a b"`);
-  });
-});
-
-describe("formatVulkanSdkTauriCmdBody", () => {
-  it("produces set VULKAN_SDK then quoted node and tauri paths (Program Files safe)", () => {
-    const body = formatVulkanSdkTauriCmdBody({
-      vkRoot: "C:\\VulkanSDK\\1.4.341.1",
-      nodeExe: "C:\\Program Files\\nodejs\\node.exe",
-      tauriCli: "D:\\repo\\jarvis\\node_modules\\@tauri-apps\\cli\\tauri.js",
-      args: ["dev", "--features", "whisper-vulkan"],
-    });
-    expect(body.startsWith("@echo off\r\n")).toBe(true);
-    expect(body).toContain('set "VULKAN_SDK=C:\\VulkanSDK\\1.4.341.1"');
-    expect(body).toContain('"C:\\Program Files\\nodejs\\node.exe"');
-    expect(body).toContain('"D:\\repo\\jarvis\\node_modules\\@tauri-apps\\cli\\tauri.js"');
-    expect(body).toMatch(/dev.*whisper-vulkan/);
-    expect(body).not.toMatch(/nodejs\\node\.exe\\/);
-  });
-
-  it("escapes percent in VULKAN_SDK for batch", () => {
-    const body = formatVulkanSdkTauriCmdBody({
-      vkRoot: "C:\\Vulkan%SDK%",
-      nodeExe: "C:\\node.exe",
-      tauriCli: "C:\\tauri.js",
-      args: ["build"],
-    });
-    expect(body).toContain('set "VULKAN_SDK=C:\\Vulkan%%SDK%%"');
-  });
-});
 
 describe("buildWingetInstallArgs", () => {
   it("includes core flags", () => {
@@ -91,5 +42,26 @@ describe("buildWindowsTerminateByExecutablePathScript", () => {
     expect(script).toContain("Get-CimInstance Win32_Process");
     expect(script).toContain("Stop-Process -Id $_.ProcessId -Force");
     expect(script).toContain("jarvis''s.exe");
+  });
+});
+
+describe("shouldReleaseWindowsJarvisExeLockForSubcommand", () => {
+  it("releases stale exe lock for dev + build only", () => {
+    expect(shouldReleaseWindowsJarvisExeLockForSubcommand("dev")).toBe(true);
+    expect(shouldReleaseWindowsJarvisExeLockForSubcommand("build")).toBe(true);
+    expect(shouldReleaseWindowsJarvisExeLockForSubcommand("info")).toBe(false);
+  });
+});
+
+describe("prependWindowsPathEntries", () => {
+  it("prepends missing entries and dedups case-insensitively", () => {
+    const base = "C:\\Windows\\System32;C:\\Tools";
+    const merged = prependWindowsPathEntries(base, [
+      "C:\\CUDA\\bin",
+      "c:\\tools",
+      "  ",
+      null,
+    ]);
+    expect(merged).toBe("C:\\CUDA\\bin;C:\\Windows\\System32;C:\\Tools");
   });
 });

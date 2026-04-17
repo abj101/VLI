@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import fs from "fs";
-import os from "node:os";
 import path from "path";
 import process from "process";
 import readline from "readline";
@@ -11,8 +10,9 @@ import { fileURLToPath } from "url";
 import {
   buildWindowsTerminateByExecutablePathScript,
   buildWingetInstallArgs,
-  formatVulkanSdkTauriCmdBody,
   isWingetInstallSuccessStatus,
+  prependWindowsPathEntries,
+  shouldReleaseWindowsJarvisExeLockForSubcommand,
 } from "./tauri-whisper-gpu-launch.mjs";
 import {
   normalizeWindowsVulkanSdkRoot,
@@ -53,6 +53,13 @@ function hasPath(dir) {
   return typeof dir === "string" && dir.trim().length > 0 && fs.existsSync(dir);
 }
 
+function windowsCudaToolkitLayoutOk(cudaRoot) {
+  if (!cudaRoot) return false;
+  const nvcc = path.join(cudaRoot, "bin", "nvcc.exe");
+  const includeCuda = path.join(cudaRoot, "include", "cuda.h");
+  return fs.existsSync(nvcc) && fs.existsSync(includeCuda);
+}
+
 function classifyVendor(text) {
   if (/nvidia/i.test(text)) return "nvidia";
   if (/amd|radeon/i.test(text)) return "amd";
@@ -82,7 +89,56 @@ function detectGpuVendor() {
   return "unknown";
 }
 
+function discoverWindowsCudaToolkitRoot() {
+  const envCandidates = [];
+  if (hasPath(process.env.CUDA_PATH)) {
+    envCandidates.push(process.env.CUDA_PATH);
+  }
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!/^CUDA_PATH_V/i.test(k)) continue;
+    if (hasPath(v)) envCandidates.push(v);
+  }
+  for (const c of envCandidates) {
+    if (windowsCudaToolkitLayoutOk(c)) {
+      return path.resolve(c.trim());
+    }
+  }
+
+  const installRoot = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA";
+  if (!fs.existsSync(installRoot)) {
+    return null;
+  }
+  const dirs = fs
+    .readdirSync(installRoot, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => path.join(installRoot, d.name))
+    .filter((p) => windowsCudaToolkitLayoutOk(p))
+    .sort((a, b) => compareVersionNamesDesc(path.basename(a), path.basename(b)));
+  return dirs[0] ?? null;
+}
+
+function resolveWindowsCudaToolkitRoot() {
+  const fromEnv = process.env.CUDA_PATH;
+  if (hasPath(fromEnv) && windowsCudaToolkitLayoutOk(fromEnv)) {
+    return path.resolve(fromEnv.trim());
+  }
+  return discoverWindowsCudaToolkitRoot();
+}
+
+function applyDiscoveredCudaToolkitToProcessEnv() {
+  if (process.platform !== "win32") return null;
+  const resolved = resolveWindowsCudaToolkitRoot();
+  if (resolved) {
+    process.env.CUDA_PATH = resolved;
+    return resolved;
+  }
+  return null;
+}
+
 function hasCudaToolchain() {
+  if (process.platform === "win32") {
+    return !!resolveWindowsCudaToolkitRoot() || commandExists("nvcc");
+  }
   const cudaPath = process.env.CUDA_PATH;
   if (hasPath(cudaPath)) return true;
   return commandExists("nvcc");
@@ -102,6 +158,68 @@ function compareVersionNamesDesc(a, b) {
     if (x !== y) return y - x;
   }
   return 0;
+}
+
+function discoverWindowsMsvcHostX64BinDir() {
+  const roots = [
+    "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC",
+    "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC",
+    "C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\VC\\Tools\\MSVC",
+    "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC",
+  ];
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    const versions = fs
+      .readdirSync(root, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort(compareVersionNamesDesc);
+    for (const version of versions) {
+      const hostBin = path.join(root, version, "bin", "Hostx64", "x64");
+      if (fs.existsSync(path.join(hostBin, "cl.exe"))) {
+        return hostBin;
+      }
+    }
+  }
+  return null;
+}
+
+function applyWindowsCudaBuildEnvIfNeeded(envObj) {
+  if (process.platform !== "win32") return null;
+  const cudaRoot = resolveWindowsCudaToolkitRoot();
+  if (!cudaRoot) return null;
+
+  envObj.CUDA_PATH = envObj.CUDA_PATH || cudaRoot;
+
+  const nvccExe = path.join(cudaRoot, "bin", "nvcc.exe");
+  if (!fs.existsSync(nvccExe)) return null;
+
+  const msvcHostBin = discoverWindowsMsvcHostX64BinDir();
+  if (!msvcHostBin) return null;
+  const nmakeExe = path.join(msvcHostBin, "nmake.exe");
+  const clExe = path.join(msvcHostBin, "cl.exe");
+  if (!fs.existsSync(nmakeExe) || !fs.existsSync(clExe)) return null;
+
+  if (!envObj.CMAKE_GENERATOR) envObj.CMAKE_GENERATOR = "NMake Makefiles";
+  // NMake generator rejects Visual Studio-specific instance/platform/toolset hints.
+  // Parent shells (IDE/VS Developer prompts) may export these and break CMake configure.
+  if (envObj.CMAKE_GENERATOR === "NMake Makefiles") {
+    delete envObj.CMAKE_GENERATOR_INSTANCE;
+    delete envObj.CMAKE_GENERATOR_PLATFORM;
+    delete envObj.CMAKE_GENERATOR_TOOLSET;
+  }
+  if (!envObj.CMAKE_MAKE_PROGRAM) envObj.CMAKE_MAKE_PROGRAM = nmakeExe;
+  if (!envObj.CMAKE_CUDA_COMPILER) envObj.CMAKE_CUDA_COMPILER = nvccExe;
+  if (!envObj.CMAKE_CUDA_HOST_COMPILER) envObj.CMAKE_CUDA_HOST_COMPILER = clExe;
+  if (!envObj.CMAKE_CUDA_FLAGS) envObj.CMAKE_CUDA_FLAGS = "-Xcompiler=/Zc:preprocessor";
+  if (!envObj.CMAKE_SUPPRESS_DEVELOPER_WARNINGS) {
+    envObj.CMAKE_SUPPRESS_DEVELOPER_WARNINGS = "1";
+  }
+  return {
+    cudaRoot,
+    generator: envObj.CMAKE_GENERATOR,
+    nmakeExe,
+  };
 }
 
 function discoverWindowsVulkanSdk() {
@@ -397,7 +515,10 @@ function canPromptInteractively() {
 }
 
 function releaseWindowsDevJarvisExeLock(subcommand) {
-  if (process.platform !== "win32" || subcommand !== "dev") {
+  if (
+    process.platform !== "win32" ||
+    !shouldReleaseWindowsJarvisExeLockForSubcommand(subcommand)
+  ) {
     return;
   }
   const debugExePath = path.join(JARVIS_ROOT, "src-tauri", "target", "debug", "jarvis.exe");
@@ -596,6 +717,7 @@ async function ensureWindowsWhisperGpuPrereqs(initial) {
 
 async function runTauri(subcommand, extraArgs, withGpuSelection) {
   releaseWindowsDevJarvisExeLock(subcommand);
+  applyDiscoveredCudaToolkitToProcessEnv();
 
   let selected = resolveBackend();
   if (withGpuSelection && process.platform === "win32") {
@@ -649,14 +771,29 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
   }
 
   const tauriCli = resolveTauriCli();
-  let spawnExecutable = process.execPath;
-  let spawnArgv = [tauriCli, ...args];
+  const spawnExecutable = process.execPath;
+  const spawnArgv = [tauriCli, ...args];
   console.log(
     `tauri-whisper-gpu: exec node ${path.relative(JARVIS_ROOT, tauriCli)} ${args.join(" ")}`,
   );
 
   const childEnv = { ...process.env };
-  let vulkanLauncherBat = null;
+  if (withGpuSelection && selected.backend === "cuda" && process.platform === "win32") {
+    const cudaBuildEnv = applyWindowsCudaBuildEnvIfNeeded(childEnv);
+    if (cudaBuildEnv) {
+      const cudaBin = path.join(cudaBuildEnv.cudaRoot, "bin");
+      const cudaBinX64 = path.join(cudaBuildEnv.cudaRoot, "bin", "x64");
+      const nvtxBin = path.join(cudaBuildEnv.cudaRoot, "extras", "CUPTI", "lib64");
+      const existingPath =
+        childEnv.PATH ?? childEnv.Path ?? process.env.PATH ?? process.env.Path ?? "";
+      const mergedPath = prependWindowsPathEntries(existingPath, [cudaBinX64, cudaBin, nvtxBin]);
+      childEnv.PATH = mergedPath;
+      childEnv.Path = mergedPath;
+      console.log(
+        `tauri-whisper-gpu: configured CUDA build env (generator=${cudaBuildEnv.generator}; CUDA_PATH=${cudaBuildEnv.cudaRoot})`,
+      );
+    }
+  }
   if (withGpuSelection && selected.backend === "vulkan" && process.platform === "win32") {
     const vkRoot = resolveWindowsVulkanSdkRoot();
     if (vkRoot) {
@@ -665,44 +802,15 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
       if (!hasPath(prev) || path.resolve(prev) !== path.resolve(vkRoot)) {
         console.log(`tauri-whisper-gpu: set VULKAN_SDK=${vkRoot}`);
       }
-      vulkanLauncherBat = path.join(
-        os.tmpdir(),
-        `jarvis-tauri-vulkan-${process.pid}-${Date.now()}.cmd`,
-      );
-      const body = formatVulkanSdkTauriCmdBody({
-        vkRoot,
-        nodeExe: process.execPath,
-        tauriCli,
-        args,
-      });
-      fs.writeFileSync(vulkanLauncherBat, body, "utf8");
-      spawnExecutable =
-        process.env.ComSpec ||
-        path.join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe");
-      spawnArgv = ["/d", "/s", "/c", vulkanLauncherBat];
-      console.log(
-        "tauri-whisper-gpu: using temp .cmd launcher (VULKAN_SDK + Node under Program Files).",
-      );
     }
   }
 
-  let child;
-  try {
-    child = spawnSync(spawnExecutable, spawnArgv, {
-      stdio: "inherit",
-      cwd: JARVIS_ROOT,
-      env: childEnv,
-      windowsVerbatimArguments: false,
-    });
-  } finally {
-    if (vulkanLauncherBat) {
-      try {
-        fs.unlinkSync(vulkanLauncherBat);
-      } catch {
-        /* ignore */
-      }
-    }
-  }
+  const child = spawnSync(spawnExecutable, spawnArgv, {
+    stdio: "inherit",
+    cwd: JARVIS_ROOT,
+    env: childEnv,
+    windowsVerbatimArguments: false,
+  });
   if (child.error) {
     console.error("tauri-whisper-gpu: failed to spawn Tauri CLI:", child.error.message);
     process.exit(1);

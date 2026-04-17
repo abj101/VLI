@@ -1,7 +1,9 @@
 # whisper-rs-sys build env for thin PATH shells (IDE agents, CI).
 #
 # CMAKE:           Kitware dir often missing from thin-PATH shells.
-# CMAKE_GENERATOR: VS 2026 Community lacks C++ workload; pin VS 2022 Build Tools.
+# CMAKE_GENERATOR: pin to installed VS 2022 toolchain for cargo/cmake crate builds.
+#                  CUDA helper script still strips incompatible VS vars when it selects
+#                  NMake explicitly for scripted GPU runs.
 # INCLUDE:         libclang (used by bindgen) reads INCLUDE to resolve system headers
 #                  (stdbool.h, stddef.h, etc.) on MSVC targets. Without it, bindgen
 #                  falls back to bundled Linux bindings → size-assertion overflows.
@@ -9,4 +11,10 @@
 [env]
 CMAKE = { value = "C:\\Program Files\\CMake\\bin\\cmake.exe", force = false }
 CMAKE_GENERATOR = { value = "Visual Studio 17 2022", force = false }
+CMAKE_CUDA_COMPILER = { value = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.2\\bin\\nvcc.exe", force = false }
+CMAKE_CUDA_HOST_COMPILER = { value = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe", force = false }
+CMAKE_CUDA_FLAGS = { value = "-Xcompiler=/Zc:preprocessor", force = false }
+CMAKE_SUPPRESS_DEVELOPER_WARNINGS = { value = "1", force = false }
+CMAKE_WARN_DEPRECATED = { value = "OFF", force = false }
+CUDA_PATH = { value = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.2", force = false }
 INCLUDE = { value = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\include;C:\\Program Files (x86)\\Windows Kits\\10\\include\\10.0.26100.0\\ucrt;C:\\Program Files\\LLVM\\lib\\clang\\18\\include", force = false }

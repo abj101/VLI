@@ -6,7 +6,7 @@ pub mod transcription;
 pub mod tts;
 pub mod wake;
 
-use log::debug;
+use log::{debug, warn};
 
 use std::ops::Deref;
 use std::sync::mpsc::Receiver;
@@ -72,19 +72,52 @@ impl AudioPipeline {
             }
             SttPipelineChoice::Local { use_gpu } => match resolve_whisper_model_path(app) {
                 Ok(model_path) => {
+                    let model_path_text = model_path.to_string_lossy().to_string();
                     let mut params = WhisperContextParameters::default();
                     params.use_gpu(use_gpu);
-                    match WhisperContext::new_with_params(
-                        model_path.to_string_lossy().as_ref(),
-                        params,
-                    ) {
+                    if use_gpu {
+                        params.gpu_device(0);
+                        #[cfg(feature = "whisper-cuda")]
+                        params.flash_attn(true);
+                    }
+                    match WhisperContext::new_with_params(model_path_text.as_str(), params) {
                         Ok(ctx) => Some(spawn_stt_thread(
                             app.clone(),
                             ctx,
                             pcm_rx,
                             sample_rate,
                             hud_session_id,
+                            use_gpu,
                         )),
+                        Err(gpu_err) if use_gpu => {
+                            warn!("whisper gpu init failed; falling back to cpu: {gpu_err}");
+                            let mut cpu_params = WhisperContextParameters::default();
+                            cpu_params.use_gpu(false);
+                            match WhisperContext::new_with_params(model_path_text.as_str(), cpu_params)
+                            {
+                                Ok(ctx) => {
+                                    let _ = app.emit(
+                                        "audio-error",
+                                        serde_json::json!({ "message": "Whisper GPU init failed; using CPU instead." }),
+                                    );
+                                    Some(spawn_stt_thread(
+                                        app.clone(),
+                                        ctx,
+                                        pcm_rx,
+                                        sample_rate,
+                                        hud_session_id,
+                                        false,
+                                    ))
+                                }
+                                Err(cpu_err) => {
+                                    let _ = app.emit(
+                                        "audio-error",
+                                        serde_json::json!({ "message": format!("failed to load whisper model (gpu error: {gpu_err}; cpu retry error: {cpu_err})") }),
+                                    );
+                                    Some(spawn_pcm_drain(pcm_rx))
+                                }
+                            }
+                        }
                         Err(e) => {
                             let _ = app.emit(
                                 "audio-error",

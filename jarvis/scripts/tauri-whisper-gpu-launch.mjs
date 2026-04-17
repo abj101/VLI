@@ -1,37 +1,4 @@
 /**
- * Windows `.cmd` launcher for Tauri when `VULKAN_SDK` must be visible to nested Cargo.
- * Avoids fragile `cmd /c "set ...&& node \"...\""` quoting (breaks under `Program Files\...`).
- */
-
-/** Batch: wrap path in quotes; internal `"` → `""`. */
-export function quoteBatchPathWindows(p) {
-  const s = String(p);
-  return `"${s.replace(/"/g, '""')}"`;
-}
-
-/** Quote arg only if cmd metacharacters or spaces appear. */
-export function quoteBatchArgWindows(a) {
-  const s = String(a);
-  if (/[\s^&|%<>()]/.test(s)) {
-    return quoteBatchPathWindows(s);
-  }
-  return s;
-}
-
-/**
- * Returns a `.cmd` file body: set VULKAN_SDK, then `node` + `tauri.js` + args (each safely quoted).
- */
-export function formatVulkanSdkTauriCmdBody({ vkRoot, nodeExe, tauriCli, args }) {
-  const safeVk = String(vkRoot).replace(/%/g, "%%");
-  const parts = [
-    quoteBatchPathWindows(nodeExe),
-    quoteBatchPathWindows(tauriCli),
-    ...args.map(quoteBatchArgWindows),
-  ];
-  return ["@echo off", `set "VULKAN_SDK=${safeVk}"`, parts.join(" ")].join("\r\n");
-}
-
-/**
  * winget CLI args for SDK installs. `--disable-interactivity` is appended only when supported
  * (older winget errors on unknown flags).
  */
@@ -74,4 +41,30 @@ export function buildWindowsTerminateByExecutablePathScript(exePath) {
     "  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $killed += 1 }",
     "Write-Output $killed",
   ].join("; ");
+}
+
+export function shouldReleaseWindowsJarvisExeLockForSubcommand(subcommand) {
+  return subcommand === "dev" || subcommand === "build";
+}
+
+/**
+ * Windows PATH merge helper: prepend candidate entries (dedup, case-insensitive) so runtime DLL
+ * lookup prefers SDK/toolchain dirs without duplicating existing PATH segments.
+ */
+export function prependWindowsPathEntries(pathValue, entries) {
+  const parts = String(pathValue ?? "")
+    .split(";")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const seen = new Set(parts.map((p) => p.toLowerCase()));
+  const prepend = [];
+  for (const raw of entries ?? []) {
+    const p = String(raw ?? "").trim();
+    if (!p) continue;
+    const key = p.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    prepend.push(p);
+  }
+  return [...prepend, ...parts].join(";");
 }
