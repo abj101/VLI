@@ -21,7 +21,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Listener, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, GlobalShortcutExt, ShortcutState};
 
-const AUTO_DISMISS_AFTER: Duration = Duration::from_secs(4);
+/// Brief hold after `Done` (and after speech-silence gate) before hiding the HUD — tuned so simple
+/// actions (e.g. OpenApp) dismiss quickly while the frontend shell is already unmounted.
+const AUTO_DISMISS_AFTER: Duration = Duration::from_millis(380);
 const NO_MATCH_TIMEOUT: Duration = Duration::from_secs(5);
 const EDITOR_WINDOW_LABEL: &str = "editor";
 const DEFAULT_HOTKEY: &str = "ctrl+shift+j";
@@ -31,9 +33,9 @@ const DEFAULT_THRESHOLD_PCT: u16 = 80;
 const EDITOR_COMMANDS_CHANGED_EVENT: &str = "editor-commands-changed";
 const APP_INDEX_READY_EVENT: &str = "app-index-ready";
 pub(crate) const OPEN_SETTINGS_EVENT: &str = "open-settings";
-/// After the last speech-related activity, wait this long before treating speech as finished
-/// (starts the 4s auto-dismiss countdown only after this gap).
-const SILENCE_BEFORE_AUTO_DISMISS: Duration = Duration::from_millis(450);
+/// After the last speech-related activity, wait this long before treating speech as finished for
+/// auto-dismiss scheduling (then `AUTO_DISMISS_AFTER` runs before the window hides).
+const SILENCE_BEFORE_AUTO_DISMISS: Duration = Duration::from_millis(180);
 /// Debounce partial STT updates so commands do not fire mid-sentence.
 const SILENCE_BEFORE_MATCH: Duration = Duration::from_millis(550);
 /// Amplitude above this (0..1) counts as speech for activity / silence detection.
@@ -636,7 +638,7 @@ fn spawn_no_match_watchdog(
     });
 }
 
-/// After `Done`, wait until **silence** after last speech activity, then run the 4s countdown before dismissing.
+/// After `Done`, wait until **silence** after last speech activity, then `AUTO_DISMISS_AFTER` before dismissing.
 fn schedule_auto_dismiss(
     app: AppHandle,
     rt: SharedHud,

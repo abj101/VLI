@@ -12,24 +12,13 @@ import {
   type CenterSelectorInput,
   type CenterSelectorResult,
 } from "./HudPanel.logic";
-
-const LISTENING_PHASES: HudPhase[] = [
-  "listening",
-  "matched",
-  "executing",
-  "awaiting_input",
-  "done",
-];
+import { isHudOverlayShellActive } from "./hudOverlayPhases";
 
 /** Trailing debounce (ms) for streaming transcript in the SR-only live region. */
 const TRANSCRIPT_ANNOUNCE_DEBOUNCE_MS = 380;
 
 /** Fixed sleeve height for bars — motion uses `scaleY` only (no layout thrash). */
 const WAVE_BAR_SLEEVE_PX = 28;
-
-function isActiveHudPhase(phase: HudPhase): boolean {
-  return LISTENING_PHASES.includes(phase);
-}
 
 function useHudCenterInput(): CenterSelectorInput {
   return useHudStore(
@@ -210,25 +199,12 @@ function HudShell() {
 
   const showListeningChrome = phase === "listening" && !match;
 
-  const rootOpacity =
-    phase === "idle" || phase === "stopped"
-      ? 0
-      : phase === "done"
-        ? 0
-        : 1;
-
   const transition = useMemo(() => {
     if (reduceMotion) {
       return { duration: 0.12, ease: "easeOut" as const };
     }
-    if (phase === "done") {
-      return { duration: 0.55, ease: "easeInOut" as const };
-    }
-    if (phase === "stopped") {
-      return { duration: 0.14, ease: "easeOut" as const };
-    }
     return { duration: 0.4, ease: "easeOut" as const };
-  }, [phase, reduceMotion]);
+  }, [reduceMotion]);
 
   return (
     <motion.div
@@ -238,7 +214,7 @@ function HudShell() {
         ? { "aria-labelledby": "hud-phase-label" }
         : { "aria-label": "Voice session" })}
       initial={{ opacity: 0 }}
-      animate={{ opacity: rootOpacity }}
+      animate={{ opacity: 1 }}
       transition={transition}
     >
       {showListeningChrome && (
@@ -287,7 +263,7 @@ function HudShell() {
 /** Fade / pulse wrapper: only mount animated shell while HUD session is active. */
 function HudBody() {
   const phase = useHudStore((s) => s.phase);
-  const active = isActiveHudPhase(phase);
+  const active = isHudOverlayShellActive(phase);
 
   if (!active) {
     return null;
