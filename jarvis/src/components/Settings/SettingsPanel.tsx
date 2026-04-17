@@ -34,6 +34,12 @@ type AppSettingsPayload = {
   localWhisperUseGpu: boolean;
 };
 
+type WhisperGpuStatusPayload = {
+  compileBackend: "none" | "vulkan" | "cuda" | "metal" | string;
+  runtimeAvailable: boolean;
+  message: string | null;
+};
+
 function settingsFocusables(root: HTMLElement): HTMLElement[] {
   const sel =
     "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])";
@@ -85,7 +91,11 @@ export function SettingsPanel({
   const [remoteSttKeyInput, setRemoteSttKeyInput] = useState("");
   const [savingRemoteStt, setSavingRemoteStt] = useState(false);
   const [localWhisperUseGpu, setLocalWhisperUseGpu] = useState(false);
-  const [whisperGpuCompileSupported, setWhisperGpuCompileSupported] = useState(false);
+  const [whisperGpuStatus, setWhisperGpuStatus] = useState<WhisperGpuStatusPayload>({
+    compileBackend: "none",
+    runtimeAvailable: false,
+    message: "This build was compiled without a Whisper GPU backend.",
+  });
 
   const panelRef = useRef<HTMLElement | null>(null);
   const hotkeyInputRef = useRef<HTMLInputElement>(null);
@@ -100,12 +110,12 @@ export function SettingsPanel({
   }, [embedded, activeNav]);
 
   const refreshFromBackend = async () => {
-    const [savedHotkey, savedThreshold, savedTheme, app, gpuSupported] = await Promise.all([
+    const [savedHotkey, savedThreshold, savedTheme, app, gpuStatus] = await Promise.all([
       invoke<string | null>("get_setting", { key: HOTKEY_KEY }),
       invoke<string | null>("get_setting", { key: DEFAULT_THRESHOLD_KEY }),
       invoke<string | null>("get_setting", { key: THEME_KEY }),
       invoke<AppSettingsPayload>("get_settings"),
-      invoke<boolean>("whisper_gpu_compile_supported"),
+      invoke<WhisperGpuStatusPayload>("whisper_gpu_status"),
     ]);
     if (savedHotkey && savedHotkey.trim().length > 0) {
       setHotkey(savedHotkey.trim());
@@ -126,8 +136,11 @@ export function SettingsPanel({
     setRemoteSttTimeoutSecs(app.remoteSttTimeoutSecs);
     setRemoteSttKeyStored(app.remoteSttKeyStored);
     setLocalWhisperUseGpu(app.localWhisperUseGpu);
-    setWhisperGpuCompileSupported(gpuSupported);
+    setWhisperGpuStatus(gpuStatus);
   };
+
+  const whisperGpuCanEnable =
+    whisperGpuStatus.compileBackend !== "none" && whisperGpuStatus.runtimeAvailable;
 
   useEffect(() => {
     let mounted = true;
@@ -271,13 +284,16 @@ export function SettingsPanel({
   };
 
   const persistLocalWhisperUseGpu = async (next: boolean) => {
+    const prev = localWhisperUseGpu;
     setLocalWhisperUseGpu(next);
     try {
       const s = await invoke<AppSettingsPayload>("update_settings", {
         patch: { localWhisperUseGpu: next },
       });
       setLocalWhisperUseGpu(s.localWhisperUseGpu);
+      setToastText(next ? "Whisper will use GPU on next listen." : "Whisper will use CPU on next listen.");
     } catch (err) {
+      setLocalWhisperUseGpu(prev);
       setToastText(formatUserError(err, "Could not save the Whisper GPU option."));
     }
   };
@@ -490,15 +506,21 @@ export function SettingsPanel({
                   </p>
 
                   {sttProvider === "local" && (
-                    <label className="editor-settings-checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={localWhisperUseGpu}
-                        disabled={!whisperGpuCompileSupported}
-                        onChange={(e) => void persistLocalWhisperUseGpu(e.target.checked)}
-                      />
-                      <span>Use GPU for Whisper (when available)</span>
-                    </label>
+                    <>
+                      <label className="editor-settings-checkbox-row">
+                        <input
+                          type="checkbox"
+                          checked={localWhisperUseGpu}
+                          disabled={!whisperGpuCanEnable}
+                          onChange={(e) => void persistLocalWhisperUseGpu(e.target.checked)}
+                        />
+                        <span>Use GPU for Whisper (when available)</span>
+                      </label>
+                      <p className="editor-settings-help">
+                        {whisperGpuStatus.message ??
+                          `Whisper GPU backend: ${whisperGpuStatus.compileBackend}`}
+                      </p>
+                    </>
                   )}
                   {sttProvider === "remote" && (
                     <>

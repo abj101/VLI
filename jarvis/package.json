@@ -8,12 +8,16 @@
     "prebuild": "node scripts/fetch-wake-models.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
+    "tauri:dev": "node scripts/tauri-whisper-gpu.mjs dev",
+    "tauri:build": "node scripts/tauri-whisper-gpu.mjs build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:wake": "vitest run scripts/fetch-wake-models.config.test.mjs && cargo test --manifest-path src-tauri/Cargo.toml --features oww audio::wake::oww",
+    "test:cargo-whisper-vulkan": "cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features whisper-vulkan,porcupine,oww",
+    "test:cargo-whisper-cuda": "cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features whisper-cuda,porcupine,oww",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
-    "tauri": "tauri"
+    "tauri": "node scripts/tauri-whisper-gpu.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
