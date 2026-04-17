@@ -79,6 +79,14 @@ export function selectCenterContent(
     return { kind: "transcript", text: input.transcript };
   }
 
+  if (
+    (input.phase === "matched" || input.phase === "executing") &&
+    !input.match &&
+    !normalizedActionText
+  ) {
+    return { kind: "action", text: "Working…" };
+  }
+
   return { kind: "placeholder" };
 }
 

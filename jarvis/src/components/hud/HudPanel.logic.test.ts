@@ -34,6 +34,17 @@ describe("selectCenterContent", () => {
     expect(out).toEqual({ kind: "action", text: "Opening Notepad..." });
   });
 
+  it("shows working fallback during matched or executing before match/action hydrate", () => {
+    expect(selectCenterContent(base("matched"))).toEqual({
+      kind: "action",
+      text: "Working…",
+    });
+    expect(selectCenterContent(base("executing"))).toEqual({
+      kind: "action",
+      text: "Working…",
+    });
+  });
+
   it("shows action error when executor reports a terminal failure", () => {
     const out = selectCenterContent({
       ...base("executing"),

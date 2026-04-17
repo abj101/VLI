@@ -252,6 +252,10 @@ struct HudRuntime {
     pending_transcript: String,
     /// Monotonic version for pending transcript debounce scheduling.
     transcript_revision: u64,
+    /// Set when this listen session has received at least one non-empty STT chunk.
+    /// Partial matching uses `last_speech_activity` silence; without this, idle time after
+    /// opening the HUD satisfies that window before the user speaks.
+    nonempty_transcript_this_listen: bool,
     /// Cooperative cancellation handle for currently running action chain.
     active_run_cancel: Option<Arc<AtomicBool>>,
     /// Session id that owns `active_run_cancel`.
@@ -424,9 +428,12 @@ fn should_attempt_match_for_update(rt: &HudRuntime, is_final: bool) -> bool {
     if is_final {
         return true;
     }
+    if !rt.nonempty_transcript_this_listen {
+        return false;
+    }
     match rt.last_speech_activity {
         Some(last) => last.elapsed() >= SILENCE_BEFORE_MATCH,
-        None => true,
+        None => false,
     }
 }
 
@@ -459,6 +466,7 @@ fn prepare_hud_listening_session(s: &mut HudRuntime) -> u64 {
     s.phase = HudPhase::Listening;
     s.session_id = s.session_id.wrapping_add(1);
     s.last_speech_activity = Some(Instant::now());
+    s.nonempty_transcript_this_listen = false;
     s.pending_transcript.clear();
     s.transcript_revision = 0;
     s.pending_follow_up_response = None;
@@ -472,6 +480,7 @@ fn prepare_hud_close_session(s: &mut HudRuntime) {
     s.phase = HudPhase::Stopped;
     s.visible = false;
     s.session_id = s.session_id.wrapping_add(1);
+    s.nonempty_transcript_this_listen = false;
     s.pending_transcript.clear();
     s.transcript_revision = 0;
     s.pending_follow_up_response = None;
@@ -587,8 +596,14 @@ fn touch_speech_activity(rt: &SharedHud) {
 }
 
 fn touch_speech_on_transcript(rt: &SharedHud, text: &str) {
-    if !text.trim().is_empty() {
-        touch_speech_activity(rt);
+    if text.trim().is_empty() {
+        return;
+    }
+    if let Ok(mut s) = rt.lock() {
+        if s.visible && s.phase == HudPhase::Listening {
+            s.last_speech_activity = Some(Instant::now());
+            s.nonempty_transcript_this_listen = true;
+        }
     }
 }
 
@@ -1869,9 +1884,19 @@ mod tests {
     #[test]
     fn partial_transcript_match_allowed_after_silence_gap() {
         let mut rt = HudRuntime::default();
+        rt.nonempty_transcript_this_listen = true;
         rt.last_speech_activity =
             Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
         assert!(should_attempt_match_for_update(&rt, false));
+    }
+
+    #[test]
+    fn partial_transcript_never_matches_before_first_nonempty_stt_even_if_hud_idle() {
+        let mut rt = HudRuntime::default();
+        rt.nonempty_transcript_this_listen = false;
+        rt.last_speech_activity =
+            Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_secs(30));
+        assert!(!should_attempt_match_for_update(&rt, false));
     }
 
     #[test]
