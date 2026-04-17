@@ -633,6 +633,16 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
         })
       : "edit";
 
+  const showFollowUpPlaceholderHint = useMemo(
+    () =>
+      "open_app" in action ||
+      "open_url" in action ||
+      "speak" in action ||
+      "send_keys" in action ||
+      "run_script" in action,
+    [action],
+  );
+
   const renderArg = () => {
     if ("editor_pending" in action) {
       return null;
@@ -897,7 +907,21 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
           </FormulaSuggestPortal>
         ) : null}
       </div>
-      <div className="editor-formula-arg-slot">{renderArg()}</div>
+      <div
+        className={
+          showFollowUpPlaceholderHint
+            ? "editor-formula-arg-slot editor-formula-arg-slot--stacked-hint"
+            : "editor-formula-arg-slot"
+        }
+      >
+        {renderArg()}
+        {showFollowUpPlaceholderHint ? (
+          <span className="editor-formula-follow-up-hint">
+            After one or more Follow Up steps: use {"{{follow_up}}"} for the latest reply;{" "}
+            {"{{follow_up_1}}"}, {"{{follow_up_2}}"}, … for each answer in order.
+          </span>
+        ) : null}
+      </div>
       {canRemove && (
         <button
           type="button"
