@@ -1,6 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FocusEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import type { CommandNodePayload, FormActionPayload } from "../../types";
 import { editorPendingAction } from "../../types";
 import { formatUserError } from "../../utils/userErrors";
@@ -196,6 +207,7 @@ export function CommandFormulaRow({
       actions: prev.actions.filter((_, i) => i !== index),
     }));
   };
+  const followUpVariableMeta = useMemo(() => deriveFollowUpVariableMap(model.actions), [model.actions]);
 
   const errors = validateFormModel(model);
 
@@ -241,6 +253,12 @@ export function CommandFormulaRow({
                     key={`${model.id ?? "draft"}-${index}-${getActionKind(action)}`}
                     action={action}
                     index={index}
+                    availableVariableLabels={followUpVariableMeta.labels}
+                    variableLabel={
+                      followUpVariableMeta.byActionIndex.get(index)
+                        ? `Variable ${followUpVariableMeta.byActionIndex.get(index)}`
+                        : undefined
+                    }
                     onChange={(next) => setActionAt(index, next)}
                     onRemove={() => removeActionAt(index)}
                     canRemove={model.actions.length > 1}
@@ -378,6 +396,7 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
       actions: prev.actions.filter((_, i) => i !== index),
     }));
   };
+  const followUpVariableMeta = useMemo(() => deriveFollowUpVariableMap(model.actions), [model.actions]);
 
   return (
     <li className="editor-command-item editor-command-item--draft">
@@ -411,6 +430,12 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
                   key={`draft-${index}-${getActionKind(action)}`}
                   action={action}
                   index={index}
+                  availableVariableLabels={followUpVariableMeta.labels}
+                  variableLabel={
+                    followUpVariableMeta.byActionIndex.get(index)
+                      ? `Variable ${followUpVariableMeta.byActionIndex.get(index)}`
+                      : undefined
+                  }
                   onChange={(next) => setActionAt(index, next)}
                   onRemove={() => removeActionAt(index)}
                   canRemove={model.actions.length > 1}
@@ -453,10 +478,44 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
 type SegmentProps = {
   action: FormActionPayload;
   index: number;
+  availableVariableLabels: string[];
+  variableLabel?: string;
   onChange: (next: FormActionPayload) => void;
   onRemove: () => void;
   canRemove: boolean;
 };
+
+type VariableTokenContext = {
+  start: number;
+  end: number;
+  query: string;
+};
+
+export function deriveFollowUpVariableMap(actions: FormActionPayload[]) {
+  let next = 0;
+  const byActionIndex = new Map<number, number>();
+  actions.forEach((action, idx) => {
+    if (!("sub_prompt" in action)) return;
+    next += 1;
+    byActionIndex.set(idx, next);
+  });
+  return {
+    byActionIndex,
+    labels: Array.from({ length: next }, (_, i) => `Variable ${i + 1}`),
+  };
+}
+
+export function extractVariableTokenContext(inputValue: string, caret: number): VariableTokenContext | null {
+  const before = inputValue.slice(0, caret);
+  const match = /(^|\s)(Variable(?:\s+\d*)?)$/i.exec(before);
+  if (!match) return null;
+  const token = match[2];
+  return {
+    start: before.length - token.length,
+    end: caret,
+    query: token.replace(/^Variable/i, "").trim(),
+  };
+}
 
 function AppIconImg({
   iconUrl,
@@ -487,9 +546,25 @@ function AppIconImg({
   );
 }
 
-function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: SegmentProps) {
+function ActionSegmentEditor({
+  action,
+  index,
+  availableVariableLabels,
+  variableLabel,
+  onChange,
+  onRemove,
+  canRemove,
+}: SegmentProps) {
   const kindAnchorRef = useRef<HTMLDivElement>(null);
   const appAnchorRef = useRef<HTMLDivElement>(null);
+  const variableAnchorRef = useRef<HTMLDivElement>(null);
+  const variableTargetRef = useRef<{
+    value: string;
+    start: number;
+    end: number;
+    onCommit: (next: string) => void;
+    input: HTMLInputElement;
+  } | null>(null);
   const kind = getActionKind(action);
   const [kindQuery, setKindQuery] = useState(() =>
     kind === "pending" ? "" : (ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind),
@@ -502,6 +577,8 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   const [appHitIcons, setAppHitIcons] = useState<Record<string, string | null>>({});
   const [appOpen, setAppOpen] = useState(false);
   const [appHasSearched, setAppHasSearched] = useState(false);
+  const [variableOpen, setVariableOpen] = useState(false);
+  const [variableQuery, setVariableQuery] = useState("");
   const [appEditing, setAppEditing] = useState(
     () => !("open_app" in action) || action.open_app.path.trim().length === 0,
   );
@@ -672,6 +749,71 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
           selectedPath: action.open_app.path,
         })
       : "edit";
+  const variableHits = useMemo(() => {
+    if (!availableVariableLabels.length) return [];
+    const q = variableQuery.trim().toLowerCase();
+    if (!q) return availableVariableLabels;
+    return availableVariableLabels.filter((label) => label.toLowerCase().startsWith(`variable ${q}`));
+  }, [availableVariableLabels, variableQuery]);
+
+  const updateVariableSuggest = useCallback(
+    (input: HTMLInputElement, nextValue: string, onCommit: (next: string) => void) => {
+      if (!availableVariableLabels.length) {
+        setVariableOpen(false);
+        return;
+      }
+      const caret = input.selectionStart ?? nextValue.length;
+      const token = extractVariableTokenContext(nextValue, caret);
+      if (!token) {
+        setVariableOpen(false);
+        return;
+      }
+      variableTargetRef.current = {
+        value: nextValue,
+        start: token.start,
+        end: token.end,
+        onCommit,
+        input,
+      };
+      setVariableQuery(token.query);
+      setVariableOpen(true);
+    },
+    [availableVariableLabels],
+  );
+
+  const bindVariableSuggestInput = useCallback(
+    (nextValue: string, onCommit: (next: string) => void) => ({
+      onChange: (e: ChangeEvent<HTMLInputElement>) => {
+        const value = e.target.value;
+        onCommit(value);
+        updateVariableSuggest(e.currentTarget, value, onCommit);
+      },
+      onFocus: (e: FocusEvent<HTMLInputElement>) => {
+        updateVariableSuggest(e.currentTarget, nextValue, onCommit);
+      },
+      onBlur: () => {
+        window.setTimeout(() => setVariableOpen(false), 120);
+      },
+    }),
+    [updateVariableSuggest],
+  );
+
+  const applyVariableOption = useCallback((label: string) => {
+    const target = variableTargetRef.current;
+    if (!target) return;
+    const next = `${target.value.slice(0, target.start)}${label}${target.value.slice(target.end)}`;
+    target.onCommit(next);
+    setVariableOpen(false);
+    window.setTimeout(() => {
+      try {
+        const nextPos = target.start + label.length;
+        target.input.focus();
+        target.input.setSelectionRange(nextPos, nextPos);
+      } catch {
+        // no-op: blur during async replace
+      }
+    }, 0);
+  }, []);
 
   const renderArg = () => {
     if ("editor_pending" in action) {
@@ -785,50 +927,56 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     }
     if ("open_url" in action) {
       return (
-        <input
-          type="url"
-          className={formulaArgInputClass()}
-          value={action.open_url.url}
-          onChange={(e) => onChange({ open_url: { url: e.target.value } })}
-          placeholder="https://…"
-          aria-label={`URL for step ${index + 1}`}
-        />
+        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
+          <input
+            type="url"
+            className={formulaArgInputClass()}
+            value={action.open_url.url}
+            {...bindVariableSuggestInput(action.open_url.url, (value) => onChange({ open_url: { url: value } }))}
+            placeholder="https://…"
+            aria-label={`URL for step ${index + 1}`}
+          />
+        </div>
       );
     }
     if ("speak" in action) {
       return (
-        <input
-          type="text"
-          className={formulaArgInputClass()}
-          value={action.speak.text}
-          onChange={(e) => onChange({ speak: { text: e.target.value } })}
-          placeholder="Words to speak"
-          aria-label={`Speak text for step ${index + 1}`}
-        />
+        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.speak.text}
+            {...bindVariableSuggestInput(action.speak.text, (value) => onChange({ speak: { text: value } }))}
+            placeholder="Words to speak"
+            aria-label={`Speak text for step ${index + 1}`}
+          />
+        </div>
       );
     }
     if ("send_keys" in action) {
       return (
-        <input
-          type="text"
-          className={formulaArgInputClass()}
-          value={action.send_keys.keys}
-          onChange={(e) => onChange({ send_keys: { keys: e.target.value } })}
-          placeholder="ctrl+shift+p"
-          aria-label={`Keys for step ${index + 1}`}
-        />
+        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.send_keys.keys}
+            {...bindVariableSuggestInput(action.send_keys.keys, (value) => onChange({ send_keys: { keys: value } }))}
+            placeholder="ctrl+shift+p"
+            aria-label={`Keys for step ${index + 1}`}
+          />
+        </div>
       );
     }
     if ("run_script" in action) {
       return (
-        <div className="editor-formula-arg-wrap editor-formula-arg-wrap--stack">
+        <div className="editor-formula-arg-wrap editor-formula-arg-wrap--stack" ref={variableAnchorRef}>
           <input
             type="text"
             className={formulaArgInputClass()}
             value={action.run_script.script}
-            onChange={(e) =>
-              onChange({ run_script: { ...action.run_script, script: e.target.value } })
-            }
+            {...bindVariableSuggestInput(action.run_script.script, (value) =>
+              onChange({ run_script: { ...action.run_script, script: value } }),
+            )}
             placeholder="Script path"
             aria-label={`Script path for step ${index + 1}`}
           />
@@ -836,17 +984,17 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
             type="text"
             className={formulaArgInputClass()}
             value={action.run_script.args.join(", ")}
-            onChange={(e) =>
+            {...bindVariableSuggestInput(action.run_script.args.join(", "), (value) =>
               onChange({
                 run_script: {
                   ...action.run_script,
-                  args: e.target.value
+                  args: value
                     .split(",")
                     .map((part) => part.trim())
                     .filter((part) => part.length > 0),
                 },
               })
-            }
+            )}
             placeholder="Arguments (comma-separated)"
             aria-label={`Script arguments for step ${index + 1}`}
           />
@@ -855,14 +1003,18 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     }
     if ("sub_prompt" in action) {
       return (
-        <input
-          type="text"
-          className={formulaArgInputClass()}
-          value={action.sub_prompt.prompt}
-          onChange={(e) => onChange({ sub_prompt: { prompt: e.target.value } })}
-          placeholder="Follow-up question"
-          aria-label={`Follow-up text for step ${index + 1}`}
-        />
+        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.sub_prompt.prompt}
+            {...bindVariableSuggestInput(action.sub_prompt.prompt, (value) =>
+              onChange({ sub_prompt: { prompt: value } }),
+            )}
+            placeholder="Follow-up question"
+            aria-label={`Follow-up text for step ${index + 1}`}
+          />
+        </div>
       );
     }
     if ("wait" in action) {
@@ -888,56 +1040,81 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
 
   return (
     <div className="editor-formula-segment">
-      <div className="editor-formula-kind-wrap" ref={kindAnchorRef}>
-        <input
-          type="text"
-          className="editor-formula-input editor-formula-input--kind"
-          value={kindQuery}
-          onChange={(e) => {
-            setKindQuery(e.target.value);
-            setKindOpen(true);
-          }}
-          onFocus={() => setKindOpen(true)}
-          onBlur={() => {
-            window.setTimeout(() => {
-              setKindOpen(false);
-              setKindQuery(
-                kind === "pending"
-                  ? ""
-                  : (ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind),
-              );
-            }, 120);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === "Tab") {
-              const pick = kindHits[0];
-              if (!pick) return;
-              e.preventDefault();
-              applyKindOption(pick.id);
-            }
-          }}
-          placeholder="Action"
-          aria-label={`Action type for step ${index + 1}`}
-        />
-        {kindOpen && kindHits.length > 0 ? (
-          <FormulaSuggestPortal anchorRef={kindAnchorRef}>
-            {kindHits.map((opt) => (
-              <li key={opt.id} role="none">
-                <button
-                  type="button"
-                  role="option"
-                  className="editor-formula-suggest-btn"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => applyKindOption(opt.id)}
-                >
-                  <span className="editor-formula-suggest-title">{opt.label}</span>
-                </button>
-              </li>
-            ))}
-          </FormulaSuggestPortal>
+      <div className="editor-formula-segment-main">
+        <div className="editor-formula-kind-wrap" ref={kindAnchorRef}>
+          <input
+            type="text"
+            className="editor-formula-input editor-formula-input--kind"
+            value={kindQuery}
+            onChange={(e) => {
+              setKindQuery(e.target.value);
+              setKindOpen(true);
+            }}
+            onFocus={() => setKindOpen(true)}
+            onBlur={() => {
+              window.setTimeout(() => {
+                setKindOpen(false);
+                setKindQuery(
+                  kind === "pending"
+                    ? ""
+                    : (ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind),
+                );
+              }, 120);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === "Tab") {
+                const pick = kindHits[0];
+                if (!pick) return;
+                e.preventDefault();
+                applyKindOption(pick.id);
+              }
+            }}
+            placeholder="Action"
+            aria-label={`Action type for step ${index + 1}`}
+          />
+          {kindOpen && kindHits.length > 0 ? (
+            <FormulaSuggestPortal anchorRef={kindAnchorRef}>
+              {kindHits.map((opt) => (
+                <li key={opt.id} role="none">
+                  <button
+                    type="button"
+                    role="option"
+                    className="editor-formula-suggest-btn"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => applyKindOption(opt.id)}
+                  >
+                    <span className="editor-formula-suggest-title">{opt.label}</span>
+                  </button>
+                </li>
+              ))}
+            </FormulaSuggestPortal>
+          ) : null}
+        </div>
+        <div className="editor-formula-arg-slot">{renderArg()}</div>
+        {variableLabel ? (
+          <div className="editor-formula-variable-bridge" aria-label={`${variableLabel} link`}>
+            <span className="editor-formula-variable-branch" aria-hidden />
+            <span className="editor-formula-variable-label">{variableLabel}</span>
+          </div>
         ) : null}
       </div>
-      <div className="editor-formula-arg-slot">{renderArg()}</div>
+      {variableOpen && variableHits.length > 0 ? (
+        <FormulaSuggestPortal anchorRef={variableAnchorRef}>
+          {variableHits.map((label) => (
+            <li key={label} role="none">
+              <button
+                type="button"
+                role="option"
+                className="editor-formula-suggest-btn"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => applyVariableOption(label)}
+              >
+                <span className="editor-formula-suggest-title">{label}</span>
+              </button>
+            </li>
+          ))}
+        </FormulaSuggestPortal>
+      ) : null}
       {canRemove && (
         <button
           type="button"

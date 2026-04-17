@@ -1546,6 +1546,42 @@ html[data-theme="light"] {
   position: relative;
 }
 
+.editor-formula-segment-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.editor-formula-variable-bridge {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: -1px;
+  pointer-events: none;
+}
+
+.editor-formula-variable-branch {
+  width: clamp(64px, 58%, 200px);
+  height: 8px;
+  border-left: 1px solid color-mix(in oklch, var(--editor-muted) 60%, transparent);
+  border-bottom: 1px solid color-mix(in oklch, var(--editor-muted) 60%, transparent);
+  border-radius: 0 0 0 5px;
+  opacity: 0.9;
+}
+
+.editor-formula-variable-label {
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--editor-muted);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
 .editor-formula-kind-wrap,
 .editor-formula-arg-wrap {
   position: relative;

@@ -213,13 +213,13 @@ fn execute_actions(
     runtime: &impl ActionRuntime,
     app_index: Option<&[AppEntry]>,
 ) {
-    let mut follow_up_response: Option<String> = None;
+    let mut follow_up_responses: Vec<String> = Vec::new();
     for action in actions {
         if runtime.is_cancelled() {
             runtime.emit_status(ACTION_CANCELLED_MSG);
             return;
         }
-        let resolved = resolve_action_templates(action, follow_up_response.as_deref());
+        let resolved = resolve_action_templates(action, &follow_up_responses);
         match execute_one_action(&resolved, runtime, app_index) {
             Ok(text) => runtime.emit_status(&text),
             Err(err) => {
@@ -242,7 +242,7 @@ fn execute_actions(
             }
             match runtime.request_follow_up(prompt) {
                 Ok(response) => {
-                    follow_up_response = Some(response);
+                    follow_up_responses.push(response);
                     runtime.emit_status("Captured follow-up input");
                 }
                 Err(err) => {
@@ -319,11 +319,14 @@ fn execute_one_action(
     }
 }
 
-fn resolve_action_templates(action: &Action, follow_up_response: Option<&str>) -> Action {
-    let Some(response) = follow_up_response else {
-        return action.clone();
+fn resolve_action_templates(action: &Action, follow_up_responses: &[String]) -> Action {
+    let render = |input: &str| {
+        let legacy = follow_up_responses
+            .last()
+            .map(|response| input.replace("{{follow_up}}", response))
+            .unwrap_or_else(|| input.to_string());
+        replace_numbered_variables(&legacy, follow_up_responses)
     };
-    let render = |input: &str| input.replace("{{follow_up}}", response);
     match action {
         Action::OpenApp { name, path } => Action::OpenApp {
             name: render(name),
@@ -341,6 +344,69 @@ fn resolve_action_templates(action: &Action, follow_up_response: Option<&str>) -
             prompt: render(prompt),
         },
     }
+}
+
+fn replace_numbered_variables(input: &str, follow_up_responses: &[String]) -> String {
+    if follow_up_responses.is_empty() {
+        return input.to_string();
+    }
+    let mut out = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0usize;
+    while i < input.len() {
+        if let Some((end, index)) = match_numbered_variable(bytes, i) {
+            if let Some(value) = follow_up_responses.get(index.saturating_sub(1)) {
+                out.push_str(value);
+            } else {
+                out.push_str(&input[i..end]);
+            }
+            i = end;
+            continue;
+        }
+        let ch = input[i..].chars().next().unwrap_or_default();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+fn match_numbered_variable(bytes: &[u8], start: usize) -> Option<(usize, usize)> {
+    const PREFIX: &str = "variable";
+    if start > 0 && bytes[start - 1].is_ascii_alphanumeric() {
+        return None;
+    }
+    if start + PREFIX.len() > bytes.len()
+        || !std::str::from_utf8(&bytes[start..start + PREFIX.len()])
+            .ok()?
+            .eq_ignore_ascii_case(PREFIX)
+    {
+        return None;
+    }
+    let mut idx = start + PREFIX.len();
+    if idx >= bytes.len() || !bytes[idx].is_ascii_whitespace() {
+        return None;
+    }
+    while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+        idx += 1;
+    }
+    let digits_start = idx;
+    while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+        idx += 1;
+    }
+    if digits_start == idx {
+        return None;
+    }
+    if idx < bytes.len() && bytes[idx].is_ascii_alphanumeric() {
+        return None;
+    }
+    let index = std::str::from_utf8(&bytes[digits_start..idx])
+        .ok()?
+        .parse::<usize>()
+        .ok()?;
+    if index == 0 {
+        return None;
+    }
+    Some((idx, index))
 }
 
 fn validate_open_app_path(path: &str) -> Result<(), String> {
@@ -935,6 +1001,55 @@ mod tests {
         );
         assert_eq!(s.speak_calls, vec!["Which page should I open?".to_string()]);
         assert_eq!(s.url_calls, vec!["https://example.com/docs".to_string()]);
+        assert!(s.errors.is_empty());
+    }
+
+    #[test]
+    fn numbered_variables_map_to_follow_up_order() {
+        let runtime = MockRuntime::with_follow_up_answers(vec!["alpha", "beta"]);
+        let node = node_with_actions(vec![
+            Action::SubPrompt {
+                prompt: "First input?".into(),
+            },
+            Action::SubPrompt {
+                prompt: "Second input?".into(),
+            },
+            Action::Speak {
+                text: "A=Variable 1 B=Variable 2".into(),
+            },
+        ]);
+
+        execute_command(&node, &runtime, None);
+        let s = runtime.snapshot();
+        assert_eq!(
+            s.follow_up_prompts,
+            vec!["First input?".to_string(), "Second input?".to_string()]
+        );
+        assert!(s
+            .speak_calls
+            .iter()
+            .any(|text| text == "A=alpha B=beta"));
+        assert!(s.errors.is_empty());
+    }
+
+    #[test]
+    fn numbered_variable_out_of_range_stays_literal() {
+        let runtime = MockRuntime::with_follow_up_answers(vec!["alpha"]);
+        let node = node_with_actions(vec![
+            Action::SubPrompt {
+                prompt: "Only input?".into(),
+            },
+            Action::Speak {
+                text: "Keep Variable 2 here".into(),
+            },
+        ]);
+
+        execute_command(&node, &runtime, None);
+        let s = runtime.snapshot();
+        assert!(s
+            .speak_calls
+            .iter()
+            .any(|text| text == "Keep Variable 2 here"));
         assert!(s.errors.is_empty());
     }
 
