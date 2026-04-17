@@ -295,6 +295,43 @@ type DraftRowProps = {
   onCreated: () => void;
 };
 
+function DraftCloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden className="editor-command-draft-icon-svg">
+      <path
+        d="M7 7L17 17M17 7L7 17"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function DraftCheckIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden className="editor-command-draft-icon-svg">
+      <path
+        d="M6 12.5L10.2 16.5L18 7.5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function DraftBusyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden className="editor-command-draft-icon-svg">
+      <circle cx="7" cy="12" r="1.75" fill="currentColor" />
+      <circle cx="12" cy="12" r="1.75" fill="currentColor" />
+      <circle cx="17" cy="12" r="1.75" fill="currentColor" />
+    </svg>
+  );
+}
+
 export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
   const [model, setModel] = useState<FormModel>(() => ({
     ...modelFromNode(null),
@@ -403,7 +440,9 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
               onClick={onDiscard}
               aria-label="Cancel"
             >
-              <span aria-hidden>×</span>
+              <span className="editor-command-draft-icon" aria-hidden>
+                <DraftCloseIcon />
+              </span>
             </button>
             <button
               type="button"
@@ -412,7 +451,9 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
               disabled={saving}
               aria-label={saving ? "Saving…" : "Save"}
             >
-              <span aria-hidden>{saving ? "⋯" : "✓"}</span>
+              <span className="editor-command-draft-icon" aria-hidden>
+                {saving ? <DraftBusyIcon /> : <DraftCheckIcon />}
+              </span>
             </button>
           </div>
         </div>
