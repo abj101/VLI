@@ -14,12 +14,13 @@ use audio::SharedAudioPipeline;
 use commands::TauriActionRuntime;
 use hud::{sync_hud_window, HudPhase, HUD_WINDOW_LABEL};
 use log::{debug, info, warn};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Listener, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, GlobalShortcutExt, ShortcutState};
+use whisper_rs::{WhisperContext, WhisperContextParameters};
 
 /// Brief hold after `Done` (and after speech-silence gate) before hiding the HUD — tuned so simple
 /// actions (e.g. OpenApp) dismiss quickly while the frontend shell is already unmounted.
@@ -50,6 +51,23 @@ type CommandCache = Arc<RwLock<Vec<db::CommandNode>>>;
 type AppIndexStore = Arc<RwLock<Vec<apps::AppEntry>>>;
 /// In-memory icon cache shared between the scanner and the `get_app_icon` command.
 type AppIconCache = Arc<apps::IconCache>;
+static WHISPER_GPU_STATUS: OnceLock<WhisperGpuStatus> = OnceLock::new();
+static WHISPER_VULKAN_MODEL_READY: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WhisperGpuStatus {
+    compile_backend: String,
+    runtime_available: bool,
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WhisperGpuWarmupPayload {
+    ready: bool,
+    message: String,
+}
 
 /// `true` while a background app-index scan is in-flight. The settings panel
 /// reads this via [`get_app_index_status`] to render "Indexing apps…" only
@@ -1498,11 +1516,171 @@ fn rescan_app_index(
 /// `true` when this binary was built with a Whisper GPU backend (Vulkan / CUDA / Metal).
 #[tauri::command]
 fn whisper_gpu_compile_supported() -> bool {
-    cfg!(any(
-        feature = "whisper-vulkan",
-        feature = "whisper-cuda",
-        feature = "whisper-metal"
-    ))
+    whisper_compile_backend() != "none"
+}
+
+fn whisper_compile_backend() -> &'static str {
+    if cfg!(feature = "whisper-metal") {
+        "metal"
+    } else if cfg!(feature = "whisper-cuda") {
+        "cuda"
+    } else if cfg!(feature = "whisper-vulkan") {
+        "vulkan"
+    } else {
+        "none"
+    }
+}
+
+fn whisper_backend_label(backend: &str) -> &'static str {
+    match backend {
+        "metal" => "Metal",
+        "cuda" => "CUDA",
+        "vulkan" => "Vulkan",
+        _ => "CPU-only",
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn try_load_library(lib_name: &str) -> bool {
+    use windows::Win32::System::LibraryLoader::LoadLibraryW;
+    use windows::core::PCWSTR;
+
+    let mut wide: Vec<u16> = lib_name.encode_utf16().collect();
+    wide.push(0);
+    // SAFETY: We pass a null-terminated UTF-16 string for Win32 loader probe.
+    unsafe { LoadLibraryW(PCWSTR(wide.as_ptr())).is_ok() }
+}
+
+fn whisper_runtime_available(backend: &str) -> bool {
+    match backend {
+        "metal" => cfg!(target_os = "macos"),
+        "cuda" => whisper_cuda_runtime_available(),
+        "vulkan" => whisper_vulkan_runtime_available(),
+        _ => false,
+    }
+}
+
+fn whisper_cuda_runtime_available() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        return try_load_library("nvcuda.dll");
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return std::path::Path::new("/usr/lib/x86_64-linux-gnu/libcuda.so.1").exists()
+            || std::path::Path::new("/usr/lib64/libcuda.so.1").exists()
+            || std::path::Path::new("/usr/lib/libcuda.so.1").exists();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return false;
+    }
+    #[allow(unreachable_code)]
+    false
+}
+
+fn whisper_vulkan_runtime_available() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        return try_load_library("vulkan-1.dll");
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return std::path::Path::new("/usr/lib/x86_64-linux-gnu/libvulkan.so.1").exists()
+            || std::path::Path::new("/usr/lib64/libvulkan.so.1").exists()
+            || std::path::Path::new("/usr/lib/libvulkan.so.1").exists();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return std::path::Path::new("/usr/local/lib/libvulkan.dylib").exists()
+            || std::path::Path::new("/opt/homebrew/lib/libvulkan.dylib").exists();
+    }
+    #[allow(unreachable_code)]
+    false
+}
+
+fn whisper_gpu_status_inner() -> WhisperGpuStatus {
+    let backend = whisper_compile_backend();
+    let runtime_available = whisper_runtime_available(backend);
+    let message = match backend {
+        "none" => Some("This build was compiled without a Whisper GPU backend.".to_string()),
+        _ if runtime_available => Some(format!(
+            "Whisper GPU backend ready: {}.",
+            whisper_backend_label(backend)
+        )),
+        "cuda" => Some(
+            "CUDA backend is compiled, but a CUDA runtime/driver was not detected.".to_string(),
+        ),
+        "vulkan" => Some(
+            "Vulkan backend is compiled, but a Vulkan runtime/loader was not detected.".to_string(),
+        ),
+        "metal" => Some("Metal backend is only available on macOS.".to_string()),
+        _ => Some("Whisper GPU backend is unavailable on this system.".to_string()),
+    };
+
+    WhisperGpuStatus {
+        compile_backend: backend.to_string(),
+        runtime_available,
+        message,
+    }
+}
+
+#[tauri::command]
+fn whisper_gpu_status() -> WhisperGpuStatus {
+    WHISPER_GPU_STATUS
+        .get_or_init(whisper_gpu_status_inner)
+        .clone()
+}
+
+#[tauri::command]
+fn warmup_whisper_gpu(app: AppHandle) -> WhisperGpuWarmupPayload {
+    let status = whisper_gpu_status();
+    if status.compile_backend != "vulkan" {
+        return WhisperGpuWarmupPayload {
+            ready: false,
+            message: "Whisper GPU warmup only applies to Vulkan builds.".to_string(),
+        };
+    }
+    if !status.runtime_available {
+        return WhisperGpuWarmupPayload {
+            ready: false,
+            message: "Vulkan runtime is unavailable, cannot warm up Whisper.".to_string(),
+        };
+    }
+    if WHISPER_VULKAN_MODEL_READY.load(Ordering::SeqCst) {
+        return WhisperGpuWarmupPayload {
+            ready: true,
+            message: "Vulkan model ready.".to_string(),
+        };
+    }
+    let model_path = match audio::stt::resolve_whisper_model_path(&app) {
+        Ok(path) => path,
+        Err(msg) => {
+            return WhisperGpuWarmupPayload {
+                ready: false,
+                message: msg,
+            };
+        }
+    };
+    let mut params = WhisperContextParameters::default();
+    params.use_gpu(true);
+    params.gpu_device(0);
+    #[cfg(feature = "whisper-cuda")]
+    params.flash_attn(true);
+
+    match WhisperContext::new_with_params(model_path.to_string_lossy().as_ref(), params) {
+        Ok(_ctx) => {
+            WHISPER_VULKAN_MODEL_READY.store(true, Ordering::SeqCst);
+            WhisperGpuWarmupPayload {
+                ready: true,
+                message: "Vulkan model ready.".to_string(),
+            }
+        }
+        Err(err) => WhisperGpuWarmupPayload {
+            ready: false,
+            message: format!("Vulkan warmup failed: {err}"),
+        },
+    }
 }
 
 #[tauri::command]
@@ -1777,6 +1955,8 @@ pub fn run() {
             get_app_icon,
             rescan_app_index,
             whisper_gpu_compile_supported,
+            whisper_gpu_status,
+            warmup_whisper_gpu,
             update_settings,
             save_api_key,
             delete_api_key
@@ -1811,6 +1991,22 @@ mod tests {
             remote_stt_key_stored: false,
             local_whisper_use_gpu: false,
         }
+    }
+
+    #[test]
+    fn whisper_compile_backend_is_known_value() {
+        assert!(matches!(
+            whisper_compile_backend(),
+            "none" | "vulkan" | "cuda" | "metal"
+        ));
+    }
+
+    #[test]
+    fn whisper_compile_supported_matches_backend() {
+        assert_eq!(
+            whisper_gpu_compile_supported(),
+            whisper_compile_backend() != "none"
+        );
     }
 
     #[test]

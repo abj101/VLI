@@ -60,3 +60,17 @@ export function applyEditorThemeToDocument(pref: EditorThemePreference): void {
 export function validateHotkeyInput(raw: string): string | null {
   return raw.trim().length > 0 ? null : "Hotkey is required.";
 }
+
+type WhisperGpuWarmupCheck = {
+  nextEnabled: boolean;
+  compileBackend: string;
+  runtimeAvailable: boolean;
+};
+
+export function shouldWarmupWhisperGpu({
+  nextEnabled,
+  compileBackend,
+  runtimeAvailable,
+}: WhisperGpuWarmupCheck): boolean {
+  return nextEnabled && runtimeAvailable && compileBackend === "vulkan";
+}

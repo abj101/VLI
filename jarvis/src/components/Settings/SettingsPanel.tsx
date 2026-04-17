@@ -7,6 +7,7 @@ import {
   normalizeThemePreference,
   parseRemoteSttTimeoutSecs,
   parseThresholdSettingValue,
+  shouldWarmupWhisperGpu,
   validateHotkeyInput,
   type EditorThemePreference,
   type SttProvider,
@@ -38,6 +39,11 @@ type WhisperGpuStatusPayload = {
   compileBackend: "none" | "vulkan" | "cuda" | "metal" | string;
   runtimeAvailable: boolean;
   message: string | null;
+};
+
+type WhisperGpuWarmupPayload = {
+  ready: boolean;
+  message: string;
 };
 
 function settingsFocusables(root: HTMLElement): HTMLElement[] {
@@ -91,6 +97,8 @@ export function SettingsPanel({
   const [remoteSttKeyInput, setRemoteSttKeyInput] = useState("");
   const [savingRemoteStt, setSavingRemoteStt] = useState(false);
   const [localWhisperUseGpu, setLocalWhisperUseGpu] = useState(false);
+  const [whisperGpuPreparing, setWhisperGpuPreparing] = useState(false);
+  const [whisperGpuPrepMessage, setWhisperGpuPrepMessage] = useState<string | null>(null);
   const [whisperGpuStatus, setWhisperGpuStatus] = useState<WhisperGpuStatusPayload>({
     compileBackend: "none",
     runtimeAvailable: false,
@@ -286,15 +294,40 @@ export function SettingsPanel({
   const persistLocalWhisperUseGpu = async (next: boolean) => {
     const prev = localWhisperUseGpu;
     setLocalWhisperUseGpu(next);
+    const shouldWarmup = shouldWarmupWhisperGpu({
+      nextEnabled: next,
+      compileBackend: whisperGpuStatus.compileBackend,
+      runtimeAvailable: whisperGpuStatus.runtimeAvailable,
+    });
+    if (!next) {
+      setWhisperGpuPreparing(false);
+      setWhisperGpuPrepMessage(null);
+    } else if (shouldWarmup) {
+      setWhisperGpuPreparing(true);
+      setWhisperGpuPrepMessage("Preparing Vulkan model...");
+    } else {
+      setWhisperGpuPrepMessage(null);
+    }
     try {
       const s = await invoke<AppSettingsPayload>("update_settings", {
         patch: { localWhisperUseGpu: next },
       });
       setLocalWhisperUseGpu(s.localWhisperUseGpu);
-      setToastText(next ? "Whisper will use GPU on next listen." : "Whisper will use CPU on next listen.");
+      if (shouldWarmup && s.localWhisperUseGpu) {
+        const warmup = await invoke<WhisperGpuWarmupPayload>("warmup_whisper_gpu");
+        setWhisperGpuPrepMessage(warmup.message);
+        setToastText(warmup.message);
+      } else {
+        setToastText(next ? "Whisper will use GPU on next listen." : "Whisper will use CPU on next listen.");
+      }
     } catch (err) {
       setLocalWhisperUseGpu(prev);
       setToastText(formatUserError(err, "Could not save the Whisper GPU option."));
+      setWhisperGpuPrepMessage(null);
+    } finally {
+      if (shouldWarmup) {
+        setWhisperGpuPreparing(false);
+      }
     }
   };
 
@@ -516,10 +549,18 @@ export function SettingsPanel({
                         />
                         <span>Use GPU for Whisper (when available)</span>
                       </label>
-                      <p className="editor-settings-help">
-                        {whisperGpuStatus.message ??
-                          `Whisper GPU backend: ${whisperGpuStatus.compileBackend}`}
-                      </p>
+                      <div className="editor-settings-gpu-status" role="status" aria-live="polite">
+                        {whisperGpuPreparing && (
+                          <span className="editor-settings-spinner" aria-hidden />
+                        )}
+                        <p className="editor-settings-help">
+                          {whisperGpuPreparing
+                            ? (whisperGpuPrepMessage ?? "Preparing Vulkan model...")
+                            : (whisperGpuPrepMessage ??
+                              whisperGpuStatus.message ??
+                              `Whisper GPU backend: ${whisperGpuStatus.compileBackend}`)}
+                        </p>
+                      </div>
                     </>
                   )}
                   {sttProvider === "remote" && (

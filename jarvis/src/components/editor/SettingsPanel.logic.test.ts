@@ -5,6 +5,7 @@ import {
   parseRemoteSttTimeoutSecs,
   parseThresholdSettingValue,
   resolveEditorTheme,
+  shouldWarmupWhisperGpu,
   validateHotkeyInput,
 } from "./SettingsPanel.logic";
 
@@ -82,5 +83,36 @@ describe("SettingsPanel logic", () => {
   it("requires non-empty hotkey input", () => {
     expect(validateHotkeyInput("ctrl+shift+j")).toBeNull();
     expect(validateHotkeyInput("   ")).toBe("Hotkey is required.");
+  });
+
+  it("warms up Vulkan GPU model only when enabling supported Vulkan", () => {
+    expect(
+      shouldWarmupWhisperGpu({
+        nextEnabled: true,
+        compileBackend: "vulkan",
+        runtimeAvailable: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldWarmupWhisperGpu({
+        nextEnabled: false,
+        compileBackend: "vulkan",
+        runtimeAvailable: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldWarmupWhisperGpu({
+        nextEnabled: true,
+        compileBackend: "cuda",
+        runtimeAvailable: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldWarmupWhisperGpu({
+        nextEnabled: true,
+        compileBackend: "vulkan",
+        runtimeAvailable: false,
+      }),
+    ).toBe(false);
   });
 });
