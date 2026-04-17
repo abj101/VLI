@@ -24,6 +24,7 @@ import {
   type FormModel,
 } from "./NodeForm.logic";
 import { searchAppIndexInvokeArgs } from "./appIndexInvoke";
+import { EditorCloseXIcon } from "./EditorCloseXIcon";
 
 export type AppIndexEntry = {
   display_name: string;
@@ -273,7 +274,7 @@ export function CommandFormulaRow({
               onClick={onDelete}
               aria-label={`Delete ${primaryPhrase.trim() || "command"}`}
             >
-              ×
+              <EditorCloseXIcon className="editor-command-delete-x" />
             </button>
           </div>
         </div>
@@ -294,19 +295,6 @@ type DraftRowProps = {
   onDiscard: () => void;
   onCreated: () => void;
 };
-
-function DraftCloseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden className="editor-command-draft-icon-svg">
-      <path
-        d="M7 7L17 17M17 7L7 17"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
 
 function DraftCheckIcon() {
   return (
@@ -441,7 +429,7 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
               aria-label="Cancel"
             >
               <span className="editor-command-draft-icon" aria-hidden>
-                <DraftCloseIcon />
+                <EditorCloseXIcon className="editor-command-draft-icon-svg" />
               </span>
             </button>
             <button
@@ -957,7 +945,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
           onClick={onRemove}
           aria-label={`Remove step ${index + 1}`}
         >
-          ×
+          <EditorCloseXIcon className="editor-formula-remove-inline-x" />
         </button>
       )}
     </div>

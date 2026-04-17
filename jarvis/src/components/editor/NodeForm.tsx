@@ -13,6 +13,7 @@ import {
   type FormModel,
 } from "./NodeForm.logic";
 import { getPrimaryTriggerPhrase } from "./NodeList.logic";
+import { EditorCloseXIcon } from "./EditorCloseXIcon";
 
 export function NodeForm() {
   const nodes = useEditorStore((s) => s.nodes);
@@ -157,7 +158,8 @@ export function NodeForm() {
                   }
                   title="Remove trigger phrase"
                 >
-                  {phrase} ×
+                  <span className="editor-tag-text">{phrase}</span>
+                  <EditorCloseXIcon className="editor-tag-close-x" />
                 </button>
               ))}
             </div>
