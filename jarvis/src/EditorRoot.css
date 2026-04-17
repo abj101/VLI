@@ -59,6 +59,7 @@ html[data-theme="dark"] {
   --editor-node-trigger: #a3a3a3;
   --editor-focus-ring: #d4d4d4;
   --editor-accent: #e8e8e8;
+  --editor-on-accent: #0a0a0a;
   --editor-input-bg: #121212;
   --editor-input-border: #404040;
   --editor-input-text: #f0f0f0;
@@ -128,6 +129,7 @@ html[data-theme="light"] {
   --editor-node-trigger: #5c5c5c;
   --editor-focus-ring: #3a3a3a;
   --editor-accent: #2a2a2a;
+  --editor-on-accent: #fafafa;
   --editor-input-bg: #ffffff;
   --editor-input-border: #b8b8b8;
   --editor-input-text: #141414;
@@ -1204,6 +1206,27 @@ html[data-theme="light"] {
   filter: brightness(1.08);
 }
 
+.editor-settings-primary-btn {
+  align-self: flex-start;
+  padding: 8px 12px;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in oklch, var(--editor-accent) 72%, var(--editor-settings-border));
+  background: var(--editor-accent);
+  color: var(--editor-on-accent);
+  cursor: pointer;
+  min-height: 40px;
+}
+
+.editor-settings-primary-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.editor-settings-primary-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
 .editor-settings-header button {
   border: 1px solid var(--editor-control-border);
   background: var(--editor-control-bg);
@@ -1526,19 +1549,6 @@ html[data-theme="light"] {
   align-items: flex-start;
   min-width: 0;
   position: relative;
-}
-
-.editor-formula-arg-slot--stacked-hint {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
-}
-
-.editor-formula-follow-up-hint {
-  font-size: 11px;
-  line-height: 1.35;
-  color: var(--editor-muted);
-  max-width: min(440px, 100%);
 }
 
 .editor-formula-suggest {
