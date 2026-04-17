@@ -894,6 +894,25 @@ fn scan_start_menu(map: &mut HashMap<String, MapEntry>) -> Result<(), String> {
     Ok(())
 }
 
+/// `steam://`, `http://`, etc. — indexed as opaque launch strings, not local paths.
+fn is_non_filesystem_lnk_target(target: &str) -> bool {
+    let t = target.trim();
+    if t.contains("://") {
+        return true;
+    }
+    t.to_ascii_lowercase().starts_with("shell:")
+}
+
+/// Reject `.bat`, `.cmd`, `.ps1`, `.msi`, folders, etc. — only real Win32 `.exe` files.
+fn is_acceptable_lnk_filesystem_target(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("exe"))
+            .unwrap_or(false)
+}
+
 fn visit_dir_lnk(
     dir: &Path,
     shell_link: &IShellLinkW,
@@ -919,8 +938,12 @@ fn visit_dir_lnk(
                     continue;
                 }
                 let target_path = Path::new(&target);
-                // Accept both .exe targets and protocol-style targets (uwp:)
-                if !target.contains("://") && !target_path.exists() {
+                if is_non_filesystem_lnk_target(&target) {
+                    // Legacy rule: plain paths must exist; `steam://` etc. skip the exists check.
+                    if !target.contains("://") && !target_path.exists() {
+                        continue;
+                    }
+                } else if !is_acceptable_lnk_filesystem_target(target_path) {
                     continue;
                 }
                 let label = p
@@ -2451,6 +2474,37 @@ mod tests {
     fn touch_file(path: &Path) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::File::create(path).unwrap();
+    }
+
+    // ------------------------------------------------------------------
+    // Start Menu .lnk — filesystem targets must be .exe (no uninstall scripts)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn is_acceptable_lnk_filesystem_target_accepts_exe_only() {
+        let dir = tempfile::tempdir().unwrap();
+        touch_file(&dir.path().join("app.exe"));
+        touch_file(&dir.path().join("uninstall.bat"));
+        touch_file(&dir.path().join("remove.ps1"));
+        touch_file(&dir.path().join("setup.cmd"));
+        touch_file(&dir.path().join("silent.vbs"));
+        assert!(is_acceptable_lnk_filesystem_target(&dir.path().join("app.exe")));
+        assert!(!is_acceptable_lnk_filesystem_target(
+            &dir.path().join("uninstall.bat")
+        ));
+        assert!(!is_acceptable_lnk_filesystem_target(&dir.path().join("remove.ps1")));
+        assert!(!is_acceptable_lnk_filesystem_target(&dir.path().join("setup.cmd")));
+        assert!(!is_acceptable_lnk_filesystem_target(&dir.path().join("silent.vbs")));
+        assert!(!is_acceptable_lnk_filesystem_target(dir.path()));
+    }
+
+    #[test]
+    fn is_non_filesystem_lnk_target_detects_protocols_and_shell_verbs() {
+        assert!(is_non_filesystem_lnk_target("steam://run/123"));
+        assert!(is_non_filesystem_lnk_target("  shell:AppsFolder\\Foo!Bar  "));
+        assert!(is_non_filesystem_lnk_target("http://example.com/x"));
+        assert!(!is_non_filesystem_lnk_target(r"C:\Games\foo.exe"));
+        assert!(!is_non_filesystem_lnk_target(r"\\server\share\app.exe"));
     }
 
     #[test]
