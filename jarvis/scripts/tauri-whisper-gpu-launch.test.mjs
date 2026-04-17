@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildWingetInstallArgs,
   formatVulkanSdkTauriCmdBody,
+  isWingetInstallSuccessStatus,
   quoteBatchArgWindows,
   quoteBatchPathWindows,
 } from "./tauri-whisper-gpu-launch.mjs";
@@ -71,5 +72,11 @@ describe("buildWingetInstallArgs", () => {
     expect(
       buildWingetInstallArgs("Nvidia.CUDA", { disableInteractivity: true }),
     ).toContain("--disable-interactivity");
+  });
+});
+
+describe("isWingetInstallSuccessStatus", () => {
+  it("treats winget UPDATE_NOT_APPLICABLE as success for install", () => {
+    expect(isWingetInstallSuccessStatus(2316632107)).toBe(true);
   });
 });

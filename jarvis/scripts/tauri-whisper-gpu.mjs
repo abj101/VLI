@@ -11,6 +11,7 @@ import { fileURLToPath } from "url";
 import {
   buildWingetInstallArgs,
   formatVulkanSdkTauriCmdBody,
+  isWingetInstallSuccessStatus,
 } from "./tauri-whisper-gpu-launch.mjs";
 import {
   normalizeWindowsVulkanSdkRoot,
@@ -373,13 +374,18 @@ function runWingetInstall(packageId, label) {
       env: process.env,
     },
   );
-  const ok = (r.status ?? 1) === 0;
+  const status = r.status ?? 1;
+  const ok = isWingetInstallSuccessStatus(status);
   if (!ok) {
     console.error(
-      `tauri-whisper-gpu: winget install failed for ${packageId} (exit ${r.status ?? 1}).`,
+      `tauri-whisper-gpu: winget install failed for ${packageId} (exit ${status}).`,
     );
     console.error(
       `tauri-whisper-gpu: try elevated PowerShell: winget install -e --id ${packageId}  (Store / policy / admin). CUDA installer: https://developer.nvidia.com/cuda-downloads`,
+    );
+  } else if ((status >>> 0) === 0x8a15002b) {
+    console.log(
+      `tauri-whisper-gpu: ${packageId} already up to date (winget update not applicable).`,
     );
   }
   return ok;

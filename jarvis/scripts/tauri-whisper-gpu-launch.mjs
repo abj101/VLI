@@ -50,3 +50,12 @@ export function buildWingetInstallArgs(packageId, opts = {}) {
   }
   return a;
 }
+
+// `winget install` can return UPDATE_NOT_APPLICABLE when package is already current.
+const WINGET_UPDATE_NOT_APPLICABLE = 0x8a15002b;
+
+export function isWingetInstallSuccessStatus(status) {
+  if (status === 0) return true;
+  if (!Number.isInteger(status)) return false;
+  return (status >>> 0) === WINGET_UPDATE_NOT_APPLICABLE;
+}
