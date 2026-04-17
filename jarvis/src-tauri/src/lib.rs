@@ -1355,7 +1355,15 @@ fn get_setting(app: AppHandle, key: String) -> Result<Option<String>, String> {
 fn set_setting(app: AppHandle, key: String, value: String) -> Result<(), String> {
     let normalized_key = validate_setting_key(&key)?;
     let conn = open_db_connection(&app)?;
-    db::set_setting(&conn, &normalized_key, value.trim()).map_err(|e| e.to_string())
+    let trimmed = value.trim();
+    db::set_setting(&conn, &normalized_key, trimmed).map_err(|e| e.to_string())?;
+    if normalized_key == "theme" {
+        let _ = app.emit(
+            "theme-preference-changed",
+            serde_json::json!({ "preference": trimmed }),
+        );
+    }
+    Ok(())
 }
 
 #[tauri::command]

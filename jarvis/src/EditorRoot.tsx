@@ -199,6 +199,7 @@ export default function EditorRoot() {
             {EDITOR_SETTINGS_NAV.map((item) => (
               <button
                 key={item.id}
+                id={`editor-settings-nav-${item.id}`}
                 type="button"
                 className={`editor-app-nav-btn${section === item.id ? " is-active" : ""}`}
                 onClick={() => setSection(item.id)}

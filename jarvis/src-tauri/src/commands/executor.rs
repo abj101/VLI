@@ -213,13 +213,13 @@ fn execute_actions(
     runtime: &impl ActionRuntime,
     app_index: Option<&[AppEntry]>,
 ) {
-    let mut follow_up_answers: Vec<String> = Vec::new();
+    let mut follow_up_response: Option<String> = None;
     for action in actions {
         if runtime.is_cancelled() {
             runtime.emit_status(ACTION_CANCELLED_MSG);
             return;
         }
-        let resolved = resolve_action_templates(action, &follow_up_answers);
+        let resolved = resolve_action_templates(action, follow_up_response.as_deref());
         match execute_one_action(&resolved, runtime, app_index) {
             Ok(text) => runtime.emit_status(&text),
             Err(err) => {
@@ -242,7 +242,7 @@ fn execute_actions(
             }
             match runtime.request_follow_up(prompt) {
                 Ok(response) => {
-                    follow_up_answers.push(response);
+                    follow_up_response = Some(response);
                     runtime.emit_status("Captured follow-up input");
                 }
                 Err(err) => {
@@ -319,29 +319,11 @@ fn execute_one_action(
     }
 }
 
-/// Replaces `{{follow_up}}` with the latest answer and `{{follow_up_1}}`…`{{follow_up_N}}` with
-/// captures in order (first prompt → index 1). Numbered tokens are expanded high→low so
-/// `{{follow_up_10}}` is not corrupted by replacing `{{follow_up_1}}` first.
-fn apply_follow_up_templates(input: &str, answers: &[String]) -> String {
-    if answers.is_empty() {
-        return input.to_string();
-    }
-    let mut out = input.to_string();
-    for i in (1..=answers.len()).rev() {
-        let token = format!("{{{{follow_up_{}}}}}", i);
-        out = out.replace(&token, &answers[i - 1]);
-    }
-    if let Some(last) = answers.last() {
-        out = out.replace("{{follow_up}}", last);
-    }
-    out
-}
-
-fn resolve_action_templates(action: &Action, answers: &[String]) -> Action {
-    if answers.is_empty() {
+fn resolve_action_templates(action: &Action, follow_up_response: Option<&str>) -> Action {
+    let Some(response) = follow_up_response else {
         return action.clone();
-    }
-    let render = |input: &str| apply_follow_up_templates(input, answers);
+    };
+    let render = |input: &str| input.replace("{{follow_up}}", response);
     match action {
         Action::OpenApp { name, path } => Action::OpenApp {
             name: render(name),
@@ -954,65 +936,6 @@ mod tests {
         assert_eq!(s.speak_calls, vec!["Which page should I open?".to_string()]);
         assert_eq!(s.url_calls, vec!["https://example.com/docs".to_string()]);
         assert!(s.errors.is_empty());
-    }
-
-    #[test]
-    fn sub_prompt_then_open_app_templates_name_via_follow_up() {
-        let runtime = MockRuntime::with_follow_up_answers(vec!["calc"]);
-        let index = vec![AppEntry {
-            display_name: "Calculator".into(),
-            exe_path: "calc.exe".into(),
-            icon_data_url: None,
-        }];
-        let node = node_with_actions(vec![
-            Action::SubPrompt {
-                prompt: "Which app?".into(),
-            },
-            Action::OpenApp {
-                name: "{{follow_up}}".into(),
-                path: "".into(),
-            },
-        ]);
-
-        execute_command(&node, &runtime, Some(&index));
-        let s = runtime.snapshot();
-        assert_eq!(s.app_calls, vec!["calc.exe".to_string()]);
-        assert!(s.errors.is_empty());
-    }
-
-    #[test]
-    fn two_sub_prompts_template_numbered_and_latest_placeholder() {
-        let runtime = MockRuntime::with_follow_up_answers(vec!["alpha", "beta"]);
-        let node = node_with_actions(vec![
-            Action::SubPrompt {
-                prompt: "First?".into(),
-            },
-            Action::SubPrompt {
-                prompt: "Second?".into(),
-            },
-            Action::OpenUrl {
-                url: "https://example.com/{{follow_up_1}}/{{follow_up_2}}/latest-{{follow_up}}"
-                    .into(),
-            },
-        ]);
-
-        execute_command(&node, &runtime, None);
-        let s = runtime.snapshot();
-        assert_eq!(
-            s.url_calls,
-            vec!["https://example.com/alpha/beta/latest-beta".to_string()]
-        );
-        assert!(s.errors.is_empty());
-    }
-
-    #[test]
-    fn apply_follow_up_templates_replaces_high_index_before_low() {
-        let answers = vec!["a".into(), "b".into(), "c".into()];
-        let out = super::apply_follow_up_templates(
-            "{{follow_up_10}}|{{follow_up_2}}|{{follow_up_1}}|{{follow_up}}",
-            &answers,
-        );
-        assert_eq!(out, "{{follow_up_10}}|b|a|c");
     }
 
     #[test]

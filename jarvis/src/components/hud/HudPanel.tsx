@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useDebounced } from "../../hooks/useDebounced";
@@ -216,6 +216,7 @@ function HudShell() {
         : { "aria-label": "Voice session" })}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
       transition={transition}
     >
       {showListeningChrome && (
@@ -266,11 +267,12 @@ function HudBody() {
   const phase = useHudStore((s) => s.phase);
   const active = isHudOverlayShellActive(phase);
 
-  if (!active) {
-    return null;
-  }
-
-  return <HudShell />;
+  // AnimatePresence lets `HudShell` fade its glass out on `done` unmount so the
+  // transparent HUD window does not linger as an empty frame during the auto-dismiss
+  // gap (~560ms) between `hud-phase:done` and `window.hide()`.
+  return (
+    <AnimatePresence>{active ? <HudShell key="shell" /> : null}</AnimatePresence>
+  );
 }
 
 export function HudPanel() {

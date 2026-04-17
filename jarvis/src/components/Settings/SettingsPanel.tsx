@@ -390,12 +390,6 @@ export function SettingsPanel({
           )}
         </header>
       )}
-      {embedded && (
-        <header className="editor-settings-embedded-header">
-          <h2>{EDITOR_SETTINGS_NAV.find((n) => n.id === pane)?.label ?? "Settings"}</h2>
-        </header>
-      )}
-
       {loading ? (
         <p className="editor-settings-loading" aria-live="polite">
           Loading settings…
@@ -407,6 +401,7 @@ export function SettingsPanel({
               {EDITOR_SETTINGS_NAV.map((item) => (
                 <button
                   key={item.id}
+                  id={`editor-settings-nav-${item.id}`}
                   ref={item.id === "hotkeys" ? hotkeysNavRef : undefined}
                   type="button"
                   className={`editor-settings-nav-btn${internalNav === item.id ? " is-active" : ""}`}
@@ -420,14 +415,13 @@ export function SettingsPanel({
           )}
           <div className={`editor-settings-pane${embedded ? " editor-settings-pane--solo" : ""}`}>
             {pane === "hotkeys" && (
-              <div className="editor-settings-content" aria-labelledby="settings-pane-hotkeys">
-                <h3 className="editor-settings-pane-heading" id="settings-pane-hotkeys">
-                  Hotkeys
-                </h3>
+              <div
+                className="editor-settings-content"
+                aria-labelledby={`editor-settings-nav-${pane}`}
+              >
                 <section className="editor-settings-section">
-                  <h4>Global shortcut</h4>
                   <label>
-                    Listening shortcut
+                    Global shortcut
                     <div className="editor-settings-inline">
                       <input
                         ref={hotkeyInputRef}
@@ -446,10 +440,10 @@ export function SettingsPanel({
             )}
 
             {pane === "recognition" && (
-              <div className="editor-settings-content" aria-labelledby="settings-pane-recognition">
-                <h3 className="editor-settings-pane-heading" id="settings-pane-recognition">
-                  Recognition
-                </h3>
+              <div
+                className="editor-settings-content"
+                aria-labelledby={`editor-settings-nav-${pane}`}
+              >
                 <section className="editor-settings-section">
                   <h4>Default fuzzy threshold</h4>
                   <label>
@@ -471,8 +465,7 @@ export function SettingsPanel({
                     />
                   </label>
                   <p className="editor-settings-help">
-                    Default match strictness for new commands (overridable per command in the command
-                    details).
+                    Match strictness for new commands.
                   </p>
                 </section>
 
@@ -493,8 +486,7 @@ export function SettingsPanel({
                     </select>
                   </label>
                   <p className="editor-settings-help">
-                    How spoken audio becomes text for command matching. Remote needs a compatible
-                    HTTPS endpoint and an API key in the keychain.
+                    Speech-to-text for command matching. Remote needs HTTPS and a keychain API key.
                   </p>
 
                   {sttProvider === "local" && (
@@ -508,19 +500,6 @@ export function SettingsPanel({
                       <span>Use GPU for Whisper (when available)</span>
                     </label>
                   )}
-                  {sttProvider === "local" && !whisperGpuCompileSupported && (
-                    <p className="editor-settings-help">
-                      This build uses CPU-only Whisper. Rebuild with a GPU feature to enable
-                      acceleration, for example{" "}
-                      <code className="editor-settings-code">
-                        cargo tauri build --features whisper-vulkan
-                      </code>{" "}
-                      (Vulkan SDK), <code className="editor-settings-code">whisper-cuda</code>{" "}
-                      (NVIDIA + CUDA), or on macOS{" "}
-                      <code className="editor-settings-code">whisper-metal</code>.
-                    </p>
-                  )}
-
                   {sttProvider === "remote" && (
                     <>
                       <label htmlFor="editor-remote-stt-url">
@@ -622,10 +601,7 @@ export function SettingsPanel({
                       <option value="oww">OpenWakeWord</option>
                     </select>
                   </label>
-                  <p className="editor-settings-help">
-                    Hotkey-only matches earlier phases. Porcupine and OpenWakeWord need models and
-                    keys as documented in the README.
-                  </p>
+                  <p className="editor-settings-help">Hotkey-only skips wake detection.</p>
                 </section>
 
                 {wakeEngine === "oww" && (
@@ -708,12 +684,11 @@ export function SettingsPanel({
             )}
 
             {pane === "appearance" && (
-              <div className="editor-settings-content" aria-labelledby="settings-pane-appearance">
-                <h3 className="editor-settings-pane-heading" id="settings-pane-appearance">
-                  Appearance
-                </h3>
+              <div
+                className="editor-settings-content"
+                aria-labelledby={`editor-settings-nav-${pane}`}
+              >
                 <section className="editor-settings-section">
-                  <h4>Color scheme</h4>
                   <label htmlFor="editor-theme-select">
                     Theme
                     <select
@@ -731,10 +706,10 @@ export function SettingsPanel({
             )}
 
             {pane === "about" && (
-              <div className="editor-settings-content" aria-labelledby="settings-pane-about">
-                <h3 className="editor-settings-pane-heading" id="settings-pane-about">
-                  About
-                </h3>
+              <div
+                className="editor-settings-content"
+                aria-labelledby={`editor-settings-nav-${pane}`}
+              >
                 <section className="editor-settings-section">
                   <h4>App index</h4>
                   <p className="editor-settings-help" role="status">
