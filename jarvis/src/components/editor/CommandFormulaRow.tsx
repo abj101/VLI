@@ -397,16 +397,22 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
             </button>
           </div>
           <div className="editor-command-draft-actions">
-            <button type="button" className="editor-settings-secondary-btn" onClick={onDiscard}>
-              Cancel
+            <button
+              type="button"
+              className="editor-command-draft-icon-btn"
+              onClick={onDiscard}
+              aria-label="Cancel"
+            >
+              <span aria-hidden>×</span>
             </button>
             <button
               type="button"
-              className="editor-settings-primary-btn"
+              className="editor-command-draft-icon-btn editor-command-draft-icon-btn--accent"
               onClick={() => void onSave()}
               disabled={saving}
+              aria-label={saving ? "Saving…" : "Save"}
             >
-              {saving ? "Saving…" : "Save"}
+              <span aria-hidden>{saving ? "⋯" : "✓"}</span>
             </button>
           </div>
         </div>

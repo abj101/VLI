@@ -59,7 +59,6 @@ html[data-theme="dark"] {
   --editor-node-trigger: #a3a3a3;
   --editor-focus-ring: #d4d4d4;
   --editor-accent: #e8e8e8;
-  --editor-on-accent: #0a0a0a;
   --editor-input-bg: #121212;
   --editor-input-border: #404040;
   --editor-input-text: #f0f0f0;
@@ -129,7 +128,6 @@ html[data-theme="light"] {
   --editor-node-trigger: #5c5c5c;
   --editor-focus-ring: #3a3a3a;
   --editor-accent: #2a2a2a;
-  --editor-on-accent: #fafafa;
   --editor-input-bg: #ffffff;
   --editor-input-border: #b8b8b8;
   --editor-input-text: #141414;
@@ -1206,27 +1204,6 @@ html[data-theme="light"] {
   filter: brightness(1.08);
 }
 
-.editor-settings-primary-btn {
-  align-self: flex-start;
-  padding: 8px 12px;
-  font-size: 12px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in oklch, var(--editor-accent) 72%, var(--editor-settings-border));
-  background: var(--editor-accent);
-  color: var(--editor-on-accent);
-  cursor: pointer;
-  min-height: 40px;
-}
-
-.editor-settings-primary-btn:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-
-.editor-settings-primary-btn:disabled {
-  opacity: 0.65;
-  cursor: not-allowed;
-}
-
 .editor-settings-header button {
   border: 1px solid var(--editor-control-border);
   background: var(--editor-control-bg);
@@ -1803,9 +1780,45 @@ html[data-theme="light"] {
 
 .editor-command-draft-actions {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.editor-command-draft-actions .editor-command-draft-icon-btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--editor-muted);
+  cursor: pointer;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.editor-command-draft-actions .editor-command-draft-icon-btn:hover:not(:disabled) {
+  color: var(--editor-control-text);
+  background: color-mix(in oklch, var(--editor-control-text) 8%, transparent);
+}
+
+.editor-command-draft-actions .editor-command-draft-icon-btn--accent {
+  color: var(--editor-accent);
+}
+
+.editor-command-draft-actions .editor-command-draft-icon-btn--accent:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--editor-accent) 14%, transparent);
+}
+
+.editor-command-draft-actions .editor-command-draft-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .editor-command-item--draft .editor-command-formula {
