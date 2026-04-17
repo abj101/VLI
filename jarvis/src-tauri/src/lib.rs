@@ -236,6 +236,14 @@ fn normalize_hotkey_input(hotkey: &str) -> Result<String, String> {
     Ok(normalized.to_string())
 }
 
+fn is_hotkey_already_registered_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("hotkey already registered")
+        || lower.contains("wotkey already registered")
+        || ((lower.contains("hotkey") || lower.contains("wotkey"))
+            && lower.contains("already registered"))
+}
+
 fn resolve_fuzzy_threshold_pct(node_threshold_pct: u16, default_threshold_pct: u16) -> u16 {
     if node_threshold_pct == 0 {
         return default_threshold_pct.clamp(50, 100);
@@ -1899,31 +1907,37 @@ pub fn run() {
                         touch_speech_on_amplitude(&amp_hud, a);
                     });
 
-                    app.handle()
-                        .plugin(
-                            ShortcutBuilder::new()
-                                .with_shortcuts([configured_hotkey.as_str()])
-                                .map_err(|e| e.to_string())?
-                                .with_handler({
-                                    let hud_state = Arc::clone(&hud_state);
-                                    let audio_for_shortcut = audio_for_shortcut.clone();
-                                    let is_paused_for_shortcut =
-                                        Arc::clone(&is_paused_for_shortcut);
-                                    move |app, _shortcut, event| {
-                                        if event.state != ShortcutState::Pressed {
-                                            return;
-                                        }
-                                        let _ = show_hud_from_hotkey(
-                                            app,
-                                            &hud_state,
-                                            &audio_for_shortcut,
-                                            &is_paused_for_shortcut,
-                                        );
-                                    }
-                                })
-                                .build(),
-                        )
-                        .map_err(|e| e.to_string())?;
+                    let shortcut_plugin = ShortcutBuilder::new()
+                        .with_shortcuts([configured_hotkey.as_str()])
+                        .map_err(|e| e.to_string())?
+                        .with_handler({
+                            let hud_state = Arc::clone(&hud_state);
+                            let audio_for_shortcut = audio_for_shortcut.clone();
+                            let is_paused_for_shortcut = Arc::clone(&is_paused_for_shortcut);
+                            move |app, _shortcut, event| {
+                                if event.state != ShortcutState::Pressed {
+                                    return;
+                                }
+                                let _ = show_hud_from_hotkey(
+                                    app,
+                                    &hud_state,
+                                    &audio_for_shortcut,
+                                    &is_paused_for_shortcut,
+                                );
+                            }
+                        })
+                        .build();
+                    if let Err(e) = app.handle().plugin(shortcut_plugin) {
+                        let msg = e.to_string();
+                        if is_hotkey_already_registered_error(&msg) {
+                            warn!(
+                                "global shortcut `{}` already registered elsewhere; startup continues without hotkey listener ({})",
+                                configured_hotkey, msg
+                            );
+                        } else {
+                            return Err(msg.into());
+                        }
+                    }
                 }
 
                 sync_hud_window(app.handle(), HudPhase::Idle).map_err(|e| e.to_string())?;
@@ -1977,6 +1991,22 @@ mod tests {
     fn open_editor_focuses_existing_window_instead_of_duplicate() {
         assert!(should_focus_existing_editor_window(true));
         assert!(!should_focus_existing_editor_window(false));
+    }
+
+    #[test]
+    fn detects_hotkey_conflict_error_text() {
+        assert!(is_hotkey_already_registered_error(
+            "plugin global-shortcut: Hotkey already registered",
+        ));
+        assert!(is_hotkey_already_registered_error(
+            "failed to initialize plugin `global-shortcut`: hotkey (mods...) already registered",
+        ));
+        assert!(is_hotkey_already_registered_error(
+            "failed to initialize plugin `global-shortcut`: Wotkey already registered",
+        ));
+        assert!(!is_hotkey_already_registered_error(
+            "failed to initialize plugin `global-shortcut`: invalid accelerator",
+        ));
     }
 
     fn sample_settings(wake_engine: &str) -> db::AppSettings {
