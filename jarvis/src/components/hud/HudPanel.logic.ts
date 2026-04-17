@@ -87,6 +87,15 @@ export function selectCenterContent(
     return { kind: "action", text: "Working…" };
   }
 
+  if (
+    input.phase === "awaiting_input" &&
+    !input.match &&
+    !normalizedActionText &&
+    transcript.length === 0
+  ) {
+    return { kind: "action", text: "Listening…" };
+  }
+
   return { kind: "placeholder" };
 }
 

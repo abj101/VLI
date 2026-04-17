@@ -45,6 +45,11 @@ describe("selectCenterContent", () => {
     });
   });
 
+  it("shows listening fallback during awaiting_input when prompt has not hydrated", () => {
+    const out = selectCenterContent(base("awaiting_input"));
+    expect(out).toEqual({ kind: "action", text: "Listening…" });
+  });
+
   it("shows action error when executor reports a terminal failure", () => {
     const out = selectCenterContent({
       ...base("executing"),

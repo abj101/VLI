@@ -1,10 +1,9 @@
-import { motion, useReducedMotion } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useMemo, useRef } from "react";
+import { motion, useReducedMotion } from "framer-motion";
+import { useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useDebounced } from "../../hooks/useDebounced";
 import { useHudStore } from "../../store/hudStore";
-import type { HudPhase } from "../../types";
 import {
   announcableText,
   selectCenterContent,
@@ -194,10 +193,12 @@ function HudShell() {
   const srAnnounced = useDebounced(srSource, debounceMs);
 
   const phase = centerInput.phase;
-  const match = centerInput.match;
   const phaseLabel = selectPhaseLabel(phase);
 
-  const showListeningChrome = phase === "listening" && !match;
+  // Always show mic chrome while `listening`. `match-result` can arrive before `hud-phase`
+  // advances; hiding chrome when `match` is set produced an empty frosted shell with no stop
+  // control if the phase event was missed or reordered.
+  const showListeningChrome = phase === "listening";
 
   const transition = useMemo(() => {
     if (reduceMotion) {
@@ -273,24 +274,6 @@ function HudBody() {
 }
 
 export function HudPanel() {
-  const applyIpc = useHudStore((s) => s.applyIpc);
-  const mounted = useRef(false);
-
-  useEffect(() => {
-    mounted.current = true;
-    void (async () => {
-      try {
-        const p = await invoke<HudPhase>("hud_get_phase");
-        if (mounted.current) applyIpc("hud-phase", { phase: p });
-      } catch {
-        /* web-only */
-      }
-    })();
-    return () => {
-      mounted.current = false;
-    };
-  }, [applyIpc]);
-
   return (
     <div className="hud-panel-fill">
       <HudBody />
