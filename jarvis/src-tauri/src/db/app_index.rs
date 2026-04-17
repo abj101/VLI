@@ -54,6 +54,7 @@ pub fn load_app_index(conn: &Connection) -> Result<Vec<AppEntry>, DbError> {
     Ok(out)
 }
 
+#[cfg(test)]
 pub fn get_app_index_last_scan_unix(conn: &Connection) -> Result<Option<i64>, DbError> {
     let mut stmt = conn.prepare("SELECT value FROM app_index_meta WHERE key = 'last_scan_unix'")?;
     let mut rows = stmt.query([])?;

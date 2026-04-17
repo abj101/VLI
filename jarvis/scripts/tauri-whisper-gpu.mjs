@@ -9,6 +9,7 @@ import { spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 
 import {
+  buildWindowsTerminateByExecutablePathScript,
   buildWingetInstallArgs,
   formatVulkanSdkTauriCmdBody,
   isWingetInstallSuccessStatus,
@@ -395,6 +396,29 @@ function canPromptInteractively() {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
+function releaseWindowsDevJarvisExeLock(subcommand) {
+  if (process.platform !== "win32" || subcommand !== "dev") {
+    return;
+  }
+  const debugExePath = path.join(JARVIS_ROOT, "src-tauri", "target", "debug", "jarvis.exe");
+  const script = buildWindowsTerminateByExecutablePathScript(debugExePath);
+  const r = spawnSync(
+    "powershell",
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+    {
+      cwd: JARVIS_ROOT,
+      env: process.env,
+      encoding: "utf8",
+    },
+  );
+  const killed = Number.parseInt((r.stdout ?? "").trim(), 10);
+  if (Number.isInteger(killed) && killed > 0) {
+    console.warn(
+      `tauri-whisper-gpu: terminated ${killed} stale jarvis.exe process(es) to avoid Windows file-lock rebuild failure.`,
+    );
+  }
+}
+
 function promptYesNo(question, defaultNo = true) {
   if (!canPromptInteractively()) {
     console.warn(
@@ -571,6 +595,8 @@ async function ensureWindowsWhisperGpuPrereqs(initial) {
 }
 
 async function runTauri(subcommand, extraArgs, withGpuSelection) {
+  releaseWindowsDevJarvisExeLock(subcommand);
+
   let selected = resolveBackend();
   if (withGpuSelection && process.platform === "win32") {
     selected = await ensureWindowsWhisperGpuPrereqs(selected);

@@ -59,3 +59,19 @@ export function isWingetInstallSuccessStatus(status) {
   if (!Number.isInteger(status)) return false;
   return (status >>> 0) === WINGET_UPDATE_NOT_APPLICABLE;
 }
+
+/**
+ * PowerShell snippet that stops processes only when their full executable path matches `exePath`.
+ * Prints kill count so caller can log whether a stale lock was released.
+ */
+export function buildWindowsTerminateByExecutablePathScript(exePath) {
+  const target = String(exePath).replace(/'/g, "''");
+  return [
+    `$target = '${target}'`,
+    "$killed = 0",
+    "Get-CimInstance Win32_Process -Filter \"Name = 'jarvis.exe'\" |",
+    "  Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -ieq $target) } |",
+    "  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $killed += 1 }",
+    "Write-Output $killed",
+  ].join("; ");
+}
