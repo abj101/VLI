@@ -913,6 +913,19 @@ fn is_acceptable_lnk_filesystem_target(path: &Path) -> bool {
             .unwrap_or(false)
 }
 
+/// Skip `.lnk` / Get-StartApps rows that point at updaters, Squirrel, uninstall
+/// stubs, Chromium helpers, bundled runtimes, etc. — same stem rules as the
+/// Program Files shallow scan (`install_dir_skipped_stem`).
+fn should_skip_shortcut_filesystem_exe_target(path: &Path) -> bool {
+    if !is_acceptable_lnk_filesystem_target(path) {
+        return true;
+    }
+    match path.file_stem().and_then(|s| s.to_str()) {
+        Some(stem) => install_dir_skipped_stem(stem),
+        None => true,
+    }
+}
+
 fn visit_dir_lnk(
     dir: &Path,
     shell_link: &IShellLinkW,
@@ -943,7 +956,7 @@ fn visit_dir_lnk(
                     if !target.contains("://") && !target_path.exists() {
                         continue;
                     }
-                } else if !is_acceptable_lnk_filesystem_target(target_path) {
+                } else if should_skip_shortcut_filesystem_exe_target(target_path) {
                     continue;
                 }
                 let label = p
@@ -1052,14 +1065,13 @@ foreach ($a in Get-StartApps) {
             target
         } else {
             let p = Path::new(&target);
-            if p.exists() {
-                std::fs::canonicalize(p)
-                    .unwrap_or_else(|_| p.to_path_buf())
-                    .to_string_lossy()
-                    .to_string()
-            } else {
+            if should_skip_shortcut_filesystem_exe_target(p) {
                 continue;
             }
+            std::fs::canonicalize(p)
+                .unwrap_or_else(|_| p.to_path_buf())
+                .to_string_lossy()
+                .to_string()
         };
 
         // No per-entry icon extraction here (too slow); merge may fill from Uninstall / .lnk.
@@ -2505,6 +2517,27 @@ mod tests {
         assert!(is_non_filesystem_lnk_target("http://example.com/x"));
         assert!(!is_non_filesystem_lnk_target(r"C:\Games\foo.exe"));
         assert!(!is_non_filesystem_lnk_target(r"\\server\share\app.exe"));
+    }
+
+    #[test]
+    fn should_skip_shortcut_filesystem_exe_target_drops_updaters_squirrel_and_helpers() {
+        let dir = tempfile::tempdir().unwrap();
+        touch_file(&dir.path().join("Update.exe"));
+        touch_file(&dir.path().join("Squirrel.exe"));
+        touch_file(&dir.path().join("MyApp Helper (GPU).exe"));
+        touch_file(&dir.path().join("Discord.exe"));
+        assert!(should_skip_shortcut_filesystem_exe_target(
+            &dir.path().join("Update.exe")
+        ));
+        assert!(should_skip_shortcut_filesystem_exe_target(
+            &dir.path().join("Squirrel.exe")
+        ));
+        assert!(should_skip_shortcut_filesystem_exe_target(
+            &dir.path().join("MyApp Helper (GPU).exe")
+        ));
+        assert!(!should_skip_shortcut_filesystem_exe_target(
+            &dir.path().join("Discord.exe")
+        ));
     }
 
     #[test]
