@@ -38,6 +38,19 @@ export type CommandAction =
 
 export type ActionPayload = CommandAction;
 
+/** Editor-only row until the user picks a type; never sent to the backend. */
+export type EditorPendingAction = { editor_pending: Record<string, never> };
+
+export type FormActionPayload = CommandAction | EditorPendingAction;
+
+export function editorPendingAction(): EditorPendingAction {
+  return { editor_pending: {} };
+}
+
+export function isEditorPendingAction(a: FormActionPayload): a is EditorPendingAction {
+  return "editor_pending" in a;
+}
+
 export interface CommandNodePayload {
   id: number;
   name: string;

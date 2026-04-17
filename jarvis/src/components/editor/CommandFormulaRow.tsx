@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ActionPayload, CommandNodePayload } from "../../types";
+import { createPortal } from "react-dom";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import type { CommandNodePayload, FormActionPayload } from "../../types";
+import { editorPendingAction } from "../../types";
 import { formatUserError } from "../../utils/userErrors";
 import { useEditorStore } from "../../store/editorStore";
 import { useSettingsStore } from "../../store/settingsStore";
@@ -18,7 +20,7 @@ import {
   modelFromNode,
   toCommandPayload,
   validateFormModel,
-  type ActionKind,
+  type ConcreteActionKind,
   type FormModel,
 } from "./NodeForm.logic";
 import { searchAppIndexInvokeArgs } from "./appIndexInvoke";
@@ -35,6 +37,64 @@ type CommandFormulaRowProps = {
   onDelete: () => void;
   errorText?: string | null;
 };
+
+type FixedSuggestPos = { top: number; left: number; width: number; maxHeight: number };
+
+/** Renders formula autocomplete under anchor; portals to `body` so parent `overflow` on command list does not clip. Mount only while open so layout state resets without effect setState on close. */
+function FormulaSuggestPortal({
+  anchorRef,
+  children,
+}: {
+  anchorRef: RefObject<HTMLElement | null>;
+  children: ReactNode;
+}) {
+  const [pos, setPos] = useState<FixedSuggestPos | null>(null);
+
+  const sync = useCallback(() => {
+    const el = anchorRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const margin = 8;
+    const gap = 4;
+    const top = r.bottom + gap;
+    const maxHeight = Math.max(96, Math.min(280, window.innerHeight - top - margin));
+    const width = Math.min(r.width, window.innerWidth - margin * 2);
+    const left = Math.min(Math.max(margin, r.left), window.innerWidth - margin - width);
+    setPos({ top, left, width, maxHeight });
+  }, [anchorRef]);
+
+  useLayoutEffect(() => {
+    sync();
+    const el = anchorRef.current;
+    window.addEventListener("resize", sync);
+    window.addEventListener("scroll", sync, true);
+    const ro = el ? new ResizeObserver(() => queueMicrotask(sync)) : null;
+    if (el && ro) ro.observe(el);
+    return () => {
+      window.removeEventListener("resize", sync);
+      window.removeEventListener("scroll", sync, true);
+      ro?.disconnect();
+    };
+  }, [sync, anchorRef]);
+
+  if (!pos) return null;
+
+  return createPortal(
+    <ul
+      className="editor-formula-suggest editor-formula-suggest--portal"
+      role="listbox"
+      style={{
+        top: pos.top,
+        left: pos.left,
+        width: pos.width,
+        maxHeight: pos.maxHeight,
+      }}
+    >
+      {children}
+    </ul>,
+    document.body,
+  );
+}
 
 export function CommandFormulaRow({
   node,
@@ -117,11 +177,11 @@ export function CommandFormulaRow({
   const addActionSegment = () => {
     updateModel((prev) => ({
       ...prev,
-      actions: [...prev.actions, defaultActionForKind("wait")],
+      actions: [...prev.actions, editorPendingAction()],
     }));
   };
 
-  const setActionAt = (index: number, next: ActionPayload) => {
+  const setActionAt = (index: number, next: FormActionPayload) => {
     updateModel((prev) => {
       const actions = [...prev.actions];
       actions[index] = next;
@@ -239,7 +299,7 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
   const [model, setModel] = useState<FormModel>(() => ({
     ...modelFromNode(null),
     triggerPhrases: [],
-    actions: [defaultActionForKind("open_app")],
+    actions: [editorPendingAction()],
   }));
   const [saving, setSaving] = useState(false);
   const [toastText, setToastText] = useState<string | null>(null);
@@ -277,9 +337,9 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
   };
 
   const addActionSegment = () =>
-    updateModel((prev) => ({ ...prev, actions: [...prev.actions, defaultActionForKind("wait")] }));
+    updateModel((prev) => ({ ...prev, actions: [...prev.actions, editorPendingAction()] }));
 
-  const setActionAt = (index: number, next: ActionPayload) => {
+  const setActionAt = (index: number, next: FormActionPayload) => {
     updateModel((prev) => {
       const actions = [...prev.actions];
       actions[index] = next;
@@ -351,9 +411,9 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
 }
 
 type SegmentProps = {
-  action: ActionPayload;
+  action: FormActionPayload;
   index: number;
-  onChange: (next: ActionPayload) => void;
+  onChange: (next: FormActionPayload) => void;
   onRemove: () => void;
   canRemove: boolean;
 };
@@ -388,9 +448,11 @@ function AppIconImg({
 }
 
 function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: SegmentProps) {
+  const kindAnchorRef = useRef<HTMLDivElement>(null);
+  const appAnchorRef = useRef<HTMLDivElement>(null);
   const kind = getActionKind(action);
-  const [kindQuery, setKindQuery] = useState(
-    () => ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind,
+  const [kindQuery, setKindQuery] = useState(() =>
+    kind === "pending" ? "" : (ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind),
   );
   const [kindOpen, setKindOpen] = useState(false);
 
@@ -461,6 +523,9 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
 
   /* Local pickers mirror `action` / `kind` from the parent when the node reloads or the segment kind changes. */
   useEffect(() => {
+    if ("editor_pending" in action) {
+      return;
+    }
     if ("open_app" in action) {
       setAppQuery(action.open_app.name);
       if (action.open_app.path.trim().length === 0) {
@@ -473,7 +538,9 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
   }, [action]);
 
   useEffect(() => {
-    setKindQuery(ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind);
+    setKindQuery(
+      kind === "pending" ? "" : (ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind),
+    );
   }, [kind]);
 
   // Lazy icon fetch for already-saved open_app actions (scanner no longer
@@ -519,7 +586,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     };
   }, [appQuery, appOpen, action]);
 
-  const onPickKind = (nextKind: ActionKind) => {
+  const onPickKind = (nextKind: ConcreteActionKind) => {
     onChange(defaultActionForKind(nextKind));
     if (nextKind === "open_app") {
       setAppQuery("");
@@ -541,7 +608,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
     );
   }, [kindQuery]);
 
-  const applyKindOption = (nextKind: ActionKind) => {
+  const applyKindOption = (nextKind: ConcreteActionKind) => {
     onPickKind(nextKind);
     setKindQuery(ACTION_KIND_OPTIONS.find((opt) => opt.id === nextKind)?.label ?? nextKind);
     setKindOpen(false);
@@ -567,6 +634,9 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
       : "edit";
 
   const renderArg = () => {
+    if ("editor_pending" in action) {
+      return null;
+    }
     if ("open_app" in action) {
       if (appDisplayMode === "confirmed") {
         return (
@@ -591,7 +661,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
         );
       }
       return (
-        <div className="editor-formula-arg-wrap">
+        <div className="editor-formula-arg-wrap" ref={appAnchorRef}>
           <input
             type="text"
             className={formulaArgInputClass()}
@@ -611,8 +681,8 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
             placeholder="Search app…"
             aria-label={`App name for step ${index + 1}`}
           />
-          {appOpen && (
-            <ul className="editor-formula-suggest" role="listbox">
+          {appOpen ? (
+            <FormulaSuggestPortal anchorRef={appAnchorRef}>
               {appSearchMeta.countText && (
                 <li role="none" className="editor-formula-suggest-meta">
                   {appSearchMeta.countText}
@@ -627,49 +697,49 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
                 const rowIcon = h.icon_data_url ?? appHitIcons[h.exe_path] ?? undefined;
                 const fileLabel = appExeDisplayLabel(h.exe_path);
                 return (
-                <li key={h.exe_path} role="none">
-                  <button
-                    type="button"
-                    role="option"
-                    className="editor-formula-suggest-btn"
-                    title={`${h.display_name}\n${h.exe_path}`}
-                    aria-label={`${h.display_name}, ${h.exe_path}`}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      onChange({ open_app: { name: h.display_name, path: h.exe_path } });
-                      setAppQuery(h.display_name);
-                      setAppHasSearched(false);
-                      const picked = h.icon_data_url ?? appHitIcons[h.exe_path] ?? null;
-                      setSelectedAppIcon(picked);
-                      setAppEditing(false);
-                      setAppOpen(false);
-                      if (!picked && h.exe_path) {
-                        void invoke<string | null>("get_app_icon", {
-                          payload: { path: h.exe_path },
-                        })
-                          .then((icon) => setSelectedAppIcon(icon ?? null))
-                          .catch(() => setSelectedAppIcon(null));
-                      }
-                    }}
-                  >
-                    <span className="editor-formula-suggest-app">
-                      <AppIconImg
-                        key={`${h.exe_path}:${rowIcon ?? ""}`}
-                        iconUrl={rowIcon}
-                        label={h.display_name}
-                        className="editor-formula-suggest-icon"
-                      />
-                      <span className="editor-formula-suggest-text">
-                        <span className="editor-formula-suggest-title">{h.display_name}</span>
-                        <span className="editor-formula-suggest-sub">{fileLabel}</span>
+                  <li key={h.exe_path} role="none">
+                    <button
+                      type="button"
+                      role="option"
+                      className="editor-formula-suggest-btn"
+                      title={`${h.display_name}\n${h.exe_path}`}
+                      aria-label={`${h.display_name}, ${h.exe_path}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        onChange({ open_app: { name: h.display_name, path: h.exe_path } });
+                        setAppQuery(h.display_name);
+                        setAppHasSearched(false);
+                        const picked = h.icon_data_url ?? appHitIcons[h.exe_path] ?? null;
+                        setSelectedAppIcon(picked);
+                        setAppEditing(false);
+                        setAppOpen(false);
+                        if (!picked && h.exe_path) {
+                          void invoke<string | null>("get_app_icon", {
+                            payload: { path: h.exe_path },
+                          })
+                            .then((icon) => setSelectedAppIcon(icon ?? null))
+                            .catch(() => setSelectedAppIcon(null));
+                        }
+                      }}
+                    >
+                      <span className="editor-formula-suggest-app">
+                        <AppIconImg
+                          key={`${h.exe_path}:${rowIcon ?? ""}`}
+                          iconUrl={rowIcon}
+                          label={h.display_name}
+                          className="editor-formula-suggest-icon"
+                        />
+                        <span className="editor-formula-suggest-text">
+                          <span className="editor-formula-suggest-title">{h.display_name}</span>
+                          <span className="editor-formula-suggest-sub">{fileLabel}</span>
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                </li>
-              );
+                    </button>
+                  </li>
+                );
               })}
-            </ul>
-          )}
+            </FormulaSuggestPortal>
+          ) : null}
         </div>
       );
     }
@@ -751,7 +821,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
           value={action.sub_prompt.prompt}
           onChange={(e) => onChange({ sub_prompt: { prompt: e.target.value } })}
           placeholder="Follow-up question"
-          aria-label={`Sub-prompt text for step ${index + 1}`}
+          aria-label={`Follow-up text for step ${index + 1}`}
         />
       );
     }
@@ -778,7 +848,7 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
 
   return (
     <div className="editor-formula-segment">
-      <div className="editor-formula-kind-wrap">
+      <div className="editor-formula-kind-wrap" ref={kindAnchorRef}>
         <input
           type="text"
           className="editor-formula-input editor-formula-input--kind"
@@ -791,7 +861,11 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
           onBlur={() => {
             window.setTimeout(() => {
               setKindOpen(false);
-              setKindQuery(ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind);
+              setKindQuery(
+                kind === "pending"
+                  ? ""
+                  : (ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind),
+              );
             }, 120);
           }}
           onKeyDown={(e) => {
@@ -805,8 +879,8 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
           placeholder="Action"
           aria-label={`Action type for step ${index + 1}`}
         />
-        {kindOpen && kindHits.length > 0 && (
-          <ul className="editor-formula-suggest" role="listbox">
+        {kindOpen && kindHits.length > 0 ? (
+          <FormulaSuggestPortal anchorRef={kindAnchorRef}>
             {kindHits.map((opt) => (
               <li key={opt.id} role="none">
                 <button
@@ -820,8 +894,8 @@ function ActionSegmentEditor({ action, index, onChange, onRemove, canRemove }: S
                 </button>
               </li>
             ))}
-          </ul>
-        )}
+          </FormulaSuggestPortal>
+        ) : null}
       </div>
       <div className="editor-formula-arg-slot">{renderArg()}</div>
       {canRemove && (

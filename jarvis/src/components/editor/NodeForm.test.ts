@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CommandNodePayload } from "../../types";
+import { editorPendingAction } from "../../types";
 import {
   defaultActionForKind,
   derivedCommandName,
@@ -71,15 +72,36 @@ describe("NodeForm logic", () => {
     expect(hasBlockingErrors(errors)).toBe(true);
   });
 
-  it("requires non-empty sub-prompt text on sub_prompt actions", () => {
+  it("requires non-empty follow-up text on sub_prompt actions", () => {
     const errors = validateFormModel({
       id: null,
       triggerPhrases: ["ask me"],
       enabled: true,
       actions: [{ wait: { ms: 100 } }, { sub_prompt: { prompt: "   " } }, { open_url: { url: "https://example.com" } }],
     });
-    expect(errors.actionErrors[1]).toBe("Sub-prompt text is required.");
+    expect(errors.actionErrors[1]).toBe("Follow-up text is required.");
     expect(hasBlockingErrors(errors)).toBe(true);
+  });
+
+  it("flags editor-pending rows until a type is chosen", () => {
+    const errors = validateFormModel({
+      id: null,
+      triggerPhrases: ["go"],
+      enabled: true,
+      actions: [editorPendingAction()],
+    });
+    expect(errors.actionErrors[0]).toBe("Choose an action type.");
+    expect(hasBlockingErrors(errors)).toBe(true);
+  });
+
+  it("strips editor-pending slots from command payload", () => {
+    const payload = toCommandPayload({
+      id: 2,
+      triggerPhrases: ["hi"],
+      enabled: true,
+      actions: [editorPendingAction(), { open_url: { url: "https://example.com" } }],
+    });
+    expect(payload.actions).toEqual([{ open_url: { url: "https://example.com" } }]);
   });
 
   it("defaultActionForKind returns expected shape", () => {
@@ -88,7 +110,7 @@ describe("NodeForm logic", () => {
     expect(defaultActionForKind("run_script")).toEqual({ run_script: { script: "", args: [] } });
     expect(defaultActionForKind("send_keys")).toEqual({ send_keys: { keys: "" } });
     expect(defaultActionForKind("speak")).toEqual({ speak: { text: "" } });
-    expect(defaultActionForKind("wait")).toEqual({ wait: { ms: 250 } });
+    expect(defaultActionForKind("wait")).toEqual({ wait: { ms: 0 } });
     expect(defaultActionForKind("sub_prompt")).toEqual({ sub_prompt: { prompt: "" } });
   });
 });

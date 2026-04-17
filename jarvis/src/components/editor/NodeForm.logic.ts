@@ -1,4 +1,9 @@
-import type { ActionPayload, CommandNodePayload } from "../../types";
+import {
+  isEditorPendingAction,
+  type ActionPayload,
+  type CommandNodePayload,
+  type FormActionPayload,
+} from "../../types";
 
 export type ActionKind =
   | "open_app"
@@ -7,13 +12,17 @@ export type ActionKind =
   | "send_keys"
   | "speak"
   | "wait"
-  | "sub_prompt";
+  | "sub_prompt"
+  | "pending";
+
+/** Action kinds that map to a persisted `ActionPayload` (excludes UI-only `pending`). */
+export type ConcreteActionKind = Exclude<ActionKind, "pending">;
 
 export type FormModel = {
   id: number | null;
   triggerPhrases: string[];
   enabled: boolean;
-  actions: ActionPayload[];
+  actions: FormActionPayload[];
 };
 
 export type FormErrors = {
@@ -29,7 +38,7 @@ export function derivedCommandName(triggerPhrases: string[]): string {
   return first.slice(0, 72);
 }
 
-export function defaultActionForKind(kind: ActionKind): ActionPayload {
+export function defaultActionForKind(kind: ConcreteActionKind): ActionPayload {
   switch (kind) {
     case "open_app":
       return { open_app: { name: "", path: "" } };
@@ -42,7 +51,7 @@ export function defaultActionForKind(kind: ActionKind): ActionPayload {
     case "speak":
       return { speak: { text: "" } };
     case "wait":
-      return { wait: { ms: 250 } };
+      return { wait: { ms: 0 } };
     case "sub_prompt":
       return { sub_prompt: { prompt: "" } };
   }
@@ -77,7 +86,7 @@ export function toCommandPayload(model: FormModel): Omit<CommandNodePayload, "id
   return {
     name: derivedCommandName(model.triggerPhrases),
     trigger_phrases: normalizeTriggerPhrases(model.triggerPhrases),
-    actions: [...model.actions],
+    actions: model.actions.filter((a): a is ActionPayload => !isEditorPendingAction(a)),
     enabled: model.enabled,
     fuzzy_threshold_pct: 0,
   };
@@ -97,6 +106,10 @@ export function validateFormModel(model: FormModel): FormErrors {
   }
 
   model.actions.forEach((action, index) => {
+    if (isEditorPendingAction(action)) {
+      errors.actionErrors[index] = "Choose an action type.";
+      return;
+    }
     if ("open_url" in action) {
       const maybeError = validateUrl(action.open_url.url);
       if (maybeError) {
@@ -105,7 +118,7 @@ export function validateFormModel(model: FormModel): FormErrors {
     }
     if ("sub_prompt" in action) {
       if (action.sub_prompt.prompt.trim().length === 0) {
-        errors.actionErrors[index] = "Sub-prompt text is required.";
+        errors.actionErrors[index] = "Follow-up text is required.";
       }
     }
   });

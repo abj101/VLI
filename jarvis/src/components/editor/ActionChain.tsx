@@ -11,19 +11,19 @@ import {
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { useMemo } from "react";
-import type { ActionPayload } from "../../types";
+import type { FormActionPayload } from "../../types";
+import { editorPendingAction } from "../../types";
 import { ActionCard } from "./ActionCard";
 import {
   makeRowId,
   moveByArrow,
   reorderActionsFromDrag,
 } from "./ActionChain.logic";
-import { defaultActionForKind } from "./NodeForm.logic";
 
 type ActionChainProps = {
   title: string;
-  actions: ActionPayload[];
-  onChange: (next: ActionPayload[]) => void;
+  actions: FormActionPayload[];
+  onChange: (next: FormActionPayload[]) => void;
   errorByIndex?: Record<number, string>;
 };
 
@@ -41,7 +41,7 @@ export function ActionChain({ title, actions, onChange, errorByIndex }: ActionCh
   );
 
   const addAction = () => {
-    onChange([...actions, defaultActionForKind("open_app")]);
+    onChange([...actions, editorPendingAction()]);
   };
 
   const removeAction = (index: number) => {
@@ -99,8 +99,8 @@ type ActionRowProps = {
   id: string;
   chainTitle: string;
   index: number;
-  action: ActionPayload;
-  onChange: (next: ActionPayload) => void;
+  action: FormActionPayload;
+  onChange: (next: FormActionPayload) => void;
   onRemove: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;

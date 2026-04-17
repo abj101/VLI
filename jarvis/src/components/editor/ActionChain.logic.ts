@@ -1,4 +1,4 @@
-import type { ActionPayload } from "../../types";
+import type { FormActionPayload } from "../../types";
 
 /** Stable row id for @dnd-kit (index-based). */
 export function makeRowId(index: number): string {
@@ -38,10 +38,10 @@ export function moveByArrow<T>(items: readonly T[], index: number, direction: -1
 
 /** Apply drag-end when both active and over ids are row ids; returns null if invalid or no-op. */
 export function reorderActionsFromDrag(
-  actions: ActionPayload[],
+  actions: FormActionPayload[],
   activeId: string,
   overId: string,
-): ActionPayload[] | null {
+): FormActionPayload[] | null {
   const oldIndex = parseRowId(activeId);
   const newIndex = parseRowId(overId);
   if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) {
