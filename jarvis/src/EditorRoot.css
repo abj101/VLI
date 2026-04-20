@@ -1627,11 +1627,29 @@ html[data-theme="light"] {
   position: relative;
 }
 
-.editor-formula-arg-slot--clearable {
-  /* Anchor for inset remove control + input padding from `.editor-formula-input--arg`. */
+.editor-formula-arg-slot-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   align-items: stretch;
-  /* `position:absolute` remove does not contribute to size; keep a row height so top:50% centers. */
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.editor-formula-arg-slot--clearable {
+  /* Outer shell: row grows with the formula chain; inner body hosts the inset remove. */
+  align-items: stretch;
   min-height: 36px;
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.editor-formula-arg-slot-body--clearable .editor-formula-confirmed-chip.editor-formula-input--arg {
+  padding-right: 32px;
+}
+
+.editor-formula-arg-slot-body--clearable .editor-formula-input--narrow {
+  padding-right: 28px;
 }
 
 .editor-formula-suggest {
@@ -1835,21 +1853,21 @@ html[data-theme="light"] {
   background: transparent;
 }
 
-.editor-formula-arg-slot--clearable .editor-formula-remove-inline,
+.editor-formula-arg-slot-body--clearable .editor-formula-remove-inline,
 .editor-formula-kind-wrap--clearable .editor-formula-remove-inline {
-  opacity: 0.38;
+  opacity: 0.65;
   visibility: visible;
   pointer-events: auto;
 }
 
-.editor-formula-arg-slot--clearable:hover .editor-formula-remove-inline,
-.editor-formula-arg-slot--clearable:focus-within .editor-formula-remove-inline,
+.editor-formula-arg-slot-body--clearable:hover .editor-formula-remove-inline,
+.editor-formula-arg-slot-body--clearable:focus-within .editor-formula-remove-inline,
 .editor-formula-kind-wrap--clearable:hover .editor-formula-remove-inline,
 .editor-formula-kind-wrap--clearable:focus-within .editor-formula-remove-inline {
-  opacity: 0.55;
+  opacity: 0.82;
 }
 
-.editor-formula-arg-slot--clearable .editor-formula-remove-inline:hover,
+.editor-formula-arg-slot-body--clearable .editor-formula-remove-inline:hover,
 .editor-formula-kind-wrap--clearable .editor-formula-remove-inline:hover {
   opacity: 1;
   color: var(--editor-error-text);

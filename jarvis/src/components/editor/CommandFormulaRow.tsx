@@ -1019,20 +1019,22 @@ function ActionSegmentEditor({
     }
     if ("wait" in action) {
       return (
-        <input
-          type="number"
-          className={formulaArgInputClass({ narrow: true, autoGrow: false })}
-          min={0}
-          value={action.wait.ms}
-          onChange={(e) =>
-            onChange({
-              wait: {
-                ms: Number.isFinite(Number(e.target.value)) ? Math.max(0, Number(e.target.value)) : 0,
-              },
-            })
-          }
-          aria-label={`Wait milliseconds for step ${index + 1}`}
-        />
+        <div className="editor-formula-arg-wrap">
+          <input
+            type="number"
+            className={formulaArgInputClass({ narrow: true, autoGrow: false })}
+            min={0}
+            value={action.wait.ms}
+            onChange={(e) =>
+              onChange({
+                wait: {
+                  ms: Number.isFinite(Number(e.target.value)) ? Math.max(0, Number(e.target.value)) : 0,
+                },
+              })
+            }
+            aria-label={`Wait milliseconds for step ${index + 1}`}
+          />
+        </div>
       );
     }
     return null;
@@ -1115,11 +1117,15 @@ function ActionSegmentEditor({
     ? "editor-formula-arg-slot editor-formula-arg-slot--clearable"
     : "editor-formula-arg-slot";
 
-  const argBlock = isPending ? null : (
+  const argBlock = isPending ? null : removeInArg ? (
     <div className={argSlotClass}>
-      {renderArg()}
-      {removeInArg ? removeButton : null}
+      <div className="editor-formula-arg-slot-body editor-formula-arg-slot-body--clearable">
+        {renderArg()}
+        {removeButton}
+      </div>
     </div>
+  ) : (
+    <div className="editor-formula-arg-slot">{renderArg()}</div>
   );
 
   const variableBridge = variableLabel ? (
