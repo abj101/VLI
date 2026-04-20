@@ -1554,23 +1554,41 @@ html[data-theme="light"] {
   min-width: 0;
 }
 
+.editor-formula-variable-anchor {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: max-content;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.editor-formula-variable-inputs-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
 .editor-formula-variable-bridge {
   width: 100%;
+  box-sizing: border-box;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  margin-top: -1px;
+  gap: 3px;
+  margin-top: 1px;
   pointer-events: none;
 }
 
-.editor-formula-variable-branch {
-  width: clamp(64px, 58%, 200px);
-  height: 8px;
-  border-left: 1px solid color-mix(in oklch, var(--editor-muted) 60%, transparent);
-  border-bottom: 1px solid color-mix(in oklch, var(--editor-muted) 60%, transparent);
-  border-radius: 0 0 0 5px;
-  opacity: 0.9;
+.editor-formula-variable-bracket-svg {
+  width: 100%;
+  height: 9px;
+  display: block;
+  flex: none;
+  color: color-mix(in oklch, var(--editor-muted) 62%, transparent);
+  overflow: visible;
 }
 
 .editor-formula-variable-label {
@@ -1580,6 +1598,8 @@ html[data-theme="light"] {
   color: var(--editor-muted);
   letter-spacing: 0.01em;
   white-space: nowrap;
+  width: 100%;
+  text-align: center;
 }
 
 .editor-formula-kind-wrap,
@@ -1601,6 +1621,11 @@ html[data-theme="light"] {
   align-items: flex-start;
   min-width: 0;
   position: relative;
+}
+
+.editor-formula-arg-slot--clearable {
+  /* Anchor for inset remove control + input padding from `.editor-formula-input--arg`. */
+  align-items: stretch;
 }
 
 .editor-formula-suggest {
@@ -1774,6 +1799,7 @@ html[data-theme="light"] {
   top: 50%;
   right: 8px;
   transform: translateY(-50%);
+  z-index: 2;
   width: 18px;
   height: 18px;
   border: none;
@@ -1788,7 +1814,7 @@ html[data-theme="light"] {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transition: opacity 120ms ease;
+  transition: opacity 120ms ease, color 120ms ease;
 }
 
 .editor-formula-remove-inline-x {
@@ -1803,11 +1829,20 @@ html[data-theme="light"] {
   background: transparent;
 }
 
-.editor-formula-segment:hover .editor-formula-remove-inline,
-.editor-formula-segment:focus-within .editor-formula-remove-inline {
-  opacity: 1;
+.editor-formula-arg-slot--clearable .editor-formula-remove-inline {
+  opacity: 0.38;
   visibility: visible;
   pointer-events: auto;
+}
+
+.editor-formula-arg-slot--clearable:hover .editor-formula-remove-inline,
+.editor-formula-arg-slot--clearable:focus-within .editor-formula-remove-inline {
+  opacity: 0.55;
+}
+
+.editor-formula-arg-slot--clearable .editor-formula-remove-inline:hover {
+  opacity: 1;
+  color: var(--editor-error-text);
 }
 
 .editor-command-trail {

@@ -1038,65 +1038,117 @@ function ActionSegmentEditor({
     return null;
   };
 
+  const removeButton = canRemove ? (
+    <button
+      type="button"
+      className="editor-formula-remove-inline"
+      onClick={onRemove}
+      aria-label={`Remove step ${index + 1}`}
+    >
+      <EditorCloseXIcon className="editor-formula-remove-inline-x" />
+    </button>
+  ) : null;
+
+  const kindBlock = (
+    <div className="editor-formula-kind-wrap" ref={kindAnchorRef}>
+      <input
+        type="text"
+        className="editor-formula-input editor-formula-input--kind"
+        value={kindQuery}
+        onChange={(e) => {
+          setKindQuery(e.target.value);
+          setKindOpen(true);
+        }}
+        onFocus={() => setKindOpen(true)}
+        onBlur={() => {
+          window.setTimeout(() => {
+            setKindOpen(false);
+            setKindQuery(
+              kind === "pending"
+                ? ""
+                : (ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind),
+            );
+          }, 120);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === "Tab") {
+            const pick = kindHits[0];
+            if (!pick) return;
+            e.preventDefault();
+            applyKindOption(pick.id);
+          }
+        }}
+        placeholder="Action"
+        aria-label={`Action type for step ${index + 1}`}
+      />
+      {kindOpen && kindHits.length > 0 ? (
+        <FormulaSuggestPortal anchorRef={kindAnchorRef}>
+          {kindHits.map((opt) => (
+            <li key={opt.id} role="none">
+              <button
+                type="button"
+                role="option"
+                className="editor-formula-suggest-btn"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => applyKindOption(opt.id)}
+              >
+                <span className="editor-formula-suggest-title">{opt.label}</span>
+              </button>
+            </li>
+          ))}
+        </FormulaSuggestPortal>
+      ) : null}
+    </div>
+  );
+
+  const argSlotClass = canRemove
+    ? "editor-formula-arg-slot editor-formula-arg-slot--clearable"
+    : "editor-formula-arg-slot";
+
+  const argBlock = (
+    <div className={argSlotClass}>
+      {renderArg()}
+      {removeButton}
+    </div>
+  );
+
+  const variableBridge = variableLabel ? (
+    <div className="editor-formula-variable-bridge" aria-label={`${variableLabel} link`}>
+      <svg
+        className="editor-formula-variable-bracket-svg"
+        viewBox="0 0 100 10"
+        preserveAspectRatio="none"
+        aria-hidden
+      >
+        <path
+          d="M 0 0 L 0 8 L 100 8 L 100 0"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.25"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      <span className="editor-formula-variable-label">{variableLabel}</span>
+    </div>
+  ) : null;
+
   return (
     <div className="editor-formula-segment">
       <div className="editor-formula-segment-main">
-        <div className="editor-formula-kind-wrap" ref={kindAnchorRef}>
-          <input
-            type="text"
-            className="editor-formula-input editor-formula-input--kind"
-            value={kindQuery}
-            onChange={(e) => {
-              setKindQuery(e.target.value);
-              setKindOpen(true);
-            }}
-            onFocus={() => setKindOpen(true)}
-            onBlur={() => {
-              window.setTimeout(() => {
-                setKindOpen(false);
-                setKindQuery(
-                  kind === "pending"
-                    ? ""
-                    : (ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind),
-                );
-              }, 120);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === "Tab") {
-                const pick = kindHits[0];
-                if (!pick) return;
-                e.preventDefault();
-                applyKindOption(pick.id);
-              }
-            }}
-            placeholder="Action"
-            aria-label={`Action type for step ${index + 1}`}
-          />
-          {kindOpen && kindHits.length > 0 ? (
-            <FormulaSuggestPortal anchorRef={kindAnchorRef}>
-              {kindHits.map((opt) => (
-                <li key={opt.id} role="none">
-                  <button
-                    type="button"
-                    role="option"
-                    className="editor-formula-suggest-btn"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => applyKindOption(opt.id)}
-                  >
-                    <span className="editor-formula-suggest-title">{opt.label}</span>
-                  </button>
-                </li>
-              ))}
-            </FormulaSuggestPortal>
-          ) : null}
-        </div>
-        <div className="editor-formula-arg-slot">{renderArg()}</div>
         {variableLabel ? (
-          <div className="editor-formula-variable-bridge" aria-label={`${variableLabel} link`}>
-            <span className="editor-formula-variable-branch" aria-hidden />
-            <span className="editor-formula-variable-label">{variableLabel}</span>
+          <div className="editor-formula-variable-anchor">
+            <div className="editor-formula-variable-inputs-row">
+              {kindBlock}
+              {argBlock}
+            </div>
+            {variableBridge}
           </div>
-        ) : null}
+        ) : (
+          <>
+            {kindBlock}
+            {argBlock}
+          </>
+        )}
       </div>
       {variableOpen && variableHits.length > 0 ? (
         <FormulaSuggestPortal anchorRef={variableAnchorRef}>
@@ -1115,16 +1167,6 @@ function ActionSegmentEditor({
           ))}
         </FormulaSuggestPortal>
       ) : null}
-      {canRemove && (
-        <button
-          type="button"
-          className="editor-formula-remove-inline"
-          onClick={onRemove}
-          aria-label={`Remove step ${index + 1}`}
-        >
-          <EditorCloseXIcon className="editor-formula-remove-inline-x" />
-        </button>
-      )}
     </div>
   );
 }
