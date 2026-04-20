@@ -1069,12 +1069,12 @@ function ActionSegmentEditor({
   const kindInsetHot = kindInsetHover || kindInsetFocusInside;
   const argInsetHot = argInsetHover || argInsetFocusInside;
 
-  const removeButton = (insetHot: boolean) =>
+  const removeButton = () =>
     canRemove ? (
       <button
         type="button"
         className="editor-formula-remove-inline"
-        inert={!insetHot}
+        tabIndex={-1}
         onClick={onRemove}
         aria-label={`Remove step ${index + 1}`}
       >
@@ -1152,7 +1152,7 @@ function ActionSegmentEditor({
           ))}
         </FormulaSuggestPortal>
       ) : null}
-      {removeInKind ? removeButton(kindInsetHot) : null}
+      {removeInKind ? removeButton() : null}
     </div>
   );
 
@@ -1180,7 +1180,7 @@ function ActionSegmentEditor({
   const argBlock = isPending ? null : (
     <div className={argSlotClass} {...argChromeHandlers}>
       {renderArg()}
-      {removeInArg ? removeButton(argInsetHot) : null}
+      {removeInArg ? removeButton() : null}
     </div>
   );
 

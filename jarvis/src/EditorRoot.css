@@ -1617,7 +1617,13 @@ html[data-theme="light"] {
   transition: padding-right 150ms ease-in-out;
 }
 
-.editor-formula-kind-wrap--clearable:is(:hover, :focus-within, .editor-formula-kind-wrap--hot)
+.editor-formula-kind-wrap--clearable:is(
+    :hover,
+    :focus-within,
+    .editor-formula-kind-wrap--hot,
+    :has(.editor-formula-input--kind:hover),
+    :has(.editor-formula-input--kind:focus)
+  )
   .editor-formula-input--kind {
   padding-right: 28px;
 }
@@ -1675,9 +1681,25 @@ html[data-theme="light"] {
   transition: padding-right 150ms ease-in-out;
 }
 
-.editor-formula-arg-slot--clearable:is(:hover, :focus-within, .editor-formula-arg-slot--hot)
+.editor-formula-arg-slot--clearable:is(
+    :hover,
+    :focus-within,
+    .editor-formula-arg-slot--hot,
+    :has(input:hover),
+    :has(input:focus),
+    :has(.editor-formula-confirmed-chip:hover),
+    :has(.editor-formula-confirmed-chip:focus)
+  )
   input.editor-formula-input--arg,
-.editor-formula-arg-slot--clearable:is(:hover, :focus-within, .editor-formula-arg-slot--hot)
+.editor-formula-arg-slot--clearable:is(
+    :hover,
+    :focus-within,
+    .editor-formula-arg-slot--hot,
+    :has(input:hover),
+    :has(input:focus),
+    :has(.editor-formula-confirmed-chip:hover),
+    :has(.editor-formula-confirmed-chip:focus)
+  )
   input.editor-formula-input--narrow {
   padding-right: 28px;
 }
@@ -1882,9 +1904,23 @@ html[data-theme="light"] {
   background: transparent;
 }
 
-.editor-formula-arg-slot--clearable:is(:hover, :focus-within, .editor-formula-arg-slot--hot)
+.editor-formula-arg-slot--clearable:is(
+    :hover,
+    :focus-within,
+    .editor-formula-arg-slot--hot,
+    :has(input:hover),
+    :has(input:focus),
+    :has(.editor-formula-confirmed-chip:hover),
+    :has(.editor-formula-confirmed-chip:focus)
+  )
   .editor-formula-remove-inline,
-.editor-formula-kind-wrap--clearable:is(:hover, :focus-within, .editor-formula-kind-wrap--hot)
+.editor-formula-kind-wrap--clearable:is(
+    :hover,
+    :focus-within,
+    .editor-formula-kind-wrap--hot,
+    :has(.editor-formula-input--kind:hover),
+    :has(.editor-formula-input--kind:focus)
+  )
   .editor-formula-remove-inline {
   opacity: 1;
   pointer-events: auto;
