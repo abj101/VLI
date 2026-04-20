@@ -842,8 +842,26 @@ function ActionSegmentEditor({
           </button>
         );
       }
+      const showAppLeadingIcon = action.open_app.path.trim().length > 0;
       return (
-        <div className="editor-formula-arg-wrap" ref={appAnchorRef}>
+        <div
+          className={
+            showAppLeadingIcon
+              ? "editor-formula-arg-wrap editor-formula-arg-wrap--leading-app-icon"
+              : "editor-formula-arg-wrap"
+          }
+          ref={appAnchorRef}
+        >
+          {showAppLeadingIcon ? (
+            <span className="editor-formula-input-leading-icon" aria-hidden>
+              <AppIconImg
+                key={selectedAppIcon ?? `path:${action.open_app.path}`}
+                iconUrl={selectedAppIcon}
+                label={action.open_app.name || "App"}
+                className="editor-formula-suggest-icon"
+              />
+            </span>
+          ) : null}
           <input
             type="text"
             className={formulaArgInputClass()}
@@ -1019,22 +1037,20 @@ function ActionSegmentEditor({
     }
     if ("wait" in action) {
       return (
-        <div className="editor-formula-arg-wrap">
-          <input
-            type="number"
-            className={formulaArgInputClass({ narrow: true, autoGrow: false })}
-            min={0}
-            value={action.wait.ms}
-            onChange={(e) =>
-              onChange({
-                wait: {
-                  ms: Number.isFinite(Number(e.target.value)) ? Math.max(0, Number(e.target.value)) : 0,
-                },
-              })
-            }
-            aria-label={`Wait milliseconds for step ${index + 1}`}
-          />
-        </div>
+        <input
+          type="number"
+          className={formulaArgInputClass({ narrow: true, autoGrow: false })}
+          min={0}
+          value={action.wait.ms}
+          onChange={(e) =>
+            onChange({
+              wait: {
+                ms: Number.isFinite(Number(e.target.value)) ? Math.max(0, Number(e.target.value)) : 0,
+              },
+            })
+          }
+          aria-label={`Wait milliseconds for step ${index + 1}`}
+        />
       );
     }
     return null;
@@ -1117,15 +1133,11 @@ function ActionSegmentEditor({
     ? "editor-formula-arg-slot editor-formula-arg-slot--clearable"
     : "editor-formula-arg-slot";
 
-  const argBlock = isPending ? null : removeInArg ? (
+  const argBlock = isPending ? null : (
     <div className={argSlotClass}>
-      <div className="editor-formula-arg-slot-body editor-formula-arg-slot-body--clearable">
-        {renderArg()}
-        {removeButton}
-      </div>
+      {renderArg()}
+      {removeInArg ? removeButton : null}
     </div>
-  ) : (
-    <div className="editor-formula-arg-slot">{renderArg()}</div>
   );
 
   const variableBridge = variableLabel ? (

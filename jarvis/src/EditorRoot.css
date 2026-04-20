@@ -1467,7 +1467,6 @@ html[data-theme="light"] {
 .editor-formula-input--arg {
   min-width: 140px;
   flex: 1 1 160px;
-  padding-right: 30px;
 }
 
 .editor-formula-input--autogrow {
@@ -1498,7 +1497,6 @@ html[data-theme="light"] {
   min-width: 72px;
   max-width: 100px;
   flex: none;
-  padding-right: 30px;
 }
 
 .editor-formula-eq {
@@ -1608,8 +1606,45 @@ html[data-theme="light"] {
   min-width: 0;
 }
 
+.editor-formula-kind-wrap--clearable {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Clearable formula fields: reserve space for ✕ only while hovered/focused. */
 .editor-formula-kind-wrap--clearable .editor-formula-input--kind {
+  padding-right: 8px;
+  transition: padding-right 150ms ease-in-out;
+}
+
+.editor-formula-kind-wrap--clearable:hover .editor-formula-input--kind,
+.editor-formula-kind-wrap--clearable:focus-within .editor-formula-input--kind {
   padding-right: 28px;
+}
+
+.editor-formula-arg-wrap--leading-app-icon {
+  display: flex;
+  align-items: center;
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.editor-formula-input-leading-icon {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.editor-formula-arg-wrap--leading-app-icon .editor-formula-input--arg {
+  padding-left: 32px;
+  width: 100%;
+  min-width: 0;
 }
 
 .editor-formula-arg-wrap--stack {
@@ -1627,28 +1662,23 @@ html[data-theme="light"] {
   position: relative;
 }
 
-.editor-formula-arg-slot-body {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
 .editor-formula-arg-slot--clearable {
-  /* Outer shell: row grows with the formula chain; inner body hosts the inset remove. */
-  align-items: stretch;
+  display: inline-flex;
+  align-items: center;
+  /* `position:absolute` remove does not contribute to size; keep a row height so top:50% centers. */
   min-height: 36px;
-  flex: 1 1 160px;
-  min-width: 0;
 }
 
-.editor-formula-arg-slot-body--clearable .editor-formula-confirmed-chip.editor-formula-input--arg {
-  padding-right: 32px;
+.editor-formula-arg-slot--clearable input.editor-formula-input--arg,
+.editor-formula-arg-slot--clearable input.editor-formula-input--narrow {
+  padding-right: 8px;
+  transition: padding-right 150ms ease-in-out;
 }
 
-.editor-formula-arg-slot-body--clearable .editor-formula-input--narrow {
+.editor-formula-arg-slot--clearable:hover input.editor-formula-input--arg,
+.editor-formula-arg-slot--clearable:focus-within input.editor-formula-input--arg,
+.editor-formula-arg-slot--clearable:hover input.editor-formula-input--narrow,
+.editor-formula-arg-slot--clearable:focus-within input.editor-formula-input--narrow {
   padding-right: 28px;
 }
 
@@ -1838,7 +1868,10 @@ html[data-theme="light"] {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transition: opacity 120ms ease, color 120ms ease;
+  transition:
+    opacity 150ms ease-in-out,
+    visibility 0s linear 150ms,
+    color 150ms ease-in-out;
 }
 
 .editor-formula-remove-inline-x {
@@ -1853,23 +1886,21 @@ html[data-theme="light"] {
   background: transparent;
 }
 
-.editor-formula-arg-slot-body--clearable .editor-formula-remove-inline,
-.editor-formula-kind-wrap--clearable .editor-formula-remove-inline {
-  opacity: 0.65;
-  visibility: visible;
-  pointer-events: auto;
-}
-
-.editor-formula-arg-slot-body--clearable:hover .editor-formula-remove-inline,
-.editor-formula-arg-slot-body--clearable:focus-within .editor-formula-remove-inline,
+.editor-formula-arg-slot--clearable:hover .editor-formula-remove-inline,
+.editor-formula-arg-slot--clearable:focus-within .editor-formula-remove-inline,
 .editor-formula-kind-wrap--clearable:hover .editor-formula-remove-inline,
 .editor-formula-kind-wrap--clearable:focus-within .editor-formula-remove-inline {
-  opacity: 0.82;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    opacity 150ms ease-in-out,
+    visibility 0s,
+    color 150ms ease-in-out;
 }
 
-.editor-formula-arg-slot-body--clearable .editor-formula-remove-inline:hover,
+.editor-formula-arg-slot--clearable .editor-formula-remove-inline:hover,
 .editor-formula-kind-wrap--clearable .editor-formula-remove-inline:hover {
-  opacity: 1;
   color: var(--editor-error-text);
 }
 
