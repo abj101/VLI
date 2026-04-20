@@ -1626,6 +1626,13 @@ html[data-theme="light"] {
 .editor-formula-arg-slot--clearable {
   /* Anchor for inset remove control + input padding from `.editor-formula-input--arg`. */
   align-items: stretch;
+  /* `position:absolute` remove does not contribute to size; keep a row height so top:50% centers. */
+  min-height: 36px;
+}
+
+/* Pending step: no arg field — only the remove control; give it the same footprint as an arg input. */
+.editor-formula-arg-slot--clearable:has(> .editor-formula-remove-inline:only-child) {
+  min-width: 140px;
 }
 
 .editor-formula-suggest {

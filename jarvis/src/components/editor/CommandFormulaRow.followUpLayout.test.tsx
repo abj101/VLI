@@ -39,3 +39,30 @@ describe("CommandFormulaRow follow-up layout", () => {
     );
   });
 });
+
+/** DOM shape for a new pending step: no arg field, only the inset remove control (see `:only-child` CSS). */
+function PendingArgSlotHarness() {
+  return (
+    <div className="editor-formula-segment">
+      <div className="editor-formula-segment-main">
+        <div className="editor-formula-kind-wrap">
+          <input className="editor-formula-input editor-formula-input--kind" readOnly aria-label="Action" />
+        </div>
+        <div className="editor-formula-arg-slot editor-formula-arg-slot--clearable">
+          <button type="button" className="editor-formula-remove-inline" aria-label="Remove step 2">
+            <span className="editor-formula-remove-inline-x" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+describe("CommandFormulaRow pending-step arg slot shape", () => {
+  it("matches the remove-only markup used for :only-child min-width rules", () => {
+    const html = renderToStaticMarkup(<PendingArgSlotHarness />);
+    expect(html).toMatch(
+      /<div class="editor-formula-arg-slot editor-formula-arg-slot--clearable"><button[^>]*class="editor-formula-remove-inline"/,
+    );
+  });
+});
