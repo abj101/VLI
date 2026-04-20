@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { editorPendingAction } from "../../types";
 import {
   appExeDisplayLabel,
+  applyRemoveActionAt,
+  computeInsetRemoveAllowed,
   deriveAppSearchMeta,
   deriveOpenAppDisplayMode,
   formulaArgInputClass,
@@ -103,6 +106,45 @@ describe("deriveOpenAppDisplayMode", () => {
       selectedPath: "C:\\Apps\\Discord.exe",
     });
     expect(mode).toBe("edit");
+  });
+});
+
+describe("computeInsetRemoveAllowed", () => {
+  it("allows inset remove for a single concrete action (so hover ✕ is not gated on +)", () => {
+    expect(computeInsetRemoveAllowed([{ open_url: { url: "https://a" } }])).toBe(true);
+  });
+
+  it("disallows inset remove for a single pending placeholder row", () => {
+    expect(computeInsetRemoveAllowed([editorPendingAction()])).toBe(false);
+  });
+
+  it("allows inset remove when multiple steps exist", () => {
+    expect(
+      computeInsetRemoveAllowed([
+        { open_url: { url: "https://a" } },
+        { wait: { ms: 1 } },
+      ]),
+    ).toBe(true);
+  });
+});
+
+describe("applyRemoveActionAt", () => {
+  it("replaces the sole concrete step with a pending row instead of dropping to zero actions", () => {
+    const sole = { open_url: { url: "https://x" } } as const;
+    const next = applyRemoveActionAt([sole], 0);
+    expect(next).toHaveLength(1);
+    expect(next[0]).toEqual(editorPendingAction());
+  });
+
+  it("no-ops remove on sole pending row", () => {
+    const pending = editorPendingAction();
+    expect(applyRemoveActionAt([pending], 0)).toEqual([pending]);
+  });
+
+  it("drops one row when multiple actions exist", () => {
+    const a = { wait: { ms: 1 } } as const;
+    const b = { wait: { ms: 2 } } as const;
+    expect(applyRemoveActionAt([a, b], 0)).toEqual([b]);
   });
 });
 

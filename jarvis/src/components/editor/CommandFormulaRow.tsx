@@ -20,6 +20,8 @@ import { useSettingsStore } from "../../store/settingsStore";
 import { ACTION_KIND_OPTIONS, getActionKind } from "./actionCatalog";
 import {
   appExeDisplayLabel,
+  applyRemoveActionAt,
+  computeInsetRemoveAllowed,
   deriveAppSearchMeta,
   deriveOpenAppDisplayMode,
   formulaArgInputClass,
@@ -204,7 +206,7 @@ export function CommandFormulaRow({
   const removeActionAt = (index: number) => {
     updateModel((prev) => ({
       ...prev,
-      actions: prev.actions.filter((_, i) => i !== index),
+      actions: applyRemoveActionAt(prev.actions, index),
     }));
   };
   const followUpVariableMeta = useMemo(() => deriveFollowUpVariableMap(model.actions), [model.actions]);
@@ -261,7 +263,7 @@ export function CommandFormulaRow({
                     }
                     onChange={(next) => setActionAt(index, next)}
                     onRemove={() => removeActionAt(index)}
-                    canRemove={model.actions.length > 1}
+                    canRemove={computeInsetRemoveAllowed(model.actions)}
                   />
                 </div>
               ))
@@ -393,7 +395,7 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
   const removeActionAt = (index: number) => {
     updateModel((prev) => ({
       ...prev,
-      actions: prev.actions.filter((_, i) => i !== index),
+      actions: applyRemoveActionAt(prev.actions, index),
     }));
   };
   const followUpVariableMeta = useMemo(() => deriveFollowUpVariableMap(model.actions), [model.actions]);
@@ -438,7 +440,7 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
                   }
                   onChange={(next) => setActionAt(index, next)}
                   onRemove={() => removeActionAt(index)}
-                  canRemove={model.actions.length > 1}
+                  canRemove={computeInsetRemoveAllowed(model.actions)}
                 />
               </div>
             ))}

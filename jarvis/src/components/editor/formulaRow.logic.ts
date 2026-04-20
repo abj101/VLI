@@ -1,5 +1,26 @@
-import type { ActionPayload, CommandNodePayload } from "../../types";
+import type { ActionPayload, CommandNodePayload, FormActionPayload } from "../../types";
+import { editorPendingAction, isEditorPendingAction } from "../../types";
 import { getActionKind } from "./actionCatalog";
+
+/** True when the formula row may show the per-step inline ✕ (not only a CSS hover issue). */
+export function computeInsetRemoveAllowed(actions: FormActionPayload[]): boolean {
+  if (actions.length > 1) return true;
+  if (actions.length !== 1) return false;
+  const sole = actions[0];
+  return sole !== undefined && !isEditorPendingAction(sole);
+}
+
+/** Remove one step; sole concrete step becomes a fresh pending row (still one action). */
+export function applyRemoveActionAt(actions: FormActionPayload[], index: number): FormActionPayload[] {
+  if (actions.length === 0) return actions;
+  if (actions.length === 1) {
+    if (index !== 0) return actions;
+    const sole = actions[0];
+    if (!sole || isEditorPendingAction(sole)) return actions;
+    return [editorPendingAction()];
+  }
+  return actions.filter((_, i) => i !== index);
+}
 
 export function fingerprintCommandNode(node: CommandNodePayload): string {
   return JSON.stringify({
