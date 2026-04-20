@@ -40,15 +40,13 @@ describe("CommandFormulaRow follow-up layout", () => {
   });
 });
 
-/** DOM shape for a new pending step: no arg field, only the inset remove control (see `:only-child` CSS). */
-function PendingArgSlotHarness() {
+/** DOM shape for a new pending step: remove lives inside the kind ("Action") wrap, not a separate arg column. */
+function PendingKindRemoveHarness() {
   return (
     <div className="editor-formula-segment">
       <div className="editor-formula-segment-main">
-        <div className="editor-formula-kind-wrap">
+        <div className="editor-formula-kind-wrap editor-formula-kind-wrap--clearable">
           <input className="editor-formula-input editor-formula-input--kind" readOnly aria-label="Action" />
-        </div>
-        <div className="editor-formula-arg-slot editor-formula-arg-slot--clearable">
           <button type="button" className="editor-formula-remove-inline" aria-label="Remove step 2">
             <span className="editor-formula-remove-inline-x" />
           </button>
@@ -58,11 +56,12 @@ function PendingArgSlotHarness() {
   );
 }
 
-describe("CommandFormulaRow pending-step arg slot shape", () => {
-  it("matches the remove-only markup used for :only-child min-width rules", () => {
-    const html = renderToStaticMarkup(<PendingArgSlotHarness />);
+describe("CommandFormulaRow pending-step remove placement", () => {
+  it("keeps inset remove inside the kind wrap next to the Action field", () => {
+    const html = renderToStaticMarkup(<PendingKindRemoveHarness />);
     expect(html).toMatch(
-      /<div class="editor-formula-arg-slot editor-formula-arg-slot--clearable"><button[^>]*class="editor-formula-remove-inline"/,
+      /<div class="editor-formula-kind-wrap editor-formula-kind-wrap--clearable"[^>]*>[\s\S]*?<button[^>]*class="editor-formula-remove-inline"/,
     );
+    expect(html).not.toContain("editor-formula-arg-slot--clearable");
   });
 });

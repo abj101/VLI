@@ -1049,8 +1049,17 @@ function ActionSegmentEditor({
     </button>
   ) : null;
 
+  const isPending = "editor_pending" in action;
+  /** Pending rows have no arg field — inset remove belongs on the kind ("Action") control. */
+  const removeInKind = canRemove && isPending;
+  const removeInArg = canRemove && !isPending;
+
+  const kindWrapClass = removeInKind
+    ? "editor-formula-kind-wrap editor-formula-kind-wrap--clearable"
+    : "editor-formula-kind-wrap";
+
   const kindBlock = (
-    <div className="editor-formula-kind-wrap" ref={kindAnchorRef}>
+    <div className={kindWrapClass} ref={kindAnchorRef}>
       <input
         type="text"
         className="editor-formula-input editor-formula-input--kind"
@@ -1098,17 +1107,18 @@ function ActionSegmentEditor({
           ))}
         </FormulaSuggestPortal>
       ) : null}
+      {removeInKind ? removeButton : null}
     </div>
   );
 
-  const argSlotClass = canRemove
+  const argSlotClass = removeInArg
     ? "editor-formula-arg-slot editor-formula-arg-slot--clearable"
     : "editor-formula-arg-slot";
 
-  const argBlock = (
+  const argBlock = isPending ? null : (
     <div className={argSlotClass}>
       {renderArg()}
-      {removeButton}
+      {removeInArg ? removeButton : null}
     </div>
   );
 

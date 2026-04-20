@@ -1608,6 +1608,10 @@ html[data-theme="light"] {
   min-width: 0;
 }
 
+.editor-formula-kind-wrap--clearable .editor-formula-input--kind {
+  padding-right: 28px;
+}
+
 .editor-formula-arg-wrap--stack {
   display: flex;
   flex-direction: column;
@@ -1628,11 +1632,6 @@ html[data-theme="light"] {
   align-items: stretch;
   /* `position:absolute` remove does not contribute to size; keep a row height so top:50% centers. */
   min-height: 36px;
-}
-
-/* Pending step: no arg field — only the remove control; give it the same footprint as an arg input. */
-.editor-formula-arg-slot--clearable:has(> .editor-formula-remove-inline:only-child) {
-  min-width: 140px;
 }
 
 .editor-formula-suggest {
@@ -1836,18 +1835,22 @@ html[data-theme="light"] {
   background: transparent;
 }
 
-.editor-formula-arg-slot--clearable .editor-formula-remove-inline {
+.editor-formula-arg-slot--clearable .editor-formula-remove-inline,
+.editor-formula-kind-wrap--clearable .editor-formula-remove-inline {
   opacity: 0.38;
   visibility: visible;
   pointer-events: auto;
 }
 
 .editor-formula-arg-slot--clearable:hover .editor-formula-remove-inline,
-.editor-formula-arg-slot--clearable:focus-within .editor-formula-remove-inline {
+.editor-formula-arg-slot--clearable:focus-within .editor-formula-remove-inline,
+.editor-formula-kind-wrap--clearable:hover .editor-formula-remove-inline,
+.editor-formula-kind-wrap--clearable:focus-within .editor-formula-remove-inline {
   opacity: 0.55;
 }
 
-.editor-formula-arg-slot--clearable .editor-formula-remove-inline:hover {
+.editor-formula-arg-slot--clearable .editor-formula-remove-inline:hover,
+.editor-formula-kind-wrap--clearable .editor-formula-remove-inline:hover {
   opacity: 1;
   color: var(--editor-error-text);
 }
