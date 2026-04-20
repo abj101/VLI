@@ -83,6 +83,15 @@ describe("selectCenterContent", () => {
     });
     expect(out).toEqual({ kind: "action", text: "follow up" });
   });
+
+  it("shows live transcript during awaiting_input even when status is follow-up prompt", () => {
+    const out = selectCenterContent({
+      ...base("awaiting_input"),
+      transcript: "open the readme",
+      actionText: "follow up",
+    });
+    expect(out).toEqual({ kind: "transcript", text: "open the readme" });
+  });
 });
 
 describe("announcableText", () => {

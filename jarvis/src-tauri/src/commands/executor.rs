@@ -242,8 +242,8 @@ fn execute_actions(
             }
             match runtime.request_follow_up(prompt) {
                 Ok(response) => {
-                    follow_up_responses.push(response);
-                    runtime.emit_status("Captured follow-up input");
+                    follow_up_responses.push(response.clone());
+                    runtime.emit_status(&response);
                 }
                 Err(err) => {
                     if err == ACTION_CANCELLED_MSG {
@@ -1063,6 +1063,7 @@ mod tests {
         execute_command(&node, &runtime, None);
         let s = runtime.snapshot();
         assert!(s.statuses.iter().any(|status| status == "follow up"));
+        assert!(s.statuses.iter().any(|status| status == "docs"));
         assert!(s.errors.is_empty());
     }
 

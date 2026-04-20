@@ -52,17 +52,17 @@ export function selectCenterContent(
     return { kind: "error", text: input.actionError };
   }
 
+  const transcript = input.transcript.trim();
+  if (input.phase === "awaiting_input" && transcript.length > 0) {
+    return { kind: "transcript", text: input.transcript };
+  }
+
   if (normalizedActionText === "follow up") {
     return { kind: "action", text: normalizedActionText };
   }
 
   if (input.match) {
     return { kind: "match" };
-  }
-
-  const transcript = input.transcript.trim();
-  if (input.phase === "awaiting_input" && transcript.length > 0) {
-    return { kind: "transcript", text: input.transcript };
   }
 
   if (

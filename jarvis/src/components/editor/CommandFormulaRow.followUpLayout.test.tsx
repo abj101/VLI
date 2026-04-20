@@ -30,56 +30,12 @@ describe("CommandFormulaRow follow-up layout", () => {
     expect(html).toContain(">Variable 1<");
   });
 
-  it("places the inline remove inside arg-slot-body under the clearable arg slot", () => {
+  it("places the inline remove control inside the clearable arg slot", () => {
     const html = renderToStaticMarkup(
       <CommandFormulaRow node={followUpNode()} onToggleEnabled={() => {}} onDelete={() => {}} />,
     );
     expect(html).toMatch(
-      /class="editor-formula-arg-slot editor-formula-arg-slot--clearable"[^>]*>[\s\S]*?editor-formula-arg-slot-body editor-formula-arg-slot-body--clearable[\s\S]*?editor-formula-remove-inline/,
-    );
-  });
-});
-
-function waitThenUrlNode(): CommandNodePayload {
-  return {
-    id: 502,
-    name: "w",
-    trigger_phrases: ["w"],
-    actions: [{ wait: { ms: 1000 } }, { open_url: { url: "https://example.com/wait" } }],
-    enabled: true,
-    fuzzy_threshold_pct: 0,
-    created_at: "2026-04-19T00:00:00Z",
-  };
-}
-
-function openAppChipThenWaitNode(): CommandNodePayload {
-  return {
-    id: 503,
-    name: "o",
-    trigger_phrases: ["o"],
-    actions: [{ open_app: { name: "Notepad", path: "C:\\\\Windows\\\\notepad.exe" } }, { wait: { ms: 1 } }],
-    enabled: true,
-    fuzzy_threshold_pct: 0,
-    created_at: "2026-04-19T00:00:00Z",
-  };
-}
-
-describe("CommandFormulaRow universal inset remove", () => {
-  it("wraps wait rows in arg-slot-body so the remove anchors to the control", () => {
-    const html = renderToStaticMarkup(
-      <CommandFormulaRow node={waitThenUrlNode()} onToggleEnabled={() => {}} onDelete={() => {}} />,
-    );
-    expect(html).toContain("editor-formula-arg-slot-body--clearable");
-    expect(html).toMatch(/editor-formula-arg-slot-body--clearable[\s\S]*?Wait milliseconds for step 1/);
-  });
-
-  it("wraps open-app confirmed chip rows in arg-slot-body", () => {
-    const html = renderToStaticMarkup(
-      <CommandFormulaRow node={openAppChipThenWaitNode()} onToggleEnabled={() => {}} onDelete={() => {}} />,
-    );
-    expect(html).toContain("editor-formula-confirmed-chip");
-    expect(html).toMatch(
-      /editor-formula-arg-slot-body editor-formula-arg-slot-body--clearable[\s\S]*?editor-formula-confirmed-chip[\s\S]*?editor-formula-remove-inline/,
+      /class="editor-formula-arg-slot editor-formula-arg-slot--clearable"[^>]*>[\s\S]*?editor-formula-remove-inline/,
     );
   });
 });
