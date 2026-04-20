@@ -579,6 +579,11 @@ function ActionSegmentEditor({
   const [appHasSearched, setAppHasSearched] = useState(false);
   const [variableOpen, setVariableOpen] = useState(false);
   const [variableQuery, setVariableQuery] = useState("");
+  /** Drive ✕ + padding when CSS :hover is flaky (nested flex / WebView); keep true while focus inside slot. */
+  const [kindInsetHover, setKindInsetHover] = useState(false);
+  const [kindInsetFocusInside, setKindInsetFocusInside] = useState(false);
+  const [argInsetHover, setArgInsetHover] = useState(false);
+  const [argInsetFocusInside, setArgInsetFocusInside] = useState(false);
   const [appEditing, setAppEditing] = useState(
     () => !("open_app" in action) || action.open_app.path.trim().length === 0,
   );
@@ -1056,28 +1061,50 @@ function ActionSegmentEditor({
     return null;
   };
 
-  const removeButton = canRemove ? (
-    <button
-      type="button"
-      className="editor-formula-remove-inline"
-      onClick={onRemove}
-      aria-label={`Remove step ${index + 1}`}
-    >
-      <EditorCloseXIcon className="editor-formula-remove-inline-x" />
-    </button>
-  ) : null;
-
   const isPending = "editor_pending" in action;
   /** Pending rows have no arg field — inset remove belongs on the kind ("Action") control. */
   const removeInKind = canRemove && isPending;
   const removeInArg = canRemove && !isPending;
 
-  const kindWrapClass = removeInKind
-    ? "editor-formula-kind-wrap editor-formula-kind-wrap--clearable"
-    : "editor-formula-kind-wrap";
+  const kindInsetHot = kindInsetHover || kindInsetFocusInside;
+  const argInsetHot = argInsetHover || argInsetFocusInside;
+
+  const removeButton = (insetHot: boolean) =>
+    canRemove ? (
+      <button
+        type="button"
+        className="editor-formula-remove-inline"
+        inert={!insetHot}
+        onClick={onRemove}
+        aria-label={`Remove step ${index + 1}`}
+      >
+        <EditorCloseXIcon className="editor-formula-remove-inline-x" />
+      </button>
+    ) : null;
+
+  const kindWrapClass = [
+    "editor-formula-kind-wrap",
+    removeInKind ? "editor-formula-kind-wrap--clearable" : null,
+    removeInKind && kindInsetHot ? "editor-formula-kind-wrap--hot" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const kindChromeHandlers = removeInKind
+    ? {
+        onMouseEnter: () => setKindInsetHover(true),
+        onMouseLeave: () => setKindInsetHover(false),
+        onFocusCapture: () => setKindInsetFocusInside(true),
+        onBlurCapture: (e: FocusEvent<HTMLDivElement>) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+            setKindInsetFocusInside(false);
+          }
+        },
+      }
+    : {};
 
   const kindBlock = (
-    <div className={kindWrapClass} ref={kindAnchorRef}>
+    <div className={kindWrapClass} ref={kindAnchorRef} {...kindChromeHandlers}>
       <input
         type="text"
         className="editor-formula-input editor-formula-input--kind"
@@ -1125,18 +1152,35 @@ function ActionSegmentEditor({
           ))}
         </FormulaSuggestPortal>
       ) : null}
-      {removeInKind ? removeButton : null}
+      {removeInKind ? removeButton(kindInsetHot) : null}
     </div>
   );
 
-  const argSlotClass = removeInArg
-    ? "editor-formula-arg-slot editor-formula-arg-slot--clearable"
-    : "editor-formula-arg-slot";
+  const argSlotClass = [
+    "editor-formula-arg-slot",
+    removeInArg ? "editor-formula-arg-slot--clearable" : null,
+    removeInArg && argInsetHot ? "editor-formula-arg-slot--hot" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const argChromeHandlers = removeInArg
+    ? {
+        onMouseEnter: () => setArgInsetHover(true),
+        onMouseLeave: () => setArgInsetHover(false),
+        onFocusCapture: () => setArgInsetFocusInside(true),
+        onBlurCapture: (e: FocusEvent<HTMLDivElement>) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+            setArgInsetFocusInside(false);
+          }
+        },
+      }
+    : {};
 
   const argBlock = isPending ? null : (
-    <div className={argSlotClass}>
+    <div className={argSlotClass} {...argChromeHandlers}>
       {renderArg()}
-      {removeInArg ? removeButton : null}
+      {removeInArg ? removeButton(argInsetHot) : null}
     </div>
   );
 

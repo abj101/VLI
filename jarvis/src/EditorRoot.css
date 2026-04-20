@@ -1617,8 +1617,8 @@ html[data-theme="light"] {
   transition: padding-right 150ms ease-in-out;
 }
 
-.editor-formula-kind-wrap--clearable:hover .editor-formula-input--kind,
-.editor-formula-kind-wrap--clearable:focus-within .editor-formula-input--kind {
+.editor-formula-kind-wrap--clearable:is(:hover, :focus-within, .editor-formula-kind-wrap--hot)
+  .editor-formula-input--kind {
   padding-right: 28px;
 }
 
@@ -1675,10 +1675,10 @@ html[data-theme="light"] {
   transition: padding-right 150ms ease-in-out;
 }
 
-.editor-formula-arg-slot--clearable:hover input.editor-formula-input--arg,
-.editor-formula-arg-slot--clearable:focus-within input.editor-formula-input--arg,
-.editor-formula-arg-slot--clearable:hover input.editor-formula-input--narrow,
-.editor-formula-arg-slot--clearable:focus-within input.editor-formula-input--narrow {
+.editor-formula-arg-slot--clearable:is(:hover, :focus-within, .editor-formula-arg-slot--hot)
+  input.editor-formula-input--arg,
+.editor-formula-arg-slot--clearable:is(:hover, :focus-within, .editor-formula-arg-slot--hot)
+  input.editor-formula-input--narrow {
   padding-right: 28px;
 }
 
@@ -1866,12 +1866,8 @@ html[data-theme="light"] {
   align-items: center;
   justify-content: center;
   opacity: 0;
-  visibility: hidden;
   pointer-events: none;
-  transition:
-    opacity 150ms ease-in-out,
-    visibility 0s linear 150ms,
-    color 150ms ease-in-out;
+  transition: opacity 150ms ease-in-out, color 150ms ease-in-out;
 }
 
 .editor-formula-remove-inline-x {
@@ -1886,17 +1882,12 @@ html[data-theme="light"] {
   background: transparent;
 }
 
-.editor-formula-arg-slot--clearable:hover .editor-formula-remove-inline,
-.editor-formula-arg-slot--clearable:focus-within .editor-formula-remove-inline,
-.editor-formula-kind-wrap--clearable:hover .editor-formula-remove-inline,
-.editor-formula-kind-wrap--clearable:focus-within .editor-formula-remove-inline {
+.editor-formula-arg-slot--clearable:is(:hover, :focus-within, .editor-formula-arg-slot--hot)
+  .editor-formula-remove-inline,
+.editor-formula-kind-wrap--clearable:is(:hover, :focus-within, .editor-formula-kind-wrap--hot)
+  .editor-formula-remove-inline {
   opacity: 1;
-  visibility: visible;
   pointer-events: auto;
-  transition:
-    opacity 150ms ease-in-out,
-    visibility 0s,
-    color 150ms ease-in-out;
 }
 
 .editor-formula-arg-slot--clearable .editor-formula-remove-inline:hover,
