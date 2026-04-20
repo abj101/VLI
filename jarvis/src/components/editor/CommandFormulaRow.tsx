@@ -589,6 +589,10 @@ function ActionSegmentEditor({
   );
   const [selectedAppIcon, setSelectedAppIcon] = useState<string | null>(null);
   const appTimer = useRef<number | null>(null);
+  /** Latest `action` for async blur handlers (avoid stale closures). */
+  const latestActionRef = useRef(action);
+  latestActionRef.current = action;
+  const argSlotDomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!appOpen) {
@@ -882,7 +886,15 @@ function ActionSegmentEditor({
             onFocus={() => {
               setAppOpen(true);
             }}
-            onBlur={() => window.setTimeout(() => setAppOpen(false), 120)}
+            onBlur={() =>
+              window.setTimeout(() => {
+                setAppOpen(false);
+                const a = latestActionRef.current;
+                if ("open_app" in a && a.open_app.path.trim().length > 0) {
+                  setAppEditing(false);
+                }
+              }, 120)
+            }
             placeholder="Search app…"
             aria-label={`App name for step ${index + 1}`}
           />
@@ -1069,6 +1081,55 @@ function ActionSegmentEditor({
   const kindInsetHot = kindInsetHover || kindInsetFocusInside;
   const argInsetHot = argInsetHover || argInsetFocusInside;
 
+  const kindWrapRefCallback = useCallback(
+    (el: HTMLDivElement | null) => {
+      kindAnchorRef.current = el;
+      if (el && removeInKind) {
+        try {
+          if (el.matches(":hover")) setKindInsetHover(true);
+        } catch {
+          /* :hover can throw in non-DOM test envs */
+        }
+      }
+    },
+    [removeInKind],
+  );
+
+  const argSlotRefCallback = useCallback(
+    (el: HTMLDivElement | null) => {
+      argSlotDomRef.current = el;
+      if (el && removeInArg) {
+        try {
+          if (el.matches(":hover")) setArgInsetHover(true);
+        } catch {
+          /* noop */
+        }
+      }
+    },
+    [removeInArg],
+  );
+
+  const openAppPathForLayout =
+    "open_app" in action ? action.open_app.path : "";
+
+  useLayoutEffect(() => {
+    try {
+      const k = kindAnchorRef.current;
+      if (k && removeInKind && k.matches(":hover")) setKindInsetHover(true);
+      const slot = argSlotDomRef.current;
+      if (slot && removeInArg && slot.matches(":hover")) setArgInsetHover(true);
+    } catch {
+      /* noop */
+    }
+  }, [
+    removeInKind,
+    removeInArg,
+    kind,
+    appDisplayMode,
+    appEditing,
+    openAppPathForLayout,
+  ]);
+
   const removeButton = () =>
     canRemove ? (
       <button
@@ -1104,7 +1165,7 @@ function ActionSegmentEditor({
     : {};
 
   const kindBlock = (
-    <div className={kindWrapClass} ref={kindAnchorRef} {...kindChromeHandlers}>
+    <div className={kindWrapClass} ref={kindWrapRefCallback} {...kindChromeHandlers}>
       <input
         type="text"
         className="editor-formula-input editor-formula-input--kind"
@@ -1178,7 +1239,7 @@ function ActionSegmentEditor({
     : {};
 
   const argBlock = isPending ? null : (
-    <div className={argSlotClass} {...argChromeHandlers}>
+    <div className={argSlotClass} ref={argSlotRefCallback} {...argChromeHandlers}>
       {renderArg()}
       {removeInArg ? removeButton() : null}
     </div>

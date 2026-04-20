@@ -1675,8 +1675,9 @@ html[data-theme="light"] {
   min-height: 36px;
 }
 
-.editor-formula-arg-slot--clearable input.editor-formula-input--arg,
-.editor-formula-arg-slot--clearable input.editor-formula-input--narrow {
+/* Confirmed app chip is a `button`, not an `input` — include it so ✕ clears the icon. */
+.editor-formula-arg-slot--clearable
+  :is(input.editor-formula-input--arg, input.editor-formula-input--narrow, button.editor-formula-confirmed-chip) {
   padding-right: 8px;
   transition: padding-right 150ms ease-in-out;
 }
@@ -1690,17 +1691,11 @@ html[data-theme="light"] {
     :has(.editor-formula-confirmed-chip:hover),
     :has(.editor-formula-confirmed-chip:focus)
   )
-  input.editor-formula-input--arg,
-.editor-formula-arg-slot--clearable:is(
-    :hover,
-    :focus-within,
-    .editor-formula-arg-slot--hot,
-    :has(input:hover),
-    :has(input:focus),
-    :has(.editor-formula-confirmed-chip:hover),
-    :has(.editor-formula-confirmed-chip:focus)
-  )
-  input.editor-formula-input--narrow {
+  :is(
+    input.editor-formula-input--arg,
+    input.editor-formula-input--narrow,
+    button.editor-formula-confirmed-chip
+  ) {
   padding-right: 28px;
 }
 
