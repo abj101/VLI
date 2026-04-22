@@ -120,9 +120,9 @@ body {
   --hud-accent-muted: oklch(0.72 0 0);
   --hud-focus-ring: oklch(0.82 0 0);
   --hud-error: oklch(0.68 0 0);
-  --hud-panel-fill-ratio: 38%;
-  --hud-panel-saturate: 2.35;
-  --hud-panel-blur: 26px;
+  --hud-panel-fill-ratio: 44%;
+  --hud-panel-saturate: 2.1;
+  --hud-panel-blur: 24px;
   --hud-waveform-fill: color-mix(in oklch, var(--glass-text) 70%, transparent);
   --hud-tag-text: oklch(0.88 0 0);
   --hud-match-text: oklch(0.84 0 0);
@@ -145,8 +145,8 @@ html[data-theme="light"] .hud-panel-fill {
   --hud-accent-muted: oklch(0.38 0 0);
   --hud-focus-ring: oklch(0.32 0 0);
   --hud-error: oklch(0.38 0 0);
-  --hud-panel-fill-ratio: 42%;
-  --hud-panel-saturate: 1.9;
+  --hud-panel-fill-ratio: 44%;
+  --hud-panel-saturate: 2.1;
   --hud-panel-blur: 24px;
   --hud-waveform-fill: color-mix(in oklch, var(--glass-text) 70%, transparent);
   --hud-tag-text: oklch(0.22 0 0);

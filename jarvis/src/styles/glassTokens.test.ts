@@ -61,7 +61,7 @@ describe("unified glass tokens", () => {
   });
 
   it("tunes HUD glass to a lighter, more transparent material", () => {
-    expect(appStyles).toContain("--hud-panel-fill-ratio: 38%;");
+    expect(appStyles).toContain("--hud-panel-fill-ratio: 44%;");
     expect(appStyles).toContain("--glass-1-fill: var(--hud-panel-fill-ratio);");
   });
 });
