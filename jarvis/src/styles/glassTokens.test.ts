@@ -59,4 +59,9 @@ describe("unified glass tokens", () => {
   it("mounts HUD root with shared level-1 glass class", () => {
     expect(hudPanelSource).toContain('className="hud-root glass-panel-1"');
   });
+
+  it("tunes HUD glass to a lighter, more transparent material", () => {
+    expect(appStyles).toContain("--hud-panel-fill-ratio: 38%;");
+    expect(appStyles).toContain("--glass-1-fill: var(--hud-panel-fill-ratio);");
+  });
 });

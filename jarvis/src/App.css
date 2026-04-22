@@ -120,6 +120,9 @@ body {
   --hud-accent-muted: oklch(0.72 0 0);
   --hud-focus-ring: oklch(0.82 0 0);
   --hud-error: oklch(0.68 0 0);
+  --hud-panel-fill-ratio: 38%;
+  --hud-panel-saturate: 2.35;
+  --hud-panel-blur: 26px;
   --hud-waveform-fill: color-mix(in oklch, var(--glass-text) 70%, transparent);
   --hud-tag-text: oklch(0.88 0 0);
   --hud-match-text: oklch(0.84 0 0);
@@ -142,6 +145,9 @@ html[data-theme="light"] .hud-panel-fill {
   --hud-accent-muted: oklch(0.38 0 0);
   --hud-focus-ring: oklch(0.32 0 0);
   --hud-error: oklch(0.38 0 0);
+  --hud-panel-fill-ratio: 42%;
+  --hud-panel-saturate: 1.9;
+  --hud-panel-blur: 24px;
   --hud-waveform-fill: color-mix(in oklch, var(--glass-text) 70%, transparent);
   --hud-tag-text: oklch(0.22 0 0);
   --hud-match-text: oklch(0.28 0 0);
@@ -158,8 +164,24 @@ html[data-theme="light"] .hud-panel-fill {
   flex-direction: column;
   overflow: hidden;
   color: var(--hud-text);
+  position: relative;
+  --glass-1-fill: var(--hud-panel-fill-ratio);
+  --glass-1-saturate: var(--hud-panel-saturate);
+  --glass-1-blur: var(--hud-panel-blur);
   border-radius: 0;
   transform: translateZ(0);
+}
+
+.hud-root::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    120deg,
+    color-mix(in oklch, oklch(1 0 0 / 0.14) 100%, transparent) 0%,
+    transparent 30%
+  );
 }
 
 @media (prefers-contrast: more) {
