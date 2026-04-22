@@ -1,3 +1,5 @@
+@import "./glassTokens.css";
+
 /* --- Theme tokens: resolved palette on `html[data-theme="light"|"dark"]` --- */
 
 /* Frameless editor: one radius token — paired with `DWMWCP_ROUNDSMALL` in `editor_window_win.rs`. */
@@ -59,8 +61,6 @@ html[data-theme="dark"] {
   --editor-node-trigger: #a3a3a3;
   --editor-focus-ring: #d4d4d4;
   --editor-accent: #e8e8e8;
-  --editor-input-bg: color-mix(in oklch, var(--glass-surface) 35%, transparent);
-  --editor-input-border: color-mix(in oklch, var(--glass-text) 14%, transparent);
   --editor-input-text: #f0f0f0;
   --editor-danger-border: #525252;
   --editor-danger-bg: #1f1f1f;
@@ -78,9 +78,7 @@ html[data-theme="dark"] {
   --editor-toast-error-bg: #1f1f1f;
   --editor-toast-error-text: #e8e8e8;
   --editor-empty-muted: #a3a3a3;
-  --editor-settings-bg: color-mix(in oklch, var(--glass-surface) 40%, transparent);
   --editor-settings-border: #3d3d3d;
-  --editor-settings-shadow: 0 12px 28px rgb(0 0 0 / 45%);
   --editor-settings-help: #9a9a9a;
   --editor-settings-heading: #e8e8e8;
   --editor-settings-checkbox: #e8e8e8;
@@ -112,8 +110,6 @@ html[data-theme="light"] {
   --editor-node-trigger: #5c5c5c;
   --editor-focus-ring: #3a3a3a;
   --editor-accent: #2a2a2a;
-  --editor-input-bg: color-mix(in oklch, var(--glass-surface) 35%, transparent);
-  --editor-input-border: color-mix(in oklch, var(--glass-text) 14%, transparent);
   --editor-input-text: #141414;
   --editor-danger-border: #8a8a8a;
   --editor-danger-bg: #ebebeb;
@@ -131,9 +127,7 @@ html[data-theme="light"] {
   --editor-toast-error-bg: #ebebeb;
   --editor-toast-error-text: #2a2a2a;
   --editor-empty-muted: #6b6b6b;
-  --editor-settings-bg: color-mix(in oklch, var(--glass-surface) 40%, transparent);
   --editor-settings-border: #d0d0d0;
-  --editor-settings-shadow: 0 12px 28px rgb(0 0 0 / 10%);
   --editor-settings-help: #5c5c5c;
   --editor-settings-heading: #141414;
   --editor-settings-checkbox: #2a2a2a;
@@ -152,18 +146,14 @@ html[data-theme="light"] {
     --editor-border: #6b6b6b;
     --editor-surface-row-border: #6b6b6b;
     --editor-control-border: #6b6b6b;
-    --editor-input-border: #6b6b6b;
     --editor-settings-border: #6b6b6b;
-    --editor-settings-bg: #111111;
   }
 
   html[data-theme="light"] {
     --editor-border: #525252;
     --editor-surface-row-border: #525252;
     --editor-control-border: #525252;
-    --editor-input-border: #525252;
     --editor-settings-border: #525252;
-    --editor-settings-bg: #ffffff;
   }
 
   html {
@@ -188,6 +178,18 @@ html[data-theme="light"] {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
     box-shadow: none;
+    border-color: var(--glass-border-side);
+  }
+
+  .editor-form-grid :is(input, select, textarea),
+  .editor-action-card :is(input, select, textarea),
+  .editor-subprompt-panel :is(input, select, textarea),
+  .editor-settings-section :is(input, select, textarea),
+  .editor-formula-input {
+    background: var(--glass-surface);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: inset 0 0 0 1px var(--glass-border-side);
     border-color: var(--glass-border-side);
   }
 }
