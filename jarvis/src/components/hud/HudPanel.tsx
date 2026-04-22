@@ -209,7 +209,7 @@ function HudShell() {
 
   return (
     <motion.div
-      className="hud-root"
+      className="hud-root glass-panel-1"
       role="region"
       {...(phaseLabel
         ? { "aria-labelledby": "hud-phase-label" }

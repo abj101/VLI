@@ -24,6 +24,15 @@
   --glass-shadow-menu:
     0 2px 6px oklch(0 0 0 / 0.06),
     0 6px 18px oklch(0 0 0 / 0.08);
+
+  /* Fallback theme (dark) when data-theme has not been applied yet. */
+  --glass-surface: oklch(0.16 0.008 248);
+  --glass-border-top: oklch(1 0 0 / 0.2);
+  --glass-border-side: oklch(1 0 0 / 0.07);
+  --glass-text: oklch(0.96 0 0);
+  --glass-text-muted: oklch(0.6 0 0);
+  --glass-text-subtle: oklch(0.5 0 0);
+  --glass-separator: oklch(1 0 0 / 0.08);
 }
 
 [data-theme="dark"] {

@@ -158,31 +158,7 @@ html[data-theme="light"] .hud-panel-fill {
   flex-direction: column;
   overflow: hidden;
   color: var(--hud-text);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in oklch, var(--glass-specular-sheen) 100%, transparent) 0%,
-      transparent 35%
-    ),
-    linear-gradient(
-      180deg,
-      color-mix(in oklch, var(--glass-surface) 22%, transparent) 0%,
-      transparent 40%
-    ),
-    color-mix(in oklch, var(--glass-surface) var(--glass-1-fill), transparent);
-  backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
-    brightness(var(--glass-1-brightness));
-  -webkit-backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
-    brightness(var(--glass-1-brightness));
-  box-shadow:
-    var(--glass-shadow-ambient),
-    inset 0 1px 0 var(--glass-border-top),
-    inset 1px 0 0 var(--glass-rim-side),
-    inset -1px 0 0 var(--glass-rim-side),
-    inset 0 -1px 0 oklch(0 0 0 / 0.04);
-  border: 1px solid var(--glass-border-side);
   border-radius: 0;
-  isolation: isolate;
   transform: translateZ(0);
 }
 
