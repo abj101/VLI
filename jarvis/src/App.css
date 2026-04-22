@@ -1,5 +1,17 @@
 @import "./glassTokens.css";
 
+/*
+ * TRANSPARENCY CHAIN — required for backdrop-filter to see the desktop:
+ *
+ *   html        → background: transparent  ✓ (set below)
+ *   body        → background: transparent  ✓ (set below)
+ *   #root       → background: transparent  ✓ (set below)
+ *   .hud-panel-fill → background: transparent  ✓ (set below — was missing!)
+ *   .hud-root   → glass-panel-1 handles background + backdrop-filter
+ *
+ * Any opaque fill anywhere in this chain breaks the glass effect.
+ */
+
 html,
 body,
 #root {
@@ -19,7 +31,6 @@ body,
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   --hud-shell-radius: 14px;
-  /* Legacy: optional tint behind full view; keep transparent so backdrop-filter sees the OS. */
   --hud-window-bg: oklch(0.1 0 0);
   --app-scrollbar-thumb: rgb(120 120 120 / 42%);
   --app-scrollbar-thumb-hover: rgb(120 120 120 / 55%);
@@ -29,8 +40,7 @@ body,
 html {
   border-radius: var(--hud-shell-radius);
   overflow: hidden;
-  /* Transparent: HUD webview is `transparent: true` — opaque html makes backdrop-filter blur solid color, not the desktop. */
-  background: transparent;
+  background: transparent; /* MUST stay transparent — DWM/Tauri webview sees desktop */
 }
 
 body {
@@ -40,7 +50,7 @@ body {
 #root {
   border-radius: inherit;
   overflow: hidden;
-  background: transparent;
+  background: transparent; /* MUST stay transparent */
 }
 
 * {
@@ -72,45 +82,22 @@ body {
   background-color: var(--app-scrollbar-thumb-active);
 }
 
-/*
- * -----------------------------------------------------------------------------
- * JARVIS frosted glass (shared finish)
- * -----------------------------------------------------------------------------
- * Canonical glass tokens now live in shared --glass-* variables so HUD/editor
- * read as one material system.
- *
- * Recipe (apply in this order):
- *   1. Optional diagonal sheen (uses --*-glass-hairline) — catches light on the
- *      top-leading edge without a second border radius (avoids clashing with
- *      the Win32/DWM window curve).
- *   2. Vertical veil — slightly denser frost at the top; ties to --*-glass-veil.
- *   3. Base tint — color-mix(surface, --*-glass-fill-ratio); lower ratio =
- *      more see-through (desktop shows via backdrop-filter). Too low hurts
- *      contrast — tune with blur/saturate. Ancestors above the glass must be
- *      transparent or backdrop only blurs solid fills (HUD: keep html/#root
- *      transparent; DWM rounds the window).
- *   4. backdrop-filter — blur + saturate + brightness; use saturate(1) for a
- *      strictly achromatic stack (black/white only); higher saturation boosts
- *      backdrop chroma. Brightness lifts dark tints slightly.
- *   5. box-shadow — ambient + contact (comma-separated), then inset top lip,
- *      then 1px inner hairline. Keep outer spread modest on transparent hosts
- *      (avoids a square halo vs DWM rounding).
- *   6. border — 1px using --hud-border / --editor-glass-border (HUD only uses
- *      border on .hud-root; editor panels often omit outer border on nested
- *      glass).
- *
- * Accessibility: @media (prefers-contrast: more) should drop blur and use flat
- * --*-surface / --editor-bg.
- * -----------------------------------------------------------------------------
- */
-
-/* HUD tokens: monochrome (oklch chroma 0); dark = rich black, light = off-white */
+/* ─────────────────────────────────────────────────────────────
+ * HUD component tokens
+ * All --glass-* values come from glassTokens.css.
+ * .hud-panel-fill is purely a layout/color-alias wrapper —
+ * it must NOT set background or backdrop-filter.
+ * ───────────────────────────────────────────────────────────── */
 .hud-panel-fill {
   width: 100%;
   height: 100%;
   min-height: 0;
   color-scheme: dark;
 
+  /* CRITICAL: transparent so backdrop-filter on .hud-root sees the desktop */
+  background: transparent;
+
+  /* Semantic aliases forwarded from shared tokens */
   --hud-surface: var(--glass-surface);
   --hud-border: var(--glass-border-side);
   --hud-text: var(--glass-text);
@@ -120,21 +107,22 @@ body {
   --hud-accent-muted: oklch(0.72 0 0);
   --hud-focus-ring: oklch(0.82 0 0);
   --hud-error: oklch(0.68 0 0);
-  --hud-panel-fill-ratio: 44%;
-  --hud-panel-saturate: 2.1;
-  --hud-panel-blur: 24px;
+  --hud-stop-ring-dim: oklch(1 0 0 / 0.28);
+  --hud-stop-ring-bright: oklch(1 0 0 / 0.58);
   --hud-waveform-fill: color-mix(in oklch, var(--glass-text) 70%, transparent);
   --hud-tag-text: oklch(0.88 0 0);
   --hud-match-text: oklch(0.84 0 0);
 }
 
-/* Light HUD tokens follow editor `html[data-theme="light"]` (persisted theme), not OS media alone. */
 html[data-theme="light"] {
   --hud-window-bg: oklch(0.99 0 0);
 }
 
 html[data-theme="light"] .hud-panel-fill {
   color-scheme: light;
+
+  /* CRITICAL: transparent */
+  background: transparent;
 
   --hud-surface: var(--glass-surface);
   --hud-border: var(--glass-border-side);
@@ -145,14 +133,22 @@ html[data-theme="light"] .hud-panel-fill {
   --hud-accent-muted: oklch(0.38 0 0);
   --hud-focus-ring: oklch(0.32 0 0);
   --hud-error: oklch(0.38 0 0);
-  --hud-panel-fill-ratio: 44%;
-  --hud-panel-saturate: 2.1;
-  --hud-panel-blur: 24px;
+  --hud-stop-ring-dim: oklch(0 0 0 / 0.22);
+  --hud-stop-ring-bright: oklch(0 0 0 / 0.50);
   --hud-waveform-fill: color-mix(in oklch, var(--glass-text) 70%, transparent);
   --hud-tag-text: oklch(0.22 0 0);
   --hud-match-text: oklch(0.28 0 0);
 }
 
+/* ─────────────────────────────────────────────────────────────
+ * .hud-root
+ *
+ * Gets background + backdrop-filter from .glass-panel-1 (in
+ * glassTokens.css). This class must only add layout, sizing,
+ * and the local token overrides — NOT its own background.
+ *
+ * In HudPanel.tsx: className="hud-root glass-panel-1"
+ * ───────────────────────────────────────────────────────────── */
 .hud-root {
   box-sizing: border-box;
   width: 100%;
@@ -165,27 +161,35 @@ html[data-theme="light"] .hud-panel-fill {
   overflow: hidden;
   color: var(--hud-text);
   position: relative;
-  --glass-1-fill: var(--hud-panel-fill-ratio);
-  --glass-1-saturate: var(--hud-panel-saturate);
-  --glass-1-blur: var(--hud-panel-blur);
-  border-radius: 0;
-  transform: translateZ(0);
+
+  border-radius: 0; /* HUD window border-radius handled by html element + DWM */
+  /* transform: translateZ(0) already set by .glass-panel-1 */
 }
 
+/* Specular sheen overlay — sits above the glass-panel-1 background */
 .hud-root::before {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
+  z-index: 0;
   background: linear-gradient(
     120deg,
     color-mix(in oklch, oklch(1 0 0 / 0.14) 100%, transparent) 0%,
     transparent 30%
   );
+  border-radius: inherit;
+}
+
+/* All direct children sit above the ::before sheen */
+.hud-root > * {
+  position: relative;
+  z-index: 1;
 }
 
 @media (prefers-contrast: more) {
   .hud-root {
+    /* glass-panel-1 already handles this, but be explicit */
     background: var(--glass-surface);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
@@ -199,6 +203,10 @@ html[data-theme="light"] .hud-panel-fill {
     border-color: var(--glass-border-side);
   }
 }
+
+/* ─────────────────────────────────────────────────────────────
+ * HUD component styles
+ * ───────────────────────────────────────────────────────────── */
 
 .hud-title {
   font-size: 10px;
@@ -260,7 +268,6 @@ html[data-theme="light"] .hud-panel-fill {
   text-align: center;
 }
 
-/* Fills transcript area; centers transcription vertically (sr-only is out of flow). */
 .hud-transcript-visual {
   flex: 1 1 auto;
   align-self: stretch;
@@ -297,20 +304,14 @@ html[data-theme="light"] .hud-panel-fill {
   word-break: break-word;
 }
 
-/* In-progress match: subtle opacity pulse only (no gradient text). */
 .hud-recognized-text--pulse {
   animation: hud-match-opacity 1.6s ease-in-out infinite;
 }
 
 @keyframes hud-match-opacity {
   0%,
-  100% {
-    opacity: 0.88;
-  }
-
-  50% {
-    opacity: 1;
-  }
+  100% { opacity: 0.88; }
+  50%   { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -359,13 +360,9 @@ html[data-theme="light"] .hud-panel-fill {
   place-items: center;
 }
 
-.hud-stop:disabled {
-  cursor: default;
-}
+.hud-stop:disabled { cursor: default; }
 
-.hud-stop:focus {
-  outline: none;
-}
+.hud-stop:focus { outline: none; }
 
 .hud-stop:focus-visible {
   outline: 2px solid var(--hud-focus-ring);
@@ -376,7 +373,7 @@ html[data-theme="light"] .hud-panel-fill {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  border: 2px solid oklch(1 0 0 / 0.28);
+  border: 2px solid var(--hud-stop-ring-dim);
   box-sizing: border-box;
   pointer-events: none;
 }
@@ -386,24 +383,16 @@ html[data-theme="light"] .hud-panel-fill {
 }
 
 @keyframes hud-stop-ring-pulse {
-  0%,
-  100% {
-    border-color: oklch(1 0 0 / 0.28);
-  }
-
-  50% {
-    border-color: oklch(1 0 0 / 0.58);
-  }
+  0%, 100% { border-color: var(--hud-stop-ring-dim); }
+  50%       { border-color: var(--hud-stop-ring-bright); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hud-stop-ring--pulse {
-    animation: none;
-  }
+  .hud-stop-ring--pulse { animation: none; }
 }
 
 .hud-stop:hover:not(:disabled) .hud-stop-ring {
-  border-color: oklch(1 0 0 / 0.58);
+  border-color: var(--hud-stop-ring-bright);
 }
 
 .hud-stop-inner {

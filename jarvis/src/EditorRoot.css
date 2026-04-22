@@ -15,10 +15,12 @@ html {
   margin: 0;
   border-radius: var(--editor-shell-radius);
   overflow: hidden;
-  /* Must be opaque: a transparent `html` under rounded corners shows the Win32 host as a hairline. */
-  background: var(--editor-bg);
-  /* Subpixel fringe between DWM curve and CSS clip — pull background 1px inward on the mask. */
-  box-shadow: inset 0 0 0 1px var(--editor-bg);
+  /*
+   * Keep root transparent so editor glass panels can blur desktop content just
+   * like HUD. Rounded clipping is still provided by border-radius + overflow.
+   */
+  background: transparent;
+  box-shadow: none;
 }
 
 body {
@@ -39,8 +41,8 @@ body {
   box-sizing: border-box;
   border-radius: var(--editor-shell-radius);
   overflow: hidden;
-  background: var(--editor-bg);
-  box-shadow: inset 0 0 0 1px var(--editor-bg);
+  background: transparent;
+  box-shadow: none;
 }
 
 html[data-theme="dark"] {
