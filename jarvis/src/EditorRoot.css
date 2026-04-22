@@ -53,14 +53,14 @@ html[data-theme="dark"] {
   --editor-control-text: #f3f3f3;
   --editor-label-muted: #a8a8a8;
   --editor-muted: #8f8f8f;
-  --editor-surface-row: #141414;
+  --editor-surface-row: oklch(1 0 0 / 0.04);
   --editor-surface-row-border: #333333;
   --editor-node-name: #fafafa;
   --editor-node-trigger: #a3a3a3;
   --editor-focus-ring: #d4d4d4;
   --editor-accent: #e8e8e8;
-  --editor-input-bg: #121212;
-  --editor-input-border: #404040;
+  --editor-input-bg: color-mix(in oklch, var(--glass-surface) 35%, transparent);
+  --editor-input-border: color-mix(in oklch, var(--glass-text) 14%, transparent);
   --editor-input-text: #f0f0f0;
   --editor-danger-border: #525252;
   --editor-danger-bg: #1f1f1f;
@@ -70,7 +70,7 @@ html[data-theme="dark"] {
   --editor-tag-border: #4a4a4a;
   --editor-tag-bg: #1c1c1c;
   --editor-tag-fg: #d6d6d6;
-  --editor-chain-bg: #0e0e0e;
+  --editor-chain-bg: oklch(1 0 0 / 0.025);
   --editor-chain-border: #333333;
   --editor-subprompt-border: #2e2e2e;
   --editor-placeholder-text: #8c8c8c;
@@ -78,7 +78,7 @@ html[data-theme="dark"] {
   --editor-toast-error-bg: #1f1f1f;
   --editor-toast-error-text: #e8e8e8;
   --editor-empty-muted: #a3a3a3;
-  --editor-settings-bg: #121212;
+  --editor-settings-bg: color-mix(in oklch, var(--glass-surface) 40%, transparent);
   --editor-settings-border: #3d3d3d;
   --editor-settings-shadow: 0 12px 28px rgb(0 0 0 / 45%);
   --editor-settings-help: #9a9a9a;
@@ -86,23 +86,7 @@ html[data-theme="dark"] {
   --editor-settings-checkbox: #e8e8e8;
   --editor-error-text: #b8b8b8;
   --editor-backdrop: rgb(0 0 0 / 35%);
-  /*
-   * Frosted glass — values mirror --hud-glass-* in App.css; achromatic oklch(L 0 0).
-   */
-  --editor-glass-surface: oklch(0.14 0 0);
-  --editor-glass-border: oklch(0.96 0 0 / 0.12);
-  --editor-glass-fill-ratio: 72%;
-  --editor-glass-veil: 16%;
-  --editor-glass-blur: 56px;
-  --editor-glass-saturate: 1;
-  --editor-glass-brightness: 1.04;
-  /* Modest spread: large blur reads as a square halo on transparent Win32 hosts. */
-  --editor-glass-shadow:
-    0 10px 36px oklch(0 0 0 / 0.45),
-    0 2px 10px oklch(0 0 0 / 0.28);
-  --editor-glass-inset: inset 0 1px 0 oklch(0.97 0 0 / 0.2);
-  --editor-glass-hairline: oklch(0.92 0 0 / 0.3);
-  --editor-sidebar-tint: oklch(0.18 0 0 / 0.55);
+  --editor-sidebar-tint: color-mix(in oklch, var(--glass-surface) 52%, transparent);
   --editor-accent-soft: oklch(0.72 0 0 / 0.28);
   --editor-accent-soft-solid: oklch(0.78 0 0);
   --editor-scrollbar-thumb: oklch(0.55 0 0 / 0.4);
@@ -122,14 +106,14 @@ html[data-theme="light"] {
   --editor-control-text: #141414;
   --editor-label-muted: #5c5c5c;
   --editor-muted: #6b6b6b;
-  --editor-surface-row: #f2f2f0;
+  --editor-surface-row: oklch(0 0 0 / 0.03);
   --editor-surface-row-border: #c9c9c9;
   --editor-node-name: #0a0a0a;
   --editor-node-trigger: #5c5c5c;
   --editor-focus-ring: #3a3a3a;
   --editor-accent: #2a2a2a;
-  --editor-input-bg: #ffffff;
-  --editor-input-border: #b8b8b8;
+  --editor-input-bg: color-mix(in oklch, var(--glass-surface) 35%, transparent);
+  --editor-input-border: color-mix(in oklch, var(--glass-text) 14%, transparent);
   --editor-input-text: #141414;
   --editor-danger-border: #8a8a8a;
   --editor-danger-bg: #ebebeb;
@@ -139,7 +123,7 @@ html[data-theme="light"] {
   --editor-tag-border: #a3a3a3;
   --editor-tag-bg: #f0f0f0;
   --editor-tag-fg: #2a2a2a;
-  --editor-chain-bg: #fafafa;
+  --editor-chain-bg: oklch(0 0 0 / 0.02);
   --editor-chain-border: #d0d0d0;
   --editor-subprompt-border: #cfcfcf;
   --editor-placeholder-text: #8a8a8a;
@@ -147,7 +131,7 @@ html[data-theme="light"] {
   --editor-toast-error-bg: #ebebeb;
   --editor-toast-error-text: #2a2a2a;
   --editor-empty-muted: #6b6b6b;
-  --editor-settings-bg: #ffffff;
+  --editor-settings-bg: color-mix(in oklch, var(--glass-surface) 40%, transparent);
   --editor-settings-border: #d0d0d0;
   --editor-settings-shadow: 0 12px 28px rgb(0 0 0 / 10%);
   --editor-settings-help: #5c5c5c;
@@ -155,19 +139,7 @@ html[data-theme="light"] {
   --editor-settings-checkbox: #2a2a2a;
   --editor-error-text: #4a4a4a;
   --editor-backdrop: rgb(0 0 0 / 18%);
-  --editor-glass-surface: oklch(0.99 0 0);
-  --editor-glass-border: oklch(0.28 0 0 / 0.12);
-  --editor-glass-fill-ratio: 82%;
-  --editor-glass-veil: 12%;
-  --editor-glass-blur: 58px;
-  --editor-glass-saturate: 1;
-  --editor-glass-brightness: 1.02;
-  --editor-glass-shadow:
-    0 10px 34px oklch(0 0 0 / 0.08),
-    0 2px 10px oklch(0 0 0 / 0.04);
-  --editor-glass-inset: inset 0 1px 0 oklch(1 0 0 / 0.72);
-  --editor-glass-hairline: oklch(0.35 0 0 / 0.12);
-  --editor-sidebar-tint: oklch(0.96 0 0 / 0.72);
+  --editor-sidebar-tint: color-mix(in oklch, var(--glass-surface) 62%, transparent);
   --editor-accent-soft: oklch(0.55 0 0 / 0.2);
   --editor-accent-soft-solid: oklch(0.42 0 0);
   --editor-scrollbar-thumb: oklch(0.55 0 0 / 0.32);
@@ -206,18 +178,29 @@ html[data-theme="light"] {
 
   .editor-glass-panel,
   .editor-app-shell,
+  .editor-app-sidebar,
+  .editor-window-chrome,
+  .editor-node-menu,
+  .editor-formula-suggest,
   .editor-settings-panel,
   .editor-settings-embedded {
-    background: var(--editor-glass-surface);
+    background: var(--glass-surface);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
-    box-shadow: 0 1px 0 oklch(0.5 0 0 / 0.14);
+    box-shadow: none;
+    border-color: var(--glass-border-side);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .editor-node-drag-handle {
     transition: none;
+  }
+
+  .editor-settings-panel,
+  .editor-node-menu,
+  .editor-formula-suggest {
+    animation: none;
   }
 }
 
@@ -280,7 +263,27 @@ html[data-theme="light"] {
 /* Outer drop shadow removed on the main shell: Win32 host is still rectangular; heavy blur reads as square corners. */
 .editor-app-shell.editor-glass-panel {
   border-radius: var(--editor-shell-radius);
-  box-shadow: var(--editor-glass-inset), inset 0 0 0 1px var(--editor-glass-hairline);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in oklch, var(--glass-specular-sheen) 100%, transparent) 0%,
+      transparent 35%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--glass-surface) 22%, transparent) 0%,
+      transparent 40%
+    ),
+    color-mix(in oklch, var(--glass-surface) var(--glass-1-fill), transparent);
+  backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+    brightness(var(--glass-1-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+    brightness(var(--glass-1-brightness));
+  box-shadow:
+    var(--glass-shadow-ambient),
+    inset 0 1px 0 var(--glass-border-top),
+    inset 0 0 0 1px var(--glass-rim-side);
+  border: 1px solid var(--glass-border-side);
   /* Clip backdrop-filter / layers to the rounded rect (reduces corner fringe vs DWM). */
   isolation: isolate;
   transform: translateZ(0);
@@ -297,12 +300,16 @@ html[data-theme="light"] {
   min-height: 34px;
   flex-shrink: 0;
   box-sizing: border-box;
-  border-bottom: 1px solid color-mix(in oklch, var(--editor-glass-hairline) 65%, transparent);
+  border-bottom: 1px solid var(--glass-separator);
   background: linear-gradient(
     180deg,
-    color-mix(in oklch, var(--editor-glass-surface) 40%, transparent) 0%,
-    color-mix(in oklch, var(--editor-glass-surface) 12%, transparent) 100%
+    color-mix(in oklch, var(--glass-surface) 28%, transparent) 0%,
+    color-mix(in oklch, var(--glass-surface) 12%, transparent) 100%
   );
+  backdrop-filter: blur(var(--glass-0-blur)) saturate(var(--glass-0-saturate))
+    brightness(var(--glass-0-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-0-blur)) saturate(var(--glass-0-saturate))
+    brightness(var(--glass-0-brightness));
   user-select: none;
   -webkit-user-select: none;
 }
@@ -317,8 +324,9 @@ html[data-theme="light"] {
 
 .editor-window-title {
   font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  opacity: 0.72;
   color: var(--editor-text);
 }
 
@@ -395,16 +403,38 @@ html[data-theme="light"] {
   gap: 12px;
   padding: 10px 8px 12px;
   min-height: 0;
-  border-right: 1px solid color-mix(in oklch, var(--editor-glass-hairline) 75%, transparent);
-  background: color-mix(in oklch, var(--editor-sidebar-tint) 88%, transparent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in oklch, var(--glass-specular-sheen) 100%, transparent) 0%,
+      transparent 35%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--glass-surface) 22%, transparent) 0%,
+      transparent 40%
+    ),
+    color-mix(in oklch, var(--glass-surface) var(--glass-1-fill), transparent);
+  backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+    brightness(var(--glass-1-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+    brightness(var(--glass-1-brightness));
+  box-shadow:
+    0 2px 8px oklch(0 0 0 / 0.14),
+    0 6px 20px oklch(0 0 0 / 0.1),
+    inset 0 1px 0 var(--glass-border-top),
+    inset 0 0 0 1px var(--glass-rim-side);
+  border: 1px solid var(--glass-border-side);
+  margin: 6px 0 6px 6px;
+  border-radius: 12px;
+  isolation: isolate;
 }
 
 @media (max-width: 800px) {
   .editor-app-sidebar {
     grid-column: 1;
     grid-row: 2;
-    border-right: none;
-    border-bottom: 1px solid color-mix(in oklch, var(--editor-glass-hairline) 75%, transparent);
+    margin: 6px;
     flex-direction: row;
     flex-wrap: wrap;
     align-items: flex-start;
@@ -482,40 +512,33 @@ html[data-theme="light"] {
   background: transparent;
 }
 
-/* One frosted shell: inner panes stay flat (Finder-style split). */
-.editor-app-shell .editor-settings-embedded {
-  background: transparent;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  box-shadow: none;
-  border: none;
-  border-radius: 0;
-}
-
 .editor-glass-panel {
   color: var(--editor-text);
   background:
     linear-gradient(
-      165deg,
-      color-mix(in oklch, var(--editor-glass-hairline) 38%, transparent) 0%,
-      transparent 40%
+      135deg,
+      color-mix(in oklch, var(--glass-specular-sheen) 100%, transparent) 0%,
+      transparent 35%
     ),
     linear-gradient(
       180deg,
-      color-mix(in oklch, var(--editor-glass-surface) calc(var(--editor-glass-veil) + 6%), transparent) 0%,
-      transparent 48%
+      color-mix(in oklch, var(--glass-surface) 22%, transparent) 0%,
+      transparent 40%
     ),
-    color-mix(in oklch, var(--editor-glass-surface) var(--editor-glass-fill-ratio), transparent);
-  backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate))
-    brightness(var(--editor-glass-brightness));
-  -webkit-backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate))
-    brightness(var(--editor-glass-brightness));
+    color-mix(in oklch, var(--glass-surface) var(--glass-1-fill), transparent);
+  backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+    brightness(var(--glass-1-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+    brightness(var(--glass-1-brightness));
   box-shadow:
-    var(--editor-glass-shadow),
-    var(--editor-glass-inset),
-    inset 0 0 0 1px var(--editor-glass-hairline);
-  border: none;
+    var(--glass-shadow-ambient),
+    inset 0 1px 0 var(--glass-border-top),
+    inset 1px 0 0 var(--glass-rim-side),
+    inset -1px 0 0 var(--glass-rim-side),
+    inset 0 -1px 0 oklch(0 0 0 / 0.04);
+  border: 1px solid var(--glass-border-side);
   border-radius: 12px;
+  isolation: isolate;
 }
 
 .editor-panel {
@@ -697,22 +720,23 @@ html[data-theme="light"] {
   min-width: 188px;
   z-index: 40;
   border-radius: 10px;
-  border: 1px solid var(--editor-glass-border);
+  border: 1px solid var(--glass-border-side);
   background:
     linear-gradient(
-      165deg,
-      color-mix(in oklch, var(--editor-glass-hairline) 38%, transparent) 0%,
-      transparent 40%
+      135deg,
+      color-mix(in oklch, var(--glass-specular-sheen) 80%, transparent) 0%,
+      transparent 30%
     ),
-    linear-gradient(
-      180deg,
-      color-mix(in oklch, var(--editor-glass-surface) calc(var(--editor-glass-veil) + 4%), transparent) 0%,
-      transparent 40%
-    ),
-    color-mix(in oklch, var(--editor-glass-surface) 78%, transparent);
-  backdrop-filter: blur(28px) saturate(1.2) brightness(var(--editor-glass-brightness));
-  -webkit-backdrop-filter: blur(28px) saturate(1.2) brightness(var(--editor-glass-brightness));
-  box-shadow: var(--editor-glass-shadow), var(--editor-glass-inset), inset 0 0 0 1px var(--editor-glass-hairline);
+    color-mix(in oklch, var(--glass-surface) var(--glass-2-fill), transparent);
+  backdrop-filter: blur(var(--glass-2-blur)) saturate(var(--glass-2-saturate))
+    brightness(var(--glass-2-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-2-blur)) saturate(var(--glass-2-saturate))
+    brightness(var(--glass-2-brightness));
+  box-shadow:
+    var(--glass-shadow-menu),
+    inset 0 1px 0 var(--glass-border-top),
+    inset 0 0 0 1px var(--glass-rim-side);
+  animation: glass-menu-appear 160ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
 .editor-node-menu-item {
@@ -826,11 +850,24 @@ html[data-theme="light"] {
 .editor-action-card input,
 .editor-action-card select,
 .editor-subprompt-panel input {
-  border: 1px solid var(--editor-input-border);
-  background: var(--editor-input-bg);
+  border: 1px solid color-mix(in oklch, var(--glass-text) 14%, transparent);
+  background: color-mix(in oklch, var(--glass-surface) 35%, transparent);
   color: var(--editor-input-text);
   border-radius: 8px;
   padding: 8px 10px;
+  box-shadow: inset 0 1px 3px oklch(0 0 0 / 0.08);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.editor-form-grid :is(input, select, textarea):focus,
+.editor-action-card :is(input, select, textarea):focus,
+.editor-subprompt-panel :is(input, select, textarea):focus,
+.editor-settings-section :is(input, select, textarea):focus {
+  border-color: color-mix(in oklch, var(--glass-text) 30%, transparent);
+  box-shadow:
+    inset 0 1px 3px oklch(0 0 0 / 0.08),
+    0 0 0 2px color-mix(in oklch, var(--glass-text) 14%, transparent);
 }
 
 .editor-trigger-row {
@@ -1011,6 +1048,33 @@ html[data-theme="light"] {
   -webkit-backdrop-filter: blur(10px);
 }
 
+@keyframes glass-appear {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px) saturate(1) brightness(1);
+    transform: translateY(4px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+      brightness(var(--glass-1-brightness));
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes glass-menu-appear {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .editor-settings-panel {
   position: fixed;
   top: 12px;
@@ -1025,26 +1089,30 @@ html[data-theme="light"] {
   color: var(--editor-text);
   background:
     linear-gradient(
-      165deg,
-      color-mix(in oklch, var(--editor-glass-hairline) 38%, transparent) 0%,
-      transparent 40%
+      135deg,
+      color-mix(in oklch, var(--glass-specular-sheen) 100%, transparent) 0%,
+      transparent 35%
     ),
     linear-gradient(
       180deg,
-      color-mix(in oklch, var(--editor-glass-surface) calc(var(--editor-glass-veil) + 6%), transparent) 0%,
-      transparent 48%
+      color-mix(in oklch, var(--glass-surface) 22%, transparent) 0%,
+      transparent 40%
     ),
-    color-mix(in oklch, var(--editor-glass-surface) var(--editor-glass-fill-ratio), transparent);
-  backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate))
-    brightness(var(--editor-glass-brightness));
-  -webkit-backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate))
-    brightness(var(--editor-glass-brightness));
+    color-mix(in oklch, var(--glass-surface) var(--glass-1-fill), transparent);
+  backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+    brightness(var(--glass-1-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+    brightness(var(--glass-1-brightness));
   box-shadow:
-    var(--editor-glass-shadow),
-    var(--editor-glass-inset),
-    inset 0 0 0 1px var(--editor-glass-hairline);
-  border: 1px solid var(--editor-glass-border);
+    var(--glass-shadow-ambient),
+    inset 0 1px 0 var(--glass-border-top),
+    inset 1px 0 0 var(--glass-rim-side),
+    inset -1px 0 0 var(--glass-rim-side),
+    inset 0 -1px 0 oklch(0 0 0 / 0.04);
+  border: 1px solid var(--glass-border-side);
   border-radius: 12px;
+  isolation: isolate;
+  animation: glass-appear 220ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
 }
 
 .editor-settings-header {
@@ -1255,11 +1323,14 @@ html[data-theme="light"] {
 
 .editor-settings-section input:not([type="checkbox"]),
 .editor-settings-section select {
-  border: 1px solid var(--editor-input-border);
-  background: var(--editor-input-bg);
+  border: 1px solid color-mix(in oklch, var(--glass-text) 14%, transparent);
+  background: color-mix(in oklch, var(--glass-surface) 35%, transparent);
   color: var(--editor-input-text);
   border-radius: 8px;
   padding: 8px 10px;
+  box-shadow: inset 0 1px 3px oklch(0 0 0 / 0.08);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .editor-settings-section label {
@@ -1302,26 +1373,29 @@ html[data-theme="light"] {
   color: var(--editor-text);
   background:
     linear-gradient(
-      165deg,
-      color-mix(in oklch, var(--editor-glass-hairline) 38%, transparent) 0%,
-      transparent 40%
+      135deg,
+      color-mix(in oklch, var(--glass-specular-sheen) 100%, transparent) 0%,
+      transparent 35%
     ),
     linear-gradient(
       180deg,
-      color-mix(in oklch, var(--editor-glass-surface) calc(var(--editor-glass-veil) + 6%), transparent) 0%,
-      transparent 48%
+      color-mix(in oklch, var(--glass-surface) 22%, transparent) 0%,
+      transparent 40%
     ),
-    color-mix(in oklch, var(--editor-glass-surface) var(--editor-glass-fill-ratio), transparent);
-  backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate))
-    brightness(var(--editor-glass-brightness));
-  -webkit-backdrop-filter: blur(var(--editor-glass-blur)) saturate(var(--editor-glass-saturate))
-    brightness(var(--editor-glass-brightness));
+    color-mix(in oklch, var(--glass-surface) var(--glass-1-fill), transparent);
+  backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+    brightness(var(--glass-1-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+    brightness(var(--glass-1-brightness));
   box-shadow:
-    var(--editor-glass-shadow),
-    var(--editor-glass-inset),
-    inset 0 0 0 1px var(--editor-glass-hairline);
-  border: 1px solid var(--editor-glass-border);
+    var(--glass-shadow-ambient),
+    inset 0 1px 0 var(--glass-border-top),
+    inset 1px 0 0 var(--glass-rim-side),
+    inset -1px 0 0 var(--glass-rim-side),
+    inset 0 -1px 0 oklch(0 0 0 / 0.04);
+  border: 1px solid var(--glass-border-side);
   border-radius: 12px;
+  isolation: isolate;
 }
 
 .editor-settings-pane--solo {
@@ -1438,14 +1512,17 @@ html[data-theme="light"] {
 
 .editor-formula-input {
   box-sizing: border-box;
-  border: 1px solid var(--editor-input-border);
-  background: var(--editor-input-bg);
+  border: 1px solid color-mix(in oklch, var(--glass-text) 14%, transparent);
+  background: color-mix(in oklch, var(--glass-surface) 35%, transparent);
   color: var(--editor-input-text);
   border-radius: 8px;
   padding: 7px 10px;
   font-size: 13px;
   min-height: 36px;
   min-width: 120px;
+  box-shadow: inset 0 1px 3px oklch(0 0 0 / 0.08);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .editor-formula-input--phrase {
@@ -1719,22 +1796,23 @@ html[data-theme="light"] {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklch, var(--editor-muted) 22%, transparent) transparent;
   border-radius: 8px;
-  border: 1px solid var(--editor-glass-border);
+  border: 1px solid var(--glass-border-side);
   background:
     linear-gradient(
-      165deg,
-      color-mix(in oklch, var(--editor-glass-hairline) 38%, transparent) 0%,
-      transparent 40%
+      135deg,
+      color-mix(in oklch, var(--glass-specular-sheen) 80%, transparent) 0%,
+      transparent 30%
     ),
-    linear-gradient(
-      180deg,
-      color-mix(in oklch, var(--editor-glass-surface) calc(var(--editor-glass-veil) + 4%), transparent) 0%,
-      transparent 40%
-    ),
-    color-mix(in oklch, var(--editor-glass-surface) 78%, transparent);
-  backdrop-filter: blur(24px) saturate(1.15) brightness(var(--editor-glass-brightness));
-  -webkit-backdrop-filter: blur(24px) saturate(1.15) brightness(var(--editor-glass-brightness));
-  box-shadow: var(--editor-glass-shadow), inset 0 0 0 1px var(--editor-glass-hairline);
+    color-mix(in oklch, var(--glass-surface) var(--glass-2-fill), transparent);
+  backdrop-filter: blur(var(--glass-2-blur)) saturate(var(--glass-2-saturate))
+    brightness(var(--glass-2-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-2-blur)) saturate(var(--glass-2-saturate))
+    brightness(var(--glass-2-brightness));
+  box-shadow:
+    var(--glass-shadow-menu),
+    inset 0 1px 0 var(--glass-border-top),
+    inset 0 0 0 1px var(--glass-rim-side);
+  animation: glass-menu-appear 160ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
 .editor-formula-suggest::-webkit-scrollbar {

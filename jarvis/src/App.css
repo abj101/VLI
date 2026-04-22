@@ -22,6 +22,61 @@ body,
   --app-scrollbar-thumb: rgb(120 120 120 / 42%);
   --app-scrollbar-thumb-hover: rgb(120 120 120 / 55%);
   --app-scrollbar-thumb-active: rgb(120 120 120 / 68%);
+
+  --glass-0-blur: 18px;
+  --glass-0-fill: 52%;
+  --glass-0-saturate: 1.9;
+  --glass-0-brightness: 1.12;
+
+  --glass-1-blur: 24px;
+  --glass-1-fill: 44%;
+  --glass-1-saturate: 2.1;
+  --glass-1-brightness: 1.16;
+
+  --glass-2-blur: 16px;
+  --glass-2-fill: 56%;
+  --glass-2-saturate: 1.7;
+  --glass-2-brightness: 1.1;
+
+  --glass-specular-top: oklch(1 0 0 / 0.22);
+  --glass-specular-sheen: oklch(1 0 0 / 0.08);
+  --glass-rim-side: oklch(1 0 0 / 0.06);
+
+  --glass-shadow-ambient:
+    0 2px 8px oklch(0 0 0 / 0.08),
+    0 8px 24px oklch(0 0 0 / 0.1);
+  --glass-shadow-menu:
+    0 2px 6px oklch(0 0 0 / 0.06),
+    0 6px 18px oklch(0 0 0 / 0.08);
+}
+
+[data-theme="dark"] {
+  --glass-surface: oklch(0.16 0.008 248);
+  --glass-border-top: oklch(1 0 0 / 0.2);
+  --glass-border-side: oklch(1 0 0 / 0.07);
+  --glass-text: oklch(0.96 0 0);
+  --glass-text-muted: oklch(0.6 0 0);
+  --glass-text-subtle: oklch(0.5 0 0);
+  --glass-separator: oklch(1 0 0 / 0.08);
+  --glass-1-brightness: 1.16;
+  --glass-0-brightness: 1.12;
+  --glass-2-brightness: 1.1;
+  --glass-shadow-ambient:
+    0 2px 12px oklch(0 0 0 / 0.22),
+    0 8px 28px oklch(0 0 0 / 0.18);
+}
+
+[data-theme="light"] {
+  --glass-surface: oklch(0.98 0.002 248);
+  --glass-border-top: oklch(1 0 0 / 0.72);
+  --glass-border-side: oklch(0 0 0 / 0.06);
+  --glass-text: oklch(0.12 0 0);
+  --glass-text-muted: oklch(0.44 0 0);
+  --glass-text-subtle: oklch(0.52 0 0);
+  --glass-separator: oklch(0 0 0 / 0.07);
+  --glass-1-brightness: 0.96;
+  --glass-0-brightness: 0.97;
+  --glass-2-brightness: 0.98;
 }
 
 html {
@@ -74,9 +129,8 @@ body {
  * -----------------------------------------------------------------------------
  * JARVIS frosted glass (shared finish)
  * -----------------------------------------------------------------------------
- * Canonical token names live on the HUD scope below (--hud-glass-*). The editor
- * mirrors the same *values* as --editor-glass-* in EditorRoot.css so overlays
- * and the command editor read as one system.
+ * Canonical glass tokens now live in shared --glass-* variables so HUD/editor
+ * read as one material system.
  *
  * Recipe (apply in this order):
  *   1. Optional diagonal sheen (uses --*-glass-hairline) — catches light on the
@@ -110,34 +164,18 @@ body {
   min-height: 0;
   color-scheme: dark;
 
-  --hud-surface: oklch(0.1 0 0);
-  --hud-border: oklch(0.96 0 0 / 0.12);
-  --hud-text: oklch(0.95 0 0);
-  --hud-text-muted: oklch(0.62 0 0);
-  --hud-text-subtle: oklch(0.58 0 0);
+  --hud-surface: var(--glass-surface);
+  --hud-border: var(--glass-border-side);
+  --hud-text: var(--glass-text);
+  --hud-text-muted: var(--glass-text-muted);
+  --hud-text-subtle: var(--glass-text-subtle);
   --hud-text-transcript: oklch(0.94 0 0);
   --hud-accent-muted: oklch(0.72 0 0);
   --hud-focus-ring: oklch(0.82 0 0);
   --hud-error: oklch(0.68 0 0);
-  --hud-stop-ring-dim: oklch(0.96 0 0 / 0.38);
-  --hud-stop-ring-bright: oklch(0.99 0 0);
-  --hud-waveform-fill: oklch(0.92 0 0);
-  --hud-tag-bg: oklch(0.32 0 0 / 0.45);
-  --hud-tag-border: oklch(0.55 0 0 / 0.4);
+  --hud-waveform-fill: color-mix(in oklch, var(--glass-text) 70%, transparent);
   --hud-tag-text: oklch(0.88 0 0);
   --hud-match-text: oklch(0.84 0 0);
-  /* Frosted glass — keep in sync with --editor-glass-* in EditorRoot.css */
-  --hud-glass-fill-ratio: 72%;
-  --hud-glass-veil: 16%;
-  --hud-glass-blur: 56px;
-  --hud-glass-saturate: 1;
-  --hud-glass-brightness: 1.04;
-  --hud-glass-shadow:
-    0 10px 36px oklch(0 0 0 / 0.45),
-    0 2px 10px oklch(0 0 0 / 0.28);
-  --hud-glass-inset: inset 0 1px 0 oklch(0.97 0 0 / 0.2);
-  /* Inner hairline: slightly brighter than --hud-border so the frosted edge catches light. */
-  --hud-glass-hairline: oklch(0.92 0 0 / 0.3);
 }
 
 /* Light HUD tokens follow editor `html[data-theme="light"]` (persisted theme), not OS media alone. */
@@ -148,32 +186,94 @@ html[data-theme="light"] {
 html[data-theme="light"] .hud-panel-fill {
   color-scheme: light;
 
-  --hud-surface: oklch(0.99 0 0);
-  --hud-border: oklch(0.28 0 0 / 0.12);
-  --hud-text: oklch(0.14 0 0);
-  --hud-text-muted: oklch(0.44 0 0);
-  --hud-text-subtle: oklch(0.42 0 0);
+  --hud-surface: var(--glass-surface);
+  --hud-border: var(--glass-border-side);
+  --hud-text: var(--glass-text);
+  --hud-text-muted: var(--glass-text-muted);
+  --hud-text-subtle: var(--glass-text-subtle);
   --hud-text-transcript: oklch(0.13 0 0);
   --hud-accent-muted: oklch(0.38 0 0);
   --hud-focus-ring: oklch(0.32 0 0);
   --hud-error: oklch(0.38 0 0);
-  --hud-stop-ring-dim: oklch(0.35 0 0 / 0.35);
-  --hud-stop-ring-bright: oklch(0.22 0 0);
-  --hud-waveform-fill: oklch(0.32 0 0);
-  --hud-tag-bg: oklch(0.9 0 0 / 0.55);
-  --hud-tag-border: oklch(0.5 0 0 / 0.22);
+  --hud-waveform-fill: color-mix(in oklch, var(--glass-text) 70%, transparent);
   --hud-tag-text: oklch(0.22 0 0);
   --hud-match-text: oklch(0.28 0 0);
-  --hud-glass-fill-ratio: 82%;
-  --hud-glass-veil: 12%;
-  --hud-glass-blur: 58px;
-  --hud-glass-saturate: 1;
-  --hud-glass-brightness: 1.02;
-  --hud-glass-shadow:
-    0 10px 34px oklch(0 0 0 / 0.08),
-    0 2px 10px oklch(0 0 0 / 0.04);
-  --hud-glass-inset: inset 0 1px 0 oklch(1 0 0 / 0.72);
-  --hud-glass-hairline: oklch(0.35 0 0 / 0.12);
+}
+
+.glass-panel-0 {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in oklch, var(--glass-specular-sheen) 80%, transparent) 0%,
+      transparent 35%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--glass-surface) 20%, transparent) 0%,
+      transparent 40%
+    ),
+    color-mix(in oklch, var(--glass-surface) var(--glass-0-fill), transparent);
+  backdrop-filter: blur(var(--glass-0-blur)) saturate(var(--glass-0-saturate))
+    brightness(var(--glass-0-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-0-blur)) saturate(var(--glass-0-saturate))
+    brightness(var(--glass-0-brightness));
+  box-shadow:
+    var(--glass-shadow-ambient),
+    inset 0 1px 0 var(--glass-border-top),
+    inset 1px 0 0 var(--glass-rim-side),
+    inset -1px 0 0 var(--glass-rim-side),
+    inset 0 -1px 0 oklch(0 0 0 / 0.04);
+  border: 1px solid var(--glass-border-side);
+  isolation: isolate;
+}
+
+.glass-panel-1 {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in oklch, var(--glass-specular-sheen) 100%, transparent) 0%,
+      transparent 35%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--glass-surface) 22%, transparent) 0%,
+      transparent 40%
+    ),
+    color-mix(in oklch, var(--glass-surface) var(--glass-1-fill), transparent);
+  backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+    brightness(var(--glass-1-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+    brightness(var(--glass-1-brightness));
+  box-shadow:
+    var(--glass-shadow-ambient),
+    inset 0 1px 0 var(--glass-border-top),
+    inset 1px 0 0 var(--glass-rim-side),
+    inset -1px 0 0 var(--glass-rim-side),
+    inset 0 -1px 0 oklch(0 0 0 / 0.04);
+  border: 1px solid var(--glass-border-side);
+  isolation: isolate;
+}
+
+.glass-panel-2 {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in oklch, var(--glass-specular-sheen) 80%, transparent) 0%,
+      transparent 30%
+    ),
+    color-mix(in oklch, var(--glass-surface) var(--glass-2-fill), transparent);
+  backdrop-filter: blur(var(--glass-2-blur)) saturate(var(--glass-2-saturate))
+    brightness(var(--glass-2-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-2-blur)) saturate(var(--glass-2-saturate))
+    brightness(var(--glass-2-brightness));
+  box-shadow:
+    var(--glass-shadow-menu),
+    inset 0 1px 0 var(--glass-border-top),
+    inset 1px 0 0 var(--glass-rim-side),
+    inset -1px 0 0 var(--glass-rim-side),
+    inset 0 -1px 0 oklch(0 0 0 / 0.04);
+  border: 1px solid var(--glass-border-side);
+  isolation: isolate;
 }
 
 .hud-root {
@@ -189,25 +289,27 @@ html[data-theme="light"] .hud-panel-fill {
   color: var(--hud-text);
   background:
     linear-gradient(
-      165deg,
-      color-mix(in oklch, var(--hud-glass-hairline) 38%, transparent) 0%,
-      transparent 40%
+      135deg,
+      color-mix(in oklch, var(--glass-specular-sheen) 100%, transparent) 0%,
+      transparent 35%
     ),
     linear-gradient(
       180deg,
-      color-mix(in oklch, var(--hud-surface) calc(var(--hud-glass-veil) + 6%), transparent) 0%,
-      transparent 48%
+      color-mix(in oklch, var(--glass-surface) 22%, transparent) 0%,
+      transparent 40%
     ),
-    color-mix(in oklch, var(--hud-surface) var(--hud-glass-fill-ratio), transparent);
-  backdrop-filter: blur(var(--hud-glass-blur)) saturate(var(--hud-glass-saturate))
-    brightness(var(--hud-glass-brightness));
-  -webkit-backdrop-filter: blur(var(--hud-glass-blur)) saturate(var(--hud-glass-saturate))
-    brightness(var(--hud-glass-brightness));
+    color-mix(in oklch, var(--glass-surface) var(--glass-1-fill), transparent);
+  backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+    brightness(var(--glass-1-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
+    brightness(var(--glass-1-brightness));
   box-shadow:
-    var(--hud-glass-shadow),
-    var(--hud-glass-inset),
-    inset 0 0 0 1px var(--hud-glass-hairline);
-  border: 1px solid var(--hud-border);
+    var(--glass-shadow-ambient),
+    inset 0 1px 0 var(--glass-border-top),
+    inset 1px 0 0 var(--glass-rim-side),
+    inset -1px 0 0 var(--glass-rim-side),
+    inset 0 -1px 0 oklch(0 0 0 / 0.04);
+  border: 1px solid var(--glass-border-side);
   border-radius: 0;
   isolation: isolate;
   transform: translateZ(0);
@@ -215,7 +317,7 @@ html[data-theme="light"] .hud-panel-fill {
 
 @media (prefers-contrast: more) {
   .hud-root {
-    background: var(--hud-surface);
+    background: var(--glass-surface);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
     box-shadow: none;
@@ -223,10 +325,11 @@ html[data-theme="light"] .hud-panel-fill {
 }
 
 .hud-title {
-  font-size: 11px;
-  letter-spacing: 0.14em;
+  font-size: 10px;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--hud-text-subtle);
+  font-weight: 600;
+  opacity: 0.5;
 }
 
 .hud-phase {
@@ -308,9 +411,10 @@ html[data-theme="light"] .hud-panel-fill {
 
 .hud-recognized-text {
   max-width: 100%;
-  font-size: 22px;
+  font-size: 21px;
   line-height: 1.35;
-  font-weight: 500;
+  font-weight: 450;
+  letter-spacing: -0.01em;
   color: var(--hud-text-transcript);
   text-align: center;
   overflow-wrap: anywhere;
@@ -362,7 +466,7 @@ html[data-theme="light"] .hud-panel-fill {
 .hud-waveform-bar {
   width: 3px;
   border-radius: 2px;
-  background: var(--hud-waveform-fill);
+  background: color-mix(in oklch, var(--glass-text) 70%, transparent);
   transform-origin: bottom center;
 }
 
@@ -396,7 +500,7 @@ html[data-theme="light"] .hud-panel-fill {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  border: 2px solid var(--hud-stop-ring-dim);
+  border: 2px solid oklch(1 0 0 / 0.28);
   box-sizing: border-box;
   pointer-events: none;
 }
@@ -408,11 +512,11 @@ html[data-theme="light"] .hud-panel-fill {
 @keyframes hud-stop-ring-pulse {
   0%,
   100% {
-    border-color: var(--hud-stop-ring-dim);
+    border-color: oklch(1 0 0 / 0.28);
   }
 
   50% {
-    border-color: var(--hud-stop-ring-bright);
+    border-color: oklch(1 0 0 / 0.58);
   }
 }
 
@@ -423,7 +527,7 @@ html[data-theme="light"] .hud-panel-fill {
 }
 
 .hud-stop:hover:not(:disabled) .hud-stop-ring {
-  border-color: var(--hud-stop-ring-bright);
+  border-color: oklch(1 0 0 / 0.58);
 }
 
 .hud-stop-inner {
@@ -480,8 +584,10 @@ html[data-theme="light"] .hud-panel-fill {
   text-transform: uppercase;
   font-weight: 700;
   color: var(--hud-tag-text);
-  background: var(--hud-tag-bg);
-  border: 1px solid var(--hud-tag-border);
+  background: color-mix(in oklch, var(--glass-surface) 40%, transparent);
+  border: 1px solid color-mix(in oklch, var(--glass-text) 18%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .hud-match {
