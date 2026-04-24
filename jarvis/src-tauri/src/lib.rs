@@ -1450,7 +1450,7 @@ fn search_app_index(
     payload: SearchAppIndexPayload,
     store: State<'_, AppIndexStore>,
 ) -> Result<Vec<apps::AppEntry>, String> {
-    let limit = payload.limit.unwrap_or(48).clamp(1, 200) as usize;
+    let limit = payload.limit.unwrap_or(48).clamp(1, 200);
     let entries = store
         .read()
         .map_err(|_| "app index store poisoned".to_string())?;

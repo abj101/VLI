@@ -10,6 +10,11 @@ use tauri::{AppHandle, Manager};
 
 const DEFAULT_PIPER_MODEL_FILE: &str = "en_US-amy-medium.onnx";
 const CACHE_DIR_NAME: &str = "tts-cache";
+const PIPER_BIN_NAME: &str = if cfg!(target_os = "windows") {
+    "piper.exe"
+} else {
+    "piper"
+};
 
 #[derive(Debug, Clone)]
 struct PiperConfig {
@@ -48,7 +53,7 @@ fn resolve_piper_config(app: &AppHandle) -> Result<PiperConfig, String> {
 
     let binary_path = first_existing_path(&binary_candidates).ok_or_else(|| {
         format!(
-            "Piper runtime not found. Set `JARVIS_PIPER_BIN` (or `PIPER_BIN`) or place `piper.exe` at one of: {}",
+            "Piper runtime not found. Set `JARVIS_PIPER_BIN` (or `PIPER_BIN`) or place `{PIPER_BIN_NAME}` at one of: {}",
             display_candidates(&binary_candidates)
         )
     })?;
@@ -78,13 +83,13 @@ fn piper_binary_candidates(app: &AppHandle) -> Vec<PathBuf> {
     push_env_candidate(&mut out, "JARVIS_PIPER_BIN");
     push_env_candidate(&mut out, "PIPER_BIN");
     if let Ok(resource_dir) = app.path().resource_dir() {
-        out.push(resource_dir.join("piper").join("piper.exe"));
+        out.push(resource_dir.join("piper").join(PIPER_BIN_NAME));
     }
     out.push(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("resources")
             .join("piper")
-            .join("piper.exe"),
+            .join(PIPER_BIN_NAME),
     );
     out
 }
@@ -187,50 +192,92 @@ fn synthesize_to_wav(cfg: &PiperConfig, text: &str, output_wav: &Path) -> Result
 }
 
 fn play_wav_blocking(wav_path: &Path) -> Result<(), String> {
-    let wav_escaped = escape_powershell_single_quoted(&wav_path.to_string_lossy());
-    let command = format!(
-        "$p = New-Object System.Media.SoundPlayer '{wav_escaped}'; $p.Load(); $p.PlaySync();"
-    );
-    let output = Command::new("powershell")
-        .arg("-NoProfile")
-        .arg("-NonInteractive")
-        .arg("-Command")
-        .arg(command)
-        .output()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                "PowerShell executable not found while playing Speak audio".to_string()
-            } else {
-                format!("failed to launch PowerShell for Speak audio playback: {e}")
-            }
-        })?;
+    #[cfg(target_os = "windows")]
+    {
+        let wav_escaped = escape_powershell_single_quoted(&wav_path.to_string_lossy());
+        let command = format!(
+            "$p = New-Object System.Media.SoundPlayer '{wav_escaped}'; $p.Load(); $p.PlaySync();"
+        );
+        let output = Command::new("powershell")
+            .arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-Command")
+            .arg(command)
+            .output()
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    "PowerShell executable not found while playing Speak audio".to_string()
+                } else {
+                    format!("failed to launch PowerShell for Speak audio playback: {e}")
+                }
+            })?;
 
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if stderr.is_empty() {
-            Err(format!(
-                "failed to play Speak audio file `{}` (status {})",
-                wav_path.display(),
-                output.status
-            ))
+        if output.status.success() {
+            Ok(())
         } else {
-            Err(format!(
-                "failed to play Speak audio file `{}`: {stderr}",
-                wav_path.display()
-            ))
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                Err(format!(
+                    "failed to play Speak audio file `{}` (status {})",
+                    wav_path.display(),
+                    output.status
+                ))
+            } else {
+                Err(format!(
+                    "failed to play Speak audio file `{}`: {stderr}",
+                    wav_path.display()
+                ))
+            }
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("afplay")
+            .arg(wav_path)
+            .output()
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    "afplay executable not found while playing Speak audio".to_string()
+                } else {
+                    format!("failed to launch afplay for Speak audio playback: {e}")
+                }
+            })?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                Err(format!(
+                    "failed to play Speak audio file `{}` with afplay (status {})",
+                    wav_path.display(),
+                    output.status
+                ))
+            } else {
+                Err(format!(
+                    "failed to play Speak audio file `{}` with afplay: {stderr}",
+                    wav_path.display()
+                ))
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = wav_path;
+        Err("WAV playback not implemented on this platform".to_string())
     }
 }
 
+#[cfg(target_os = "windows")]
 fn escape_powershell_single_quoted(input: &str) -> String {
     input.replace('\'', "''")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{cache_key, escape_powershell_single_quoted};
+    use super::cache_key;
     use std::path::Path;
 
     #[test]
@@ -249,10 +296,11 @@ mod tests {
         assert_ne!(a, b);
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn single_quote_is_escaped_for_powershell() {
         assert_eq!(
-            escape_powershell_single_quoted("C:\\tmp\\it's.wav"),
+            super::escape_powershell_single_quoted("C:\\tmp\\it's.wav"),
             "C:\\tmp\\it''s.wav"
         );
     }

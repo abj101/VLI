@@ -395,16 +395,17 @@ function detectVulkanToolchain() {
 }
 
 function autoSelectBackend() {
-  const gpuVendor = detectGpuVendor();
-  const vulkan = detectVulkanToolchain();
   if (process.platform === "darwin") {
     return {
       backend: "metal",
       reason: "macOS host uses Metal backend",
-      gpuVendor,
+      gpuVendor: detectGpuVendor(),
       vulkanSdkPath: null,
     };
   }
+
+  const gpuVendor = detectGpuVendor();
+  const vulkan = detectVulkanToolchain();
 
   const hasNvidia = gpuVendor === "nvidia";
   if (hasNvidia && hasCudaToolchain()) {

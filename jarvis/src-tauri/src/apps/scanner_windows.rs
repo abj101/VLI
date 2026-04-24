@@ -1129,8 +1129,7 @@ fn resolve_start_app_launch_target(app_id: &str) -> Option<String> {
         if let Some(end) = id.find('}') {
             let guid = &id[1..end];
             let rest = id.get(end + 1..).unwrap_or("");
-            if rest.starts_with('\\') {
-                let rel = &rest[1..];
+            if let Some(rel) = rest.strip_prefix('\\') {
                 if let Some(base) = known_folder_guid_to_base(guid) {
                     let p = base.join(rel);
                     if p.is_file()
@@ -1477,19 +1476,15 @@ fn pretty_name_from_identifier(s: &str) -> String {
             prev_lower = false;
             prev_upper = false;
         } else if ch.is_uppercase() {
-            if prev_lower || prev_upper {
-                if !result.is_empty() && !result.ends_with(' ') {
-                    result.push(' ');
-                }
+            if (prev_lower || prev_upper) && !result.is_empty() && !result.ends_with(' ') {
+                result.push(' ');
             }
             result.push(ch);
             prev_lower = false;
             prev_upper = true;
         } else if ch.is_numeric() {
-            if prev_lower || prev_upper {
-                if !result.ends_with(' ') {
-                    result.push(' ');
-                }
+            if (prev_lower || prev_upper) && !result.ends_with(' ') {
+                result.push(' ');
             }
             result.push(ch);
             prev_lower = false;

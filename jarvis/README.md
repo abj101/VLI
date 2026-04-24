@@ -3,10 +3,20 @@
 ## Prerequisites (Windows)
 
 - [Rust](https://rustup.rs/) stable, [Node.js](https://nodejs.org/) LTS
-- **Whisper / `whisper-rs`:** **CMake** (e.g. `winget install Kitware.CMake`) and **LLVM 18.x** (winget; for bindgen set user env `LIBCLANG_PATH` to `C:\Program Files\LLVM\bin` so `libclang.dll` is found), plus a **MSVC** C++build environment (Visual Studio “Desktop development with C++” workload, or Build Tools). `whisper-rs` builds native `whisper.cpp` sources via CMake.
-- **Piper TTS (`Speak` action):** install/download `piper.exe` and one `.onnx` voice model. Configure with env vars `JARVIS_PIPER_BIN` and `JARVIS_PIPER_MODEL` (or `PIPER_BIN` / `PIPER_MODEL`). Fallback search paths include `src-tauri/resources/piper/`.
-- **PATH / discovery:** This repo prepends `**%ProgramFiles%\CMake\bin`** and `**%ProgramFiles%\LLVM\bin**` to `PATH` in `**.vscode/settings.json**` (repo root and under `jarvis/`) so Cursor/VS Code integrated terminals find `cmake` and LLVM. Rust builds also read `**src-tauri/.cargo/config.toml**`, which sets `**CMAKE**` to the default Kitware path when that file exists (override with your own `CMAKE` env if CMake is installed elsewhere). For shells outside the editor, add those directories to your user **PATH** or export `**CMAKE`**.
+- **Whisper / `whisper-rs`:** **CMake** (e.g. `winget install Kitware.CMake`) and **LLVM 18.x** (winget; for bindgen set user env `LIBCLANG_PATH` to `C:\Program Files\LLVM\bin` so `libclang.dll` is found), plus a **MSVC** C++ build environment (Visual Studio “Desktop development with C++” workload, or Build Tools). `whisper-rs` builds native `whisper.cpp` sources via CMake.
+- **Piper TTS (`Speak` action):** install/download `piper.exe` (Windows) or `piper` (macOS/Linux) and one `.onnx` voice model. Configure with env vars `JARVIS_PIPER_BIN` and `JARVIS_PIPER_MODEL` (or `PIPER_BIN` / `PIPER_MODEL`). Fallback search paths include `src-tauri/resources/piper/`.
+- **PATH / discovery:** Rust builds read `src-tauri/.cargo/config.toml`, which defaults `CMAKE` to `cmake` and expects your shell `PATH` to resolve the executable. For shells outside the editor, add your CMake install location to `PATH` or export `CMAKE`.
 - **Microphone** permission for the dev or packaged app
+
+## Prerequisites (macOS)
+
+- [Rust](https://rustup.rs/) stable, [Node.js](https://nodejs.org/) LTS
+- Xcode CLI tools: `xcode-select --install`
+- Homebrew packages: `brew install cmake llvm`
+- Add to shell profile (for `bindgen`): `export LIBCLANG_PATH="$(brew --prefix llvm)/lib"`
+- Ensure Homebrew binaries are on PATH (Apple Silicon default): `export PATH="/opt/homebrew/bin:$PATH"`
+- **Piper TTS (`Speak` action):** install/download `piper` (no `.exe`) and one `.onnx` voice model; env vars and model path behavior are the same as Windows
+- **Microphone** permission for Terminal/IDE and the app
 
 ## Whisper model (bundled path)
 
@@ -16,6 +26,12 @@ Weights are **not** committed (see root `.gitignore` `*.bin`). From the `jarvis`
 .\scripts\download-model.ps1
 ```
 
+macOS/Linux equivalent:
+
+```bash
+./scripts/download-model.sh
+```
+
 This writes `src-tauri/resources/ggml-tiny.en.bin`, which `tauri.conf.json` lists under `bundle.resources`. Run the script before `npm run tauri build` so bundling can include the file.
 
 ## Piper voice model (for `Speak`)
@@ -23,7 +39,10 @@ This writes `src-tauri/resources/ggml-tiny.en.bin`, which `tauri.conf.json` list
 `Speak` looks for Piper runtime/model in this order:
 
 - Env vars: `JARVIS_PIPER_BIN` + `JARVIS_PIPER_MODEL` (or `PIPER_BIN` + `PIPER_MODEL`)
-- Bundled/resources fallback: `src-tauri/resources/piper/piper.exe` and `src-tauri/resources/piper/en_US-amy-medium.onnx`
+- Bundled/resources fallback:
+  - Windows: `src-tauri/resources/piper/piper.exe`
+  - macOS/Linux: `src-tauri/resources/piper/piper`
+  - Model (all platforms): `src-tauri/resources/piper/en_US-amy-medium.onnx`
 
 Successful synth output is cached in app data under `tts-cache/` to avoid repeated synthesis for same text + voice.
 
@@ -72,7 +91,7 @@ Run in order after a clean checkout (with Rust + Node + CMake + MSVC + LLVM as a
 
 The wrapper runs the Tauri CLI via `node node_modules/@tauri-apps/cli/tauri.js` (not `tauri.cmd`) so `npm run tauri build|dev` reliably continues into the actual build on Windows after GPU detection.
 
-On **Windows**, when an **NVIDIA** GPU is detected and the **CUDA Toolkit** is missing, the wrapper first asks whether to install **`Nvidia.CUDA`** via winget (before Vulkan/other prompts).
+On **Windows**, when an **NVIDIA** GPU is detected and the **CUDA Toolkit** is missing, the wrapper first asks whether to install `Nvidia.CUDA` via winget (before Vulkan/other prompts).
 
 When `tauri dev` / `tauri build` needs **Vulkan** or **CUDA** for Whisper and the SDK/toolkit is missing, the wrapper can also prompt:
 
@@ -117,7 +136,7 @@ SQLite schema changes are **additive** migrations run at startup (e.g. `sort_ord
 
 ### Tests and coverage
 
-From `**jarvis/**`: `npm run test` runs Vitest. Coverage thresholds (**≥70%** lines on `editorStore`, `NodeForm.logic`, `ActionChain.logic`) are enforced when you run `npm run test:coverage`.
+From `jarvis/`: `npm run test` runs Vitest. Coverage thresholds (**≥70%** lines on `editorStore`, `NodeForm.logic`, `ActionChain.logic`) are enforced when you run `npm run test:coverage`.
 
 ## Phase 2 manual verification (Windows)
 

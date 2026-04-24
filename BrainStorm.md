@@ -49,7 +49,7 @@ Living reference for HUD visuals, command editor UX, and Phase 4+ roadmap. Recov
 
 ### Shell
 
-- Separate **`WebviewWindow` label `"editor"`** — not the HUD. Decorated, resizable, taskbar-visible; **900×600** minimum; single instance (focus if already open).
+- Separate `**WebviewWindow` label `"editor"`** — not the HUD. Decorated, resizable, taskbar-visible; **900×600** minimum; single instance (focus if already open).
 
 ### Layout
 
@@ -65,18 +65,20 @@ Living reference for HUD visuals, command editor UX, and Phase 4+ roadmap. Recov
 ### Pipeline integration
 
 - In-memory **command cache** refreshed on editor writes so matching executes **without app restart**.
-- **`ai_mode`:** when `true` and `ANTHROPIC_API_KEY` is set, optional Haiku follow-up using `sub_prompt`; never log or emit the API key.
+- `**ai_mode`:** when `true` and `ANTHROPIC_API_KEY` is set, optional Haiku follow-up using `sub_prompt`; never log or emit the API key.
 
 ---
 
 ## Phase 4 preview (out of scope until Phase 3 sign-off)
 
-| Area | Direction |
-|------|-----------|
-| **Wake word** | Porcupine or OpenWakeWord — decision in open questions; runs alongside or instead of push-to-talk hotkey where configured. |
-| **`ai_mode` UX** | Settings UI for API key and model selection (env-only in Phase 3 is OK for devs). |
-| **`open_app`** | Auto-detect installed/running apps to reduce manual names/paths. |
-| **Polish** | Confirm editor measurements against this doc when implementing new panels. |
+
+| Area             | Direction                                                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **Wake word**    | Porcupine or OpenWakeWord — decision in open questions; runs alongside or instead of push-to-talk hotkey where configured. |
+| `**ai_mode` UX** | Settings UI for API key and model selection (env-only in Phase 3 is OK for devs).                                          |
+| `**open_app`**   | Auto-detect installed/running apps to reduce manual names/paths.                                                           |
+| **Polish**       | Confirm editor measurements against this doc when implementing new panels.                                                 |
+
 
 ---
 
