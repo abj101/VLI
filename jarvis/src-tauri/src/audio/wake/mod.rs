@@ -13,7 +13,7 @@ use tauri::{AppHandle, Manager};
 /// OpenWakeWord ONNX assets under `resource_root/oww/` (keep aligned with `oww.rs`).
 const OWW_MELSPEC_ONNX: &str = "melspectrogram.onnx";
 const OWW_EMBEDDING_ONNX: &str = "embedding_model.onnx";
-const OWW_WAKE_ONNX: &str = "hey_jarvis_v0.1.onnx";
+const OWW_WAKE_ONNX: &str = "friday.onnx";
 
 fn oww_wake_bundle_complete(dir: &Path) -> bool {
     let oww = dir.join("oww");
