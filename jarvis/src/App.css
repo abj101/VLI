@@ -30,8 +30,12 @@ body,
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  --hud-shell-radius: 14px;
+  /* Match native frame curve only; no second CSS radius on the web root. */
+  --hud-shell-radius: var(--radius-outer);
   --hud-window-bg: oklch(0.1 0 0);
+  --hud-material-alpha: var(--material-hud-alpha);
+  --hud-material-blur: var(--material-hud-blur);
+  --hud-material-saturate: var(--material-hud-saturate);
   --app-scrollbar-thumb: rgb(120 120 120 / 42%);
   --app-scrollbar-thumb-hover: rgb(120 120 120 / 55%);
   --app-scrollbar-thumb-active: rgb(120 120 120 / 68%);
@@ -103,15 +107,15 @@ body {
   --hud-text: var(--glass-text);
   --hud-text-muted: var(--glass-text-muted);
   --hud-text-subtle: var(--glass-text-subtle);
-  --hud-text-transcript: oklch(0.94 0 0);
-  --hud-accent-muted: oklch(0.72 0 0);
-  --hud-focus-ring: oklch(0.82 0 0);
-  --hud-error: oklch(0.68 0 0);
-  --hud-stop-ring-dim: oklch(1 0 0 / 0.28);
-  --hud-stop-ring-bright: oklch(1 0 0 / 0.58);
+  --hud-text-transcript: var(--glass-text);
+  --hud-accent-muted: var(--glass-text-muted);
+  --hud-focus-ring: var(--color-accent);
+  --hud-error: var(--glass-text-muted);
+  --hud-stop-ring-dim: color-mix(in oklch, var(--glass-text) 28%, transparent);
+  --hud-stop-ring-bright: color-mix(in oklch, var(--glass-text) 58%, transparent);
   --hud-waveform-fill: color-mix(in oklch, var(--glass-text) 70%, transparent);
-  --hud-tag-text: oklch(0.88 0 0);
-  --hud-match-text: oklch(0.84 0 0);
+  --hud-tag-text: var(--glass-text);
+  --hud-match-text: var(--glass-text-muted);
 }
 
 html[data-theme="light"] {
@@ -129,15 +133,15 @@ html[data-theme="light"] .hud-panel-fill {
   --hud-text: var(--glass-text);
   --hud-text-muted: var(--glass-text-muted);
   --hud-text-subtle: var(--glass-text-subtle);
-  --hud-text-transcript: oklch(0.13 0 0);
-  --hud-accent-muted: oklch(0.38 0 0);
-  --hud-focus-ring: oklch(0.32 0 0);
-  --hud-error: oklch(0.38 0 0);
-  --hud-stop-ring-dim: oklch(0 0 0 / 0.22);
-  --hud-stop-ring-bright: oklch(0 0 0 / 0.50);
+  --hud-text-transcript: var(--glass-text);
+  --hud-accent-muted: var(--glass-text-muted);
+  --hud-focus-ring: var(--color-accent);
+  --hud-error: var(--glass-text-muted);
+  --hud-stop-ring-dim: color-mix(in oklch, var(--glass-text) 28%, transparent);
+  --hud-stop-ring-bright: color-mix(in oklch, var(--glass-text) 58%, transparent);
   --hud-waveform-fill: color-mix(in oklch, var(--glass-text) 70%, transparent);
-  --hud-tag-text: oklch(0.22 0 0);
-  --hud-match-text: oklch(0.28 0 0);
+  --hud-tag-text: var(--glass-text);
+  --hud-match-text: var(--glass-text-muted);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -161,6 +165,16 @@ html[data-theme="light"] .hud-panel-fill {
   overflow: hidden;
   color: var(--hud-text);
   position: relative;
+  border: var(--material-edge-line) solid var(--glass-border-side);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--glass-surface) 16%, transparent) 0%,
+      color-mix(in oklch, var(--glass-surface) 8%, transparent) 100%
+    ),
+    color-mix(in oklch, var(--glass-surface) var(--hud-material-alpha), transparent);
+  backdrop-filter: blur(var(--hud-material-blur)) saturate(var(--hud-material-saturate));
+  -webkit-backdrop-filter: blur(var(--hud-material-blur)) saturate(var(--hud-material-saturate));
 
   border-radius: 0; /* HUD window border-radius handled by html element + DWM */
   /* transform: translateZ(0) already set by .glass-panel-1 */
@@ -185,6 +199,18 @@ html[data-theme="light"] .hud-panel-fill {
 .hud-root > * {
   position: relative;
   z-index: 1;
+}
+
+/* Dark HUD: flat glass fill — no vertical wash, no diagonal sheen (still blurred). */
+html[data-theme="dark"] .hud-root {
+  background: color-mix(in oklch, var(--glass-surface) var(--hud-material-alpha), transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, var(--glass-text) 9%, transparent),
+    0 10px 32px -12px color-mix(in oklch, var(--glass-text) 5%, transparent);
+}
+
+html[data-theme="dark"] .hud-root::before {
+  display: none;
 }
 
 @media (prefers-contrast: more) {
@@ -398,7 +424,7 @@ html[data-theme="light"] .hud-panel-fill {
 .hud-stop-inner {
   width: 12px;
   height: 12px;
-  border-radius: 2px;
+  border-radius: 4px;
   background: var(--hud-waveform-fill);
 }
 
@@ -443,7 +469,7 @@ html[data-theme="light"] .hud-panel-fill {
 
 .hud-app-tag {
   padding: 3px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-control);
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;

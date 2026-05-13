@@ -1,6 +1,8 @@
+import { useMemo } from "react";
 import type { FormActionPayload } from "../../types";
 import { isEditorPendingAction } from "../../types";
 import { getActionKind } from "./actionCatalog";
+import { EditorSelect } from "../ui/EditorSelect";
 import { defaultActionForKind, type ConcreteActionKind } from "./NodeForm.logic";
 
 type ActionCardProps = {
@@ -15,32 +17,35 @@ export function ActionCard({ action, index, onChange, onRemove }: ActionCardProp
   const prefix = `action-${index}`;
   const selectValue = kind === "pending" ? "" : kind;
 
+  const actionKindOptions = useMemo(() => {
+    const opts: { value: string; label: string }[] = [
+      { value: "open_app", label: "Open app" },
+      { value: "open_url", label: "Open URL" },
+    ];
+    if (kind === "run_script") {
+      opts.push({ value: "run_script", label: "Run script (legacy)" });
+    }
+    opts.push(
+      { value: "send_keys", label: "Send keys" },
+      { value: "speak", label: "Speak" },
+      { value: "wait", label: "Wait" },
+      { value: "sub_prompt", label: "Follow Up" },
+    );
+    return opts;
+  }, [kind]);
+
   return (
     <div className="editor-action-card">
       <div className="editor-action-card-top">
-        <label>
+        <label htmlFor={`${prefix}-action-kind`}>
           Type
-          <select
+          <EditorSelect
+            id={`${prefix}-action-kind`}
             value={selectValue}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (!v) return;
-              onChange(defaultActionForKind(v as ConcreteActionKind));
-            }}
-          >
-            {kind === "pending" ? (
-              <option value="" disabled>
-                Choose action type
-              </option>
-            ) : null}
-            <option value="open_app">Open app</option>
-            <option value="open_url">Open URL</option>
-            {kind === "run_script" ? <option value="run_script">Run script (legacy)</option> : null}
-            <option value="send_keys">Send keys</option>
-            <option value="speak">Speak</option>
-            <option value="wait">Wait</option>
-            <option value="sub_prompt">Follow Up</option>
-          </select>
+            placeholder="Choose action type"
+            onChange={(v) => onChange(defaultActionForKind(v as ConcreteActionKind))}
+            options={actionKindOptions}
+          />
         </label>
         <button type="button" className="editor-delete-btn" onClick={onRemove}>
           Remove

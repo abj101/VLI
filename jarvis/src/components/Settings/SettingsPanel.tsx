@@ -15,6 +15,7 @@ import {
 import { useSettingsStore } from "../../store/settingsStore";
 import { formatUserError } from "../../utils/userErrors";
 import { EDITOR_SETTINGS_NAV, type EditorSettingsNavId } from "./settingsNav";
+import { EditorSelect } from "../ui/EditorSelect";
 
 const HOTKEY_KEY = "hotkey";
 const THEME_KEY = "theme";
@@ -469,14 +470,17 @@ export function SettingsPanel({
                 aria-labelledby={`editor-settings-nav-${pane}`}
               >
                 <section className="editor-settings-section">
-                  <label>
+                  <label htmlFor="editor-global-hotkey">
                     Global shortcut
                     <div className="editor-settings-inline">
                       <input
                         ref={hotkeyInputRef}
+                        id="editor-global-hotkey"
+                        className="editor-settings-hotkey-input"
                         value={hotkey}
                         onChange={(e) => setHotkey(e.target.value)}
                         placeholder="ctrl+shift+j"
+                        autoComplete="off"
                       />
                       <button type="button" onClick={() => void saveHotkey()} disabled={savingHotkey}>
                         {savingHotkey ? "Saving..." : "Save"}
@@ -522,17 +526,16 @@ export function SettingsPanel({
                   <h4>Transcription</h4>
                   <label htmlFor="editor-stt-provider">
                     Provider
-                    <select
+                    <EditorSelect
                       id="editor-stt-provider"
                       value={sttProvider}
-                      onChange={(e) =>
-                        void persistSttProvider(normalizeSttProvider(e.target.value))
-                      }
-                    >
-                      <option value="local">Local on-device (Whisper)</option>
-                      <option value="os">Operating system API</option>
-                      <option value="remote">Remote HTTP API</option>
-                    </select>
+                      onChange={(v) => void persistSttProvider(normalizeSttProvider(v))}
+                      options={[
+                        { value: "local", label: "Local on-device (Whisper)" },
+                        { value: "os", label: "Operating system API" },
+                        { value: "remote", label: "Remote HTTP API" },
+                      ]}
+                    />
                   </label>
                   <p className="editor-settings-help">
                     Speech-to-text for command matching. Remote needs HTTPS and a keychain API key.
@@ -654,15 +657,16 @@ export function SettingsPanel({
                   <h4>Wake word</h4>
                   <label htmlFor="editor-wake-engine">
                     Engine
-                    <select
+                    <EditorSelect
                       id="editor-wake-engine"
                       value={wakeEngine}
-                      onChange={(e) => void persistWakeEngine(e.target.value)}
-                    >
-                      <option value="hotkey">Hotkey only</option>
-                      <option value="porcupine">Porcupine</option>
-                      <option value="oww">OpenWakeWord</option>
-                    </select>
+                      onChange={(v) => void persistWakeEngine(v)}
+                      options={[
+                        { value: "hotkey", label: "Hotkey only" },
+                        { value: "porcupine", label: "Porcupine" },
+                        { value: "oww", label: "OpenWakeWord" },
+                      ]}
+                    />
                   </label>
                   <p className="editor-settings-help">Hotkey-only skips wake detection.</p>
                 </section>
@@ -754,15 +758,16 @@ export function SettingsPanel({
                 <section className="editor-settings-section">
                   <label htmlFor="editor-theme-select">
                     Theme
-                    <select
+                    <EditorSelect
                       id="editor-theme-select"
                       value={theme}
-                      onChange={(e) => void saveTheme(normalizeThemePreference(e.target.value))}
-                    >
-                      <option value="system">System</option>
-                      <option value="dark">Dark</option>
-                      <option value="light">Light</option>
-                    </select>
+                      onChange={(v) => void saveTheme(normalizeThemePreference(v))}
+                      options={[
+                        { value: "system", label: "System" },
+                        { value: "dark", label: "Dark" },
+                        { value: "light", label: "Light" },
+                      ]}
+                    />
                   </label>
                 </section>
               </div>

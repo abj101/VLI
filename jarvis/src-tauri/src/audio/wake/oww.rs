@@ -21,7 +21,7 @@ const RAW_BUFFER_MAX_SAMPLES: usize = SAMPLE_RATE * 10;
 
 const MELSPEC_ONNX: &str = "melspectrogram.onnx";
 const EMBEDDING_ONNX: &str = "embedding_model.onnx";
-const WAKE_ONNX: &str = "friday.onnx";
+const WAKE_ONNX: &str = "hey_jarvis_v0.1.onnx";
 
 fn ort_map(e: ort::Error) -> WakeError {
     WakeError::Process(format!("{e}"))
