@@ -104,6 +104,6 @@ const _ipcContract: {
   amplitude: { amplitude: 0.35 },
   audioError: { message: "Whisper model missing" },
   actionError: { message: "launch failed" },
-  wakeDetected: { backend: "porcupine" },
+  wakeDetected: { backend: "oww" },
 };
 void _ipcContract;

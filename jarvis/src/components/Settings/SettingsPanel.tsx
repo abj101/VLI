@@ -18,6 +18,7 @@ import { EDITOR_SETTINGS_NAV, type EditorSettingsNavId } from "./settingsNav";
 import { EditorSelect } from "../ui/EditorSelect";
 
 const HOTKEY_KEY = "hotkey";
+const DISMISS_HOTKEY_KEY = "dismiss_hotkey";
 const THEME_KEY = "theme";
 const DEFAULT_THRESHOLD_KEY = "default_fuzzy_threshold_pct";
 
@@ -25,7 +26,6 @@ export type { EditorSettingsNavId } from "./settingsNav";
 export { EDITOR_SETTINGS_NAV } from "./settingsNav";
 
 type AppSettingsPayload = {
-  porcupineKeyStored: boolean;
   wakeEngine: string;
   owwThreshold: number;
   sttProvider: string;
@@ -80,15 +80,14 @@ export function SettingsPanel({
   const [threshold, setThreshold] = useState(0.8);
   const [theme, setTheme] = useState<EditorThemePreference>("system");
   const [hotkeyError, setHotkeyError] = useState<string | null>(null);
+  const [dismissHotkey, setDismissHotkey] = useState("escape");
+  const [dismissHotkeyError, setDismissHotkeyError] = useState<string | null>(null);
   const [toastText, setToastText] = useState<string | null>(null);
   const [savingHotkey, setSavingHotkey] = useState(false);
+  const [savingDismissHotkey, setSavingDismissHotkey] = useState(false);
 
   const [wakeEngine, setWakeEngine] = useState("oww");
   const [owwThreshold, setOwwThreshold] = useState(0.5);
-  const [porcupineKeyStored, setPorcupineKeyStored] = useState(false);
-
-  const [porcupineInput, setPorcupineInput] = useState("");
-  const [savingPorcupine, setSavingPorcupine] = useState(false);
 
   const [sttProvider, setSttProvider] = useState<SttProvider>("local");
   const [remoteSttUrl, setRemoteSttUrl] = useState("");
@@ -119,15 +118,20 @@ export function SettingsPanel({
   }, [embedded, activeNav]);
 
   const refreshFromBackend = async () => {
-    const [savedHotkey, savedThreshold, savedTheme, app, gpuStatus] = await Promise.all([
-      invoke<string | null>("get_setting", { key: HOTKEY_KEY }),
-      invoke<string | null>("get_setting", { key: DEFAULT_THRESHOLD_KEY }),
-      invoke<string | null>("get_setting", { key: THEME_KEY }),
-      invoke<AppSettingsPayload>("get_settings"),
-      invoke<WhisperGpuStatusPayload>("whisper_gpu_status"),
-    ]);
+    const [savedHotkey, savedDismissHotkey, savedThreshold, savedTheme, app, gpuStatus] =
+      await Promise.all([
+        invoke<string | null>("get_setting", { key: HOTKEY_KEY }),
+        invoke<string | null>("get_setting", { key: DISMISS_HOTKEY_KEY }),
+        invoke<string | null>("get_setting", { key: DEFAULT_THRESHOLD_KEY }),
+        invoke<string | null>("get_setting", { key: THEME_KEY }),
+        invoke<AppSettingsPayload>("get_settings"),
+        invoke<WhisperGpuStatusPayload>("whisper_gpu_status"),
+      ]);
     if (savedHotkey && savedHotkey.trim().length > 0) {
       setHotkey(savedHotkey.trim());
+    }
+    if (savedDismissHotkey && savedDismissHotkey.trim().length > 0) {
+      setDismissHotkey(savedDismissHotkey.trim());
     }
     const parsedThreshold = parseThresholdSettingValue(savedThreshold);
     if (parsedThreshold !== null) {
@@ -138,7 +142,6 @@ export function SettingsPanel({
     applyEditorThemeToDocument(normalizedTheme);
     setWakeEngine(app.wakeEngine);
     setOwwThreshold(app.owwThreshold);
-    setPorcupineKeyStored(app.porcupineKeyStored);
     setSttProvider(normalizeSttProvider(app.sttProvider));
     setRemoteSttUrl(app.remoteSttUrl ?? "");
     setRemoteSttModel(app.remoteSttModel ?? "");
@@ -260,6 +263,27 @@ export function SettingsPanel({
       setHotkeyError(formatUserError(err, "Could not save the hotkey. Try a different shortcut."));
     } finally {
       setSavingHotkey(false);
+    }
+  };
+
+  const saveDismissHotkey = async () => {
+    const maybeError = validateHotkeyInput(dismissHotkey);
+    if (maybeError) {
+      setDismissHotkeyError(maybeError);
+      return;
+    }
+    setDismissHotkeyError(null);
+    setSavingDismissHotkey(true);
+    try {
+      const saved = await invoke<string>("set_dismiss_hotkey", { hotkey: dismissHotkey });
+      setDismissHotkey(saved);
+      setToastText("Dismiss shortcut updated");
+    } catch (err) {
+      setDismissHotkeyError(
+        formatUserError(err, "Could not save the dismiss shortcut. Try a different combo."),
+      );
+    } finally {
+      setSavingDismissHotkey(false);
     }
   };
 
@@ -389,37 +413,6 @@ export function SettingsPanel({
     }
   };
 
-  const savePorcupineKey = async () => {
-    if (!porcupineInput.trim()) {
-      setToastText("Enter an access key before saving.");
-      return;
-    }
-    setSavingPorcupine(true);
-    try {
-      await invoke("save_api_key", { service: "porcupine", key: porcupineInput });
-      setPorcupineInput("");
-      await refreshFromBackend();
-      setToastText("Porcupine access key saved to OS keychain");
-    } catch (err) {
-      setToastText(formatUserError(err, "Could not save the Porcupine access key."));
-    } finally {
-      setSavingPorcupine(false);
-    }
-  };
-
-  const clearPorcupineKey = async () => {
-    setSavingPorcupine(true);
-    try {
-      await invoke("delete_api_key", { service: "porcupine" });
-      await refreshFromBackend();
-      setToastText("Porcupine key cleared");
-    } catch (err) {
-      setToastText(formatUserError(err, "Could not clear the Porcupine access key."));
-    } finally {
-      setSavingPorcupine(false);
-    }
-  };
-
   return (
     <aside
       ref={panelRef}
@@ -488,6 +481,37 @@ export function SettingsPanel({
                     </div>
                   </label>
                   {hotkeyError && <p className="editor-field-error">{hotkeyError}</p>}
+                </section>
+
+                <section className="editor-settings-section">
+                  <label htmlFor="editor-dismiss-hotkey">
+                    Dismiss voice overlay
+                    <div className="editor-settings-inline">
+                      <input
+                        id="editor-dismiss-hotkey"
+                        className="editor-settings-hotkey-input"
+                        value={dismissHotkey}
+                        onChange={(e) => setDismissHotkey(e.target.value)}
+                        placeholder="escape"
+                        autoComplete="off"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void saveDismissHotkey()}
+                        disabled={savingDismissHotkey}
+                      >
+                        {savingDismissHotkey ? "Saving..." : "Save"}
+                      </button>
+                    </div>
+                  </label>
+                  {dismissHotkeyError && (
+                    <p className="editor-field-error">{dismissHotkeyError}</p>
+                  )}
+                  <p className="editor-settings-help">
+                    Stops listening, cancels the session, and hides the HUD. Use the same accelerator
+                    style as the global shortcut (example: <code>escape</code>,{" "}
+                    <code>ctrl+shift+q</code>). Must differ from “Global shortcut”.
+                  </p>
                 </section>
               </div>
             )}
@@ -663,7 +687,6 @@ export function SettingsPanel({
                       onChange={(v) => void persistWakeEngine(v)}
                       options={[
                         { value: "hotkey", label: "Hotkey only" },
-                        { value: "porcupine", label: "Porcupine" },
                         { value: "oww", label: "OpenWakeWord" },
                       ]}
                     />
@@ -694,50 +717,6 @@ export function SettingsPanel({
                     </label>
                     <p className="editor-settings-help">
                       Higher values require a clearer wake phrase match before listening starts.
-                    </p>
-                  </section>
-                )}
-
-                {wakeEngine === "porcupine" && (
-                  <section className="editor-settings-section">
-                    <h4>Porcupine access key</h4>
-                    <p className="editor-settings-help">
-                      Picovoice access key (keychain). Required for Porcupine wake.
-                    </p>
-                    <label htmlFor="editor-porcupine-key">
-                      Access key
-                      <input
-                        id="editor-porcupine-key"
-                        type="password"
-                        autoComplete="off"
-                        value={porcupineInput}
-                        onChange={(e) => setPorcupineInput(e.target.value)}
-                        placeholder="Paste access key"
-                        aria-describedby="porcupine-key-help"
-                      />
-                    </label>
-                    <p id="porcupine-key-help" className="editor-settings-help">
-                      Stored in the OS keychain; cleared from this field after save.
-                    </p>
-                    <div className="editor-settings-inline">
-                      <button
-                        type="button"
-                        onClick={() => void savePorcupineKey()}
-                        disabled={savingPorcupine}
-                      >
-                        {savingPorcupine ? "Saving…" : "Save"}
-                      </button>
-                      <button
-                        type="button"
-                        className="editor-settings-secondary-btn"
-                        onClick={() => void clearPorcupineKey()}
-                        disabled={savingPorcupine}
-                      >
-                        Clear
-                      </button>
-                    </div>
-                    <p className="editor-settings-help" role="status">
-                      Keychain flag: {porcupineKeyStored ? "stored" : "not stored"}
                     </p>
                   </section>
                 )}

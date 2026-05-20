@@ -1,12 +1,13 @@
 /**
- * Downloads Porcupine + OpenWakeWord assets (no API key). Writes under
- * src-tauri/resources/{porcupine,oww}/. Gitignored; run via `npm run fetch-wake-models`, `prebuild`, or Tauri `beforeDevCommand`.
+ * Downloads OpenWakeWord ONNX assets (no API key). Writes under
+ * `src-tauri/resources/oww/`. Gitignored; run via `npm run fetch-wake-models`,
+ * `prebuild`, or Tauri `beforeDevCommand`.
  */
 import fs from "fs/promises";
 import https from "https";
 import path from "path";
 import { fileURLToPath } from "url";
-import { oww, porcupine } from "./fetch-wake-models.config.mjs";
+import { oww } from "./fetch-wake-models.config.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const resourcesRoot = path.join(__dirname, "..", "src-tauri", "resources");
@@ -55,13 +56,6 @@ async function fetchIfMissing(label, destDir, url, outName) {
 }
 
 await fs.mkdir(resourcesRoot, { recursive: true });
-
-const porcupineDest = path.join(resourcesRoot, porcupine.destSubdir);
-await fs.mkdir(porcupineDest, { recursive: true });
-for (const [rel, name] of porcupine.files) {
-  const url = `${porcupine.base}/${rel}`;
-  await fetchIfMissing("", porcupineDest, url, name);
-}
 
 const owwDest = path.join(resourcesRoot, oww.destSubdir);
 await fs.mkdir(owwDest, { recursive: true });

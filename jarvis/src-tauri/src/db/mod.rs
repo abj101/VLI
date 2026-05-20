@@ -51,6 +51,7 @@ pub fn init_db(path: &Path) -> Result<(), DbError> {
     app_index::ensure_app_index_schema(&conn)?;
     drop_legacy_ai_command_columns(&conn)?;
     purge_legacy_shipped_sample_commands(&conn)?;
+    settings::prune_legacy_settings(&conn)?;
     Ok(())
 }
 

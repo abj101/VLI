@@ -24,10 +24,11 @@ coverage
 *.sln
 *.sw?
 
-# Porcupine wake models / native libs (fetch via scripts/download-wake-models.ps1)
-*.ppn
-*.pv
-**/libpv_porcupine.dll
-
-# OpenWakeWord ONNX (fetch via scripts/download-oww-model.ps1)
+# OpenWakeWord ONNX (fetch via npm run fetch-wake-models)
 src-tauri/resources/oww/*.onnx
+
+# Legacy Picovoice Porcupine assets (wake engine removed; do not commit)
+src-tauri/resources/porcupine/
+
+# Legacy Picovoice Porcupine assets (wake engine removed; do not commit)
+src-tauri/resources/porcupine/

@@ -1,7 +1,4 @@
-//! Wake-word detection (`WakeDetector` trait). Porcupine is the default Windows path (feature `porcupine`).
-
-#[cfg(feature = "porcupine")]
-pub mod porcupine;
+//! Wake-word detection (`WakeDetector` trait). OpenWakeWord when feature `oww` is enabled.
 
 #[cfg(feature = "oww")]
 pub mod oww;
@@ -21,15 +18,10 @@ fn oww_wake_bundle_complete(dir: &Path) -> bool {
         && oww.join(OWW_EMBEDDING_ONNX).is_file()
         && oww.join(OWW_WAKE_ONNX).is_file()
 }
-/// Bundled Porcupine keyword file under `resource_root/porcupine/`.
-const PORCUPINE_MARKER_PPN: &str = "porcupine_windows.ppn";
 
 fn tauri_resource_dir_ready_for_engine(dir: &Path, wake_engine: &str) -> bool {
     match wake_engine {
-        // Require all ONNX files: dev `target/debug` can contain only the classifier from an
-        // older/partial copy; a lone marker must not block fallback to `src-tauri/resources`.
         "oww" => oww_wake_bundle_complete(dir),
-        "porcupine" => dir.join("porcupine").join(PORCUPINE_MARKER_PPN).is_file(),
         _ => false,
     }
 }
@@ -38,10 +30,10 @@ fn tauri_resource_dir_ready_for_engine(dir: &Path, wake_engine: &str) -> bool {
 ///
 /// In `tauri dev`, [`AppHandle::path().resource_dir`] often resolves next to the exe
 /// (`target/debug/`) where wake assets are not copied. We only accept that directory if
-/// it already contains the **engine-specific** marker files — otherwise Porcupine DLLs
-/// beside the exe could wrongly hide missing `oww/` trees. **Debug** builds then fall back
-/// to `src-tauri/resources`. **Release** uses the Tauri path when markers are absent so
-/// errors refer to the install layout.
+/// it already contains the **engine-specific** ONNX bundle — otherwise a partial `oww/`
+/// beside the exe must not block fallback to `src-tauri/resources`. **Debug** builds then
+/// fall back to `src-tauri/resources`. **Release** uses the Tauri path when markers are absent
+/// so errors refer to the install layout.
 fn wake_resource_root_from_candidates(
     wake_engine: &str,
     tauri_dir: Option<&Path>,
@@ -61,7 +53,7 @@ fn wake_resource_root_from_candidates(
     }
 }
 
-/// Root directory passed to [`build_wake_detector`] (`porcupine/` + `oww/` live underneath).
+/// Root directory passed to [`build_wake_detector`] (`oww/` lives underneath when using OWW).
 pub(crate) fn resolve_wake_resource_root(app: &AppHandle, wake_engine: &str) -> PathBuf {
     let manifest_res = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
     wake_resource_root_from_candidates(
@@ -71,17 +63,12 @@ pub(crate) fn resolve_wake_resource_root(app: &AppHandle, wake_engine: &str) -> 
     )
 }
 
-/// Picovoice service name for the Porcupine access key (OS keychain).
-pub const KEYRING_SERVICE_PORCUPINE: &str = "jarvis-porcupine";
-/// Credential entry label for the access key string.
-pub const KEYRING_PORCUPINE_ACCESS_KEY: &str = "access_key";
-
 /// Feed PCM chunks (16 kHz, mono, i16). Implementations validate frame length per engine.
 pub trait WakeDetector: Send + 'static {
     /// Feed one chunk of PCM (16 kHz, i16, mono). Returns `true` when the wake phrase is detected.
     fn process_frame(&mut self, pcm: &[i16]) -> Result<bool, WakeError>;
     fn backend_name(&self) -> &'static str;
-    /// `Some(n)` → caller must pass exactly `n` i16 samples per [`process_frame`] (Porcupine).
+    /// `Some(n)` → caller must pass exactly `n` i16 samples per [`process_frame`].
     /// `None` → variable-sized chunks (OpenWakeWord accumulates internally).
     fn fixed_input_frame_len(&self) -> Option<usize> {
         None
@@ -90,19 +77,18 @@ pub trait WakeDetector: Send + 'static {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum WakeError {
-    #[error("invalid pcm frame length: expected {expected}, got {actual}")]
-    BadFrameLength { expected: usize, actual: usize },
     #[error("wake engine init failed: {0}")]
     Init(String),
     #[error("wake engine process failed: {0}")]
     Process(String),
-    #[error("wake engine library: {0}")]
-    Library(String),
 }
 
-pub(crate) fn expect_pcm_frame_len(actual: usize, expected: usize) -> Result<(), WakeError> {
+#[cfg(test)]
+fn expect_pcm_frame_len(actual: usize, expected: usize) -> Result<(), WakeError> {
     if actual != expected {
-        Err(WakeError::BadFrameLength { expected, actual })
+        Err(WakeError::Process(format!(
+            "invalid pcm frame length: expected {expected}, got {actual}"
+        )))
     } else {
         Ok(())
     }
@@ -110,27 +96,13 @@ pub(crate) fn expect_pcm_frame_len(actual: usize, expected: usize) -> Result<(),
 
 pub mod thread;
 
-/// Build a wake detector for `wake_engine` (`porcupine` / `oww`). Returns `Err` if models/keys missing.
+/// Build a wake detector for `wake_engine` (`oww`). Returns `Err` if models missing.
 pub(crate) fn build_wake_detector(
     engine: &str,
     resource_dir: &std::path::Path,
     settings: &crate::db::AppSettings,
 ) -> Result<Box<dyn WakeDetector>, String> {
     match engine {
-        "porcupine" => {
-            #[cfg(feature = "porcupine")]
-            {
-                use crate::audio::wake::porcupine::PorcupineBackend;
-                PorcupineBackend::try_new(resource_dir)
-                    .map(|d| Box::new(d) as Box<dyn WakeDetector>)
-                    .map_err(|e| e.to_string())
-            }
-            #[cfg(not(feature = "porcupine"))]
-            {
-                let _ = (resource_dir, settings);
-                Err("porcupine feature disabled in this build".into())
-            }
-        }
         "oww" => {
             #[cfg(feature = "oww")]
             {
@@ -152,7 +124,6 @@ pub(crate) fn build_wake_detector(
 ///
 /// Prefer [`build_wake_detector`] from the wake orchestrator so SQLite threshold is always applied.
 #[cfg(feature = "oww")]
-#[allow(dead_code)]
 pub fn try_open_wake_word_oww(
     resource_dir: &std::path::Path,
     settings: &crate::db::AppSettings,
@@ -197,18 +168,6 @@ mod tests {
         fn fixed_input_frame_len(&self) -> Option<usize> {
             Some(self.frame_len)
         }
-    }
-
-    #[test]
-    fn expect_pcm_frame_len_rejects_mismatch() {
-        let err = expect_pcm_frame_len(3, 512).unwrap_err();
-        assert!(matches!(
-            err,
-            WakeError::BadFrameLength {
-                expected: 512,
-                actual: 3
-            }
-        ));
     }
 
     #[test]
@@ -265,25 +224,9 @@ mod tests {
     }
 
     #[test]
-    fn wake_resource_root_does_not_use_tauri_dir_when_only_porcupine_present_but_engine_oww() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let porc = tmp.path().join("porcupine");
-        std::fs::create_dir_all(&porc).expect("mkdir");
-        std::fs::write(porc.join(PORCUPINE_MARKER_PPN), b"x").expect("write");
-        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
-        let picked = wake_resource_root_from_candidates("oww", Some(tmp.path()), &manifest);
-        if cfg!(debug_assertions) {
-            assert_eq!(picked, manifest);
-        } else {
-            assert_eq!(picked, tmp.path());
-        }
-    }
-
-    #[test]
     fn build_wake_detector_rejects_unknown_engine() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let s = crate::db::AppSettings {
-            porcupine_key_stored: false,
             wake_engine: "hotkey".into(),
             oww_threshold: 0.5,
             stt_provider: "local".into(),

@@ -2,33 +2,41 @@ mod apps;
 mod audio;
 mod commands;
 mod db;
-#[cfg(windows)]
-mod editor_window_win;
 mod hud;
-#[cfg(windows)]
-mod hud_window_win;
 mod keychain;
 mod tray;
 
 use audio::SharedAudioPipeline;
 use commands::TauriActionRuntime;
-use hud::{sync_hud_window, HudPhase, HUD_WINDOW_LABEL};
+use hud::{sync_hud_webview_background, sync_hud_window, HudPhase, HUD_WINDOW_LABEL};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Listener, Manager, State, WebviewUrl, WebviewWindowBuilder};
-use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{
+    Builder as ShortcutBuilder, GlobalShortcutExt, Shortcut, ShortcutState,
+};
 use whisper_rs::{WhisperContext, WhisperContextParameters};
 
 /// Brief hold after `Done` (and after speech-silence gate) before hiding the HUD — tuned so simple
 /// actions (e.g. OpenApp) dismiss quickly while the frontend shell is already unmounted.
 const AUTO_DISMISS_AFTER: Duration = Duration::from_millis(380);
-const NO_MATCH_TIMEOUT: Duration = Duration::from_secs(5);
+/// Listening session: dismiss if STT never emitted a non-empty transcript.
+const NO_WORDS_DISMISS_AFTER: Duration = Duration::from_secs(3);
+/// After STT has produced words but no command matched, dismiss this long after the last non-empty transcript.
+const AFTER_WORDS_NO_MATCH_DISMISS_AFTER: Duration = Duration::from_secs(3);
+/// Must stay above `HUD_SHELL_TRANSITION_MS` in `jarvis/src/components/hud/hudMotion.ts` (320 ms);
+/// extra margin avoids GPU compositor lag revealing native chrome when WebView2 bg resets before hide.
+const HUD_WINDOW_HIDE_AFTER_FADE_MS: u64 = 520;
 const EDITOR_WINDOW_LABEL: &str = "editor";
 const DEFAULT_HOTKEY: &str = "ctrl+shift+j";
+const DEFAULT_DISMISS_HOTKEY: &str = "escape";
 const SETTING_KEY_HOTKEY: &str = "hotkey";
+const SETTING_KEY_DISMISS_HOTKEY: &str = "dismiss_hotkey";
+const DISMISS_HOTKEY_CHANGED_EVENT: &str = "dismiss-hotkey-changed";
 const SETTING_KEY_DEFAULT_THRESHOLD: &str = "default_fuzzy_threshold_pct";
 const DEFAULT_THRESHOLD_PCT: u16 = 80;
 const EDITOR_COMMANDS_CHANGED_EVENT: &str = "editor-commands-changed";
@@ -236,6 +244,18 @@ fn normalize_hotkey_input(hotkey: &str) -> Result<String, String> {
     Ok(normalized.to_string())
 }
 
+fn hotkeys_collide(a: &str, b: &str) -> bool {
+    let a = a.trim();
+    let b = b.trim();
+    if a.eq_ignore_ascii_case(b) {
+        return true;
+    }
+    match (Shortcut::from_str(a), Shortcut::from_str(b)) {
+        (Ok(x), Ok(y)) => x.id() == y.id(),
+        _ => false,
+    }
+}
+
 fn is_hotkey_already_registered_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("hotkey already registered")
@@ -267,13 +287,17 @@ fn load_default_fuzzy_threshold_pct(app: &AppHandle) -> u16 {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct HudRuntime {
     phase: HudPhase,
     visible: bool,
     session_id: u64,
     /// Last time we saw speech (transcript text or mic level). Used so timers run on silence, not wall-clock from HUD open.
     last_speech_activity: Option<Instant>,
+    /// When the current `Listening` session began (hotkey / wake / `hud_set_phase`). Used for no-STT auto-dismiss.
+    listening_started_at: Instant,
+    /// Last non-empty STT text while listening (not mic amplitude). Used for post-speech no-match dismiss.
+    last_nonempty_transcript_at: Option<Instant>,
     /// Last non-empty transcript seen while listening.
     pending_transcript: String,
     /// Monotonic version for pending transcript debounce scheduling.
@@ -294,6 +318,27 @@ struct HudRuntime {
     pending_follow_up_candidate_at: Option<Instant>,
 }
 
+impl Default for HudRuntime {
+    fn default() -> Self {
+        Self {
+            phase: HudPhase::default(),
+            visible: false,
+            session_id: 0,
+            last_speech_activity: None,
+            listening_started_at: Instant::now(),
+            last_nonempty_transcript_at: None,
+            pending_transcript: String::new(),
+            transcript_revision: 0,
+            nonempty_transcript_this_listen: false,
+            active_run_cancel: None,
+            active_run_session_id: None,
+            pending_follow_up_response: None,
+            pending_follow_up_candidate: None,
+            pending_follow_up_candidate_at: None,
+        }
+    }
+}
+
 type SharedHud = Arc<Mutex<HudRuntime>>;
 
 /// Holds the running wake worker so `update_settings` can restart it (live reload).
@@ -307,6 +352,11 @@ impl Default for WakeSupervisorState {
 
 #[derive(Debug)]
 struct HotkeyBindingState {
+    current: Mutex<String>,
+}
+
+#[derive(Debug)]
+struct DismissHotkeyBindingState {
     current: Mutex<String>,
 }
 
@@ -439,8 +489,6 @@ pub(crate) fn open_or_create_editor_window(app: &AppHandle) -> Result<(), String
     .map_err(|e| e.to_string())?;
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
-    #[cfg(windows)]
-    editor_window_win::configure_editor_frame(app);
     Ok(())
 }
 
@@ -488,10 +536,13 @@ fn cancel_active_run_in_state(s: &mut HudRuntime) {
 }
 
 fn prepare_hud_listening_session(s: &mut HudRuntime) -> u64 {
+    let now = Instant::now();
     s.visible = true;
     s.phase = HudPhase::Listening;
     s.session_id = s.session_id.wrapping_add(1);
-    s.last_speech_activity = Some(Instant::now());
+    s.last_speech_activity = Some(now);
+    s.listening_started_at = now;
+    s.last_nonempty_transcript_at = None;
     s.nonempty_transcript_this_listen = false;
     s.pending_transcript.clear();
     s.transcript_revision = 0;
@@ -609,6 +660,18 @@ fn should_fire_no_match_timeout(rt: &HudRuntime, expected_session_id: u64) -> bo
     rt.visible && rt.phase == HudPhase::Listening && rt.session_id == expected_session_id
 }
 
+/// Dismiss while listening: 3s with no STT words, or 3s idle after the last non-empty transcript if words were seen.
+fn no_match_idle_should_dismiss(s: &HudRuntime) -> bool {
+    if !s.nonempty_transcript_this_listen {
+        s.listening_started_at.elapsed() >= NO_WORDS_DISMISS_AFTER
+    } else {
+        match s.last_nonempty_transcript_at {
+            Some(t) => t.elapsed() >= AFTER_WORDS_NO_MATCH_DISMISS_AFTER,
+            None => s.listening_started_at.elapsed() >= NO_WORDS_DISMISS_AFTER,
+        }
+    }
+}
+
 fn should_fire_auto_dismiss(rt: &HudRuntime, expected_session_id: u64) -> bool {
     rt.visible && rt.phase == HudPhase::Done && rt.session_id == expected_session_id
 }
@@ -627,7 +690,9 @@ fn touch_speech_on_transcript(rt: &SharedHud, text: &str) {
     }
     if let Ok(mut s) = rt.lock() {
         if s.visible && s.phase == HudPhase::Listening {
-            s.last_speech_activity = Some(Instant::now());
+            let now = Instant::now();
+            s.last_speech_activity = Some(now);
+            s.last_nonempty_transcript_at = Some(now);
             s.nonempty_transcript_this_listen = true;
         }
     }
@@ -639,7 +704,35 @@ fn touch_speech_on_amplitude(rt: &SharedHud, amplitude: f64) {
     }
 }
 
-/// Dismiss after `NO_MATCH_TIMEOUT` since **last speech** (transcript or mic), not since HUD opened.
+/// After `emit_hud_phase(Stopped)`, wait for the HUD webview exit animation, then `hide()`.
+/// Skips hide if the user reopened during the wait (`visible` or phase changed).
+/// Re-syncs webview background immediately before `hide()`.
+fn schedule_hud_window_hide_when_still_dismissed(app: AppHandle, rt: SharedHud) {
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(HUD_WINDOW_HIDE_AFTER_FADE_MS));
+        let should_hide = match rt.lock() {
+            Ok(g) => !g.visible && g.phase == HudPhase::Stopped,
+            Err(_) => return,
+        };
+        if !should_hide {
+            return;
+        }
+        let app_for_main = app.clone();
+        if let Err(err) = app.run_on_main_thread(move || {
+            sync_hud_webview_background(&app_for_main);
+            if let Some(w) = app_for_main.get_webview_window(HUD_WINDOW_LABEL) {
+                if let Err(e) = w.hide() {
+                    warn!("hud delayed hide: {e}");
+                }
+            }
+        }) {
+            warn!("hud delayed hide dispatch: {err:?}");
+        }
+    });
+}
+
+/// Auto-dismiss while listening: no STT words for [`NO_WORDS_DISMISS_AFTER`], or no command match and
+/// transcript idle for [`AFTER_WORDS_NO_MATCH_DISMISS_AFTER`] after the last non-empty STT text.
 fn spawn_no_match_watchdog(
     app: AppHandle,
     rt: SharedHud,
@@ -658,10 +751,7 @@ fn spawn_no_match_watchdog(
                 if !should_fire_no_match_timeout(&s, expected_session_id) {
                     return;
                 }
-                let Some(last) = s.last_speech_activity else {
-                    continue;
-                };
-                last.elapsed() >= NO_MATCH_TIMEOUT
+                no_match_idle_should_dismiss(&s)
             };
             if should_dismiss {
                 break;
@@ -828,6 +918,9 @@ fn set_phase(app: &AppHandle, rt: &SharedHud, phase: HudPhase) -> Result<u64, St
         s.phase = phase;
         s.session_id
     };
+    if phase != HudPhase::Stopped {
+        sync_hud_webview_background(app);
+    }
     sync_hud_window(app, phase)?;
     emit_hud_phase(app, phase);
     Ok(session_id)
@@ -1048,6 +1141,7 @@ fn show_hud_from_hotkey(
         .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
 
     let mut listening_session_id: Option<u64> = None;
+    let mut defer_hud_window_hide = false;
     if !s.visible {
         let sid = prepare_hud_listening_session(&mut s);
         listening_session_id = Some(sid);
@@ -1062,15 +1156,23 @@ fn show_hud_from_hotkey(
         window.set_focus().map_err(|e| e.to_string())?;
     } else {
         prepare_hud_close_session(&mut s);
-        window.hide().map_err(|e| e.to_string())?;
+        defer_hud_window_hide = true;
     }
 
     let phase = s.phase;
     let session_id = s.session_id;
     drop(s);
 
+    if !defer_hud_window_hide {
+        sync_hud_webview_background(app);
+    }
+
     sync_hud_window(app, phase)?;
     emit_hud_phase(app, phase);
+
+    if defer_hud_window_hide && phase == HudPhase::Stopped {
+        schedule_hud_window_hide_when_still_dismissed(app.clone(), Arc::clone(rt));
+    }
 
     if tray::mic_start_allowed(is_paused, phase) {
         try_start_listening_audio(app, audio, session_id);
@@ -1106,6 +1208,8 @@ fn wake_request_hud(
     window.set_focus().map_err(|e| e.to_string())?;
     drop(s);
 
+    sync_hud_webview_background(app);
+
     sync_hud_window(app, HudPhase::Listening)?;
     emit_hud_phase(app, HudPhase::Listening);
 
@@ -1138,9 +1242,9 @@ fn make_wake_callback(
     })
 }
 
-/// Porcupine / OWW use a dedicated wake thread; `hotkey` does not.
+/// OpenWakeWord uses a dedicated wake thread; `hotkey` does not.
 pub(crate) fn wake_engine_uses_dedicated_thread(wake_engine: &str) -> bool {
-    matches!(wake_engine, "porcupine" | "oww")
+    wake_engine == "oww"
 }
 
 fn try_start_wake_supervisor(
@@ -1208,10 +1312,6 @@ fn settings_patch_triggers_wake_reload(
 
 fn dismiss_hud(app: &AppHandle, rt: &SharedHud) -> Result<(), String> {
     let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
-    let window = app
-        .get_webview_window(HUD_WINDOW_LABEL)
-        .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
-
     s.phase = HudPhase::Stopped;
     s.visible = false;
     s.session_id = s.session_id.wrapping_add(1);
@@ -1221,14 +1321,21 @@ fn dismiss_hud(app: &AppHandle, rt: &SharedHud) -> Result<(), String> {
     s.pending_follow_up_candidate = None;
     s.pending_follow_up_candidate_at = None;
     cancel_active_run_in_state(&mut s);
-    window.hide().map_err(|e| e.to_string())?;
 
     let phase = s.phase;
     drop(s);
 
     sync_hud_window(app, phase)?;
     emit_hud_phase(app, phase);
+    schedule_hud_window_hide_when_still_dismissed(app.clone(), Arc::clone(rt));
     Ok(())
+}
+
+fn run_dismiss_from_shortcut(app: &AppHandle, hud: &SharedHud, audio: &SharedAudioPipeline) {
+    if let Err(e) = dismiss_hud(app, hud) {
+        warn!("dismiss shortcut: {e}");
+    }
+    audio::stop_shared_pipeline(audio);
 }
 
 #[tauri::command]
@@ -1248,9 +1355,13 @@ fn hud_set_phase(
         s.phase = phase;
         match phase {
             HudPhase::Listening => {
+                let now = Instant::now();
                 s.visible = true;
                 s.session_id = s.session_id.wrapping_add(1);
-                s.last_speech_activity = Some(Instant::now());
+                s.last_speech_activity = Some(now);
+                s.listening_started_at = now;
+                s.last_nonempty_transcript_at = None;
+                s.nonempty_transcript_this_listen = false;
                 s.pending_transcript.clear();
                 s.transcript_revision = 0;
                 s.pending_follow_up_response = None;
@@ -1270,6 +1381,9 @@ fn hud_set_phase(
             }
             _ => {}
         }
+    }
+    if phase != HudPhase::Stopped {
+        sync_hud_webview_background(&app);
     }
     sync_hud_window(&app, phase)?;
     emit_hud_phase(&app, phase);
@@ -1397,8 +1511,21 @@ fn set_hotkey(
     app: AppHandle,
     hotkey: String,
     hotkey_state: State<'_, HotkeyBindingState>,
+    dismiss_hotkey_state: State<'_, DismissHotkeyBindingState>,
 ) -> Result<String, String> {
     let next_hotkey = normalize_hotkey_input(&hotkey)?;
+    Shortcut::from_str(&next_hotkey).map_err(|e| format!("Invalid shortcut: {e}"))?;
+    let dismiss_guard = dismiss_hotkey_state
+        .current
+        .lock()
+        .map_err(|_| "dismiss hotkey state poisoned".to_string())?;
+    if hotkeys_collide(&next_hotkey, dismiss_guard.as_str()) {
+        return Err(
+            "That shortcut is already used for Dismiss voice overlay. Pick a different combo."
+                .to_string(),
+        );
+    }
+    drop(dismiss_guard);
     let conn = open_db_connection(&app)?;
     let mut current_hotkey = hotkey_state
         .current
@@ -1429,6 +1556,65 @@ fn set_hotkey(
 
     *current_hotkey = next_hotkey.clone();
     Ok(next_hotkey)
+}
+
+#[tauri::command]
+fn set_dismiss_hotkey(
+    app: AppHandle,
+    hotkey: String,
+    dismiss_hotkey_state: State<'_, DismissHotkeyBindingState>,
+    hotkey_state: State<'_, HotkeyBindingState>,
+) -> Result<String, String> {
+    let next = normalize_hotkey_input(&hotkey)?;
+    Shortcut::from_str(&next).map_err(|e| format!("Invalid shortcut: {e}"))?;
+    let toggle_guard = hotkey_state
+        .current
+        .lock()
+        .map_err(|_| "hotkey state poisoned".to_string())?;
+    if hotkeys_collide(&next, toggle_guard.as_str()) {
+        return Err(
+            "That shortcut is already used for Show / toggle HUD. Pick a different combo."
+                .to_string(),
+        );
+    }
+    drop(toggle_guard);
+
+    let conn = open_db_connection(&app)?;
+    let mut current = dismiss_hotkey_state
+        .current
+        .lock()
+        .map_err(|_| "dismiss hotkey state poisoned".to_string())?;
+    let existing = current.clone();
+    if existing == next {
+        db::set_setting(&conn, SETTING_KEY_DISMISS_HOTKEY, &next).map_err(|e| e.to_string())?;
+        return Ok(next);
+    }
+
+    app.global_shortcut()
+        .unregister(existing.as_str())
+        .map_err(|e| format!("failed to unregister dismiss shortcut `{existing}`: {e}"))?;
+
+    if let Err(register_error) = app.global_shortcut().register(next.as_str()) {
+        let _ = app.global_shortcut().register(existing.as_str());
+        return Err(format!(
+            "failed to register dismiss shortcut `{next}`: {register_error}"
+        ));
+    }
+
+    if let Err(persist_error) = db::set_setting(&conn, SETTING_KEY_DISMISS_HOTKEY, &next) {
+        let _ = app.global_shortcut().unregister(next.as_str());
+        let _ = app.global_shortcut().register(existing.as_str());
+        return Err(format!(
+            "failed to persist dismiss shortcut: {persist_error}"
+        ));
+    }
+
+    *current = next.clone();
+    let _ = app.emit(
+        DISMISS_HOTKEY_CHANGED_EVENT,
+        serde_json::json!({ "hotkey": next }),
+    );
+    Ok(next)
 }
 
 #[tauri::command]
@@ -1720,69 +1906,20 @@ fn update_settings(
 }
 
 #[tauri::command]
-fn save_api_key(
-    app: AppHandle,
-    service: String,
-    key: String,
-    wake_slot: State<'_, WakeSupervisorState>,
-    hud_state: State<'_, SharedHud>,
-    audio: State<'_, SharedAudioPipeline>,
-    is_paused: State<'_, Arc<AtomicBool>>,
-) -> Result<(), String> {
+fn save_api_key(app: AppHandle, service: String, key: String) -> Result<(), String> {
     let normalized = service.trim().to_ascii_lowercase();
     keychain::save_api_key(&normalized, &key)?;
     let conn = open_db_connection(&app)?;
     db::set_key_stored_flag(&conn, &normalized, true).map_err(|e| e.to_string())?;
-    if normalized == "porcupine" {
-        let conn = open_db_connection(&app)?;
-        let settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
-        if settings.wake_engine == "porcupine" {
-            let resource_dir =
-                crate::audio::wake::resolve_wake_resource_root(&app, settings.wake_engine.as_str());
-            wake_reload_from_settings(
-                &app,
-                wake_slot.inner(),
-                resource_dir,
-                &settings,
-                hud_state.inner(),
-                audio.inner(),
-                is_paused.inner(),
-            );
-        }
-    }
     Ok(())
 }
 
 #[tauri::command]
-fn delete_api_key(
-    app: AppHandle,
-    service: String,
-    wake_slot: State<'_, WakeSupervisorState>,
-    hud_state: State<'_, SharedHud>,
-    audio: State<'_, SharedAudioPipeline>,
-    is_paused: State<'_, Arc<AtomicBool>>,
-) -> Result<(), String> {
+fn delete_api_key(app: AppHandle, service: String) -> Result<(), String> {
     let normalized = service.trim().to_ascii_lowercase();
     keychain::delete_api_key(&normalized)?;
     let conn = open_db_connection(&app)?;
     db::set_key_stored_flag(&conn, &normalized, false).map_err(|e| e.to_string())?;
-    if normalized == "porcupine" {
-        let conn = open_db_connection(&app)?;
-        let settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
-        if settings.wake_engine == "porcupine" {
-            let resource_dir =
-                crate::audio::wake::resolve_wake_resource_root(&app, settings.wake_engine.as_str());
-            wake_reload_from_settings(
-                &app,
-                wake_slot.inner(),
-                resource_dir,
-                &settings,
-                hud_state.inner(),
-                audio.inner(),
-                is_paused.inner(),
-            );
-        }
-    }
     Ok(())
 }
 
@@ -1811,6 +1948,9 @@ pub fn run() {
         .manage(HotkeyBindingState {
             current: Mutex::new(DEFAULT_HOTKEY.to_string()),
         })
+        .manage(DismissHotkeyBindingState {
+            current: Mutex::new(DEFAULT_DISMISS_HOTKEY.to_string()),
+        })
         .manage(WakeSupervisorState::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
@@ -1824,6 +1964,7 @@ pub fn run() {
                 let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                 db::init_db(&dir.join("jarvis.db")).map_err(|e| e.to_string())?;
+                keychain::purge_retired_credentials();
                 refresh_app_index_on_startup(app.handle(), &app_index_for_setup)?;
                 refresh_command_cache(app.handle(), &command_cache_for_setup)?;
                 let conn = open_db_connection(app.handle())?;
@@ -1867,6 +2008,43 @@ pub fn run() {
                         .map_err(|_| "hotkey state poisoned".to_string())?;
                     *current = configured_hotkey.clone();
                 }
+                let mut configured_dismiss =
+                    match db::get_setting(&conn, SETTING_KEY_DISMISS_HOTKEY)
+                        .map_err(|e| e.to_string())?
+                    {
+                        Some(value) if !value.trim().is_empty() => value.trim().to_string(),
+                        _ => {
+                            db::set_setting(&conn, SETTING_KEY_DISMISS_HOTKEY, DEFAULT_DISMISS_HOTKEY)
+                                .map_err(|e| e.to_string())?;
+                            DEFAULT_DISMISS_HOTKEY.to_string()
+                        }
+                    };
+                if Shortcut::from_str(&configured_dismiss).is_err() {
+                    warn!(
+                        "invalid dismiss_hotkey `{configured_dismiss}`; reverting to {}",
+                        DEFAULT_DISMISS_HOTKEY
+                    );
+                    db::set_setting(&conn, SETTING_KEY_DISMISS_HOTKEY, DEFAULT_DISMISS_HOTKEY)
+                        .map_err(|e| e.to_string())?;
+                    configured_dismiss = DEFAULT_DISMISS_HOTKEY.to_string();
+                }
+                if hotkeys_collide(&configured_dismiss, &configured_hotkey) {
+                    warn!(
+                        "dismiss_hotkey collided with hotkey; reverting dismiss to {}",
+                        DEFAULT_DISMISS_HOTKEY
+                    );
+                    db::set_setting(&conn, SETTING_KEY_DISMISS_HOTKEY, DEFAULT_DISMISS_HOTKEY)
+                        .map_err(|e| e.to_string())?;
+                    configured_dismiss = DEFAULT_DISMISS_HOTKEY.to_string();
+                }
+                {
+                    let dismiss_state = app.state::<DismissHotkeyBindingState>();
+                    let mut current = dismiss_state
+                        .current
+                        .lock()
+                        .map_err(|_| "dismiss hotkey state poisoned".to_string())?;
+                    *current = configured_dismiss.clone();
+                }
 
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 {
@@ -1908,22 +2086,49 @@ pub fn run() {
                     });
 
                     let shortcut_plugin = ShortcutBuilder::new()
-                        .with_shortcuts([configured_hotkey.as_str()])
+                        .with_shortcuts([
+                            configured_hotkey.as_str(),
+                            configured_dismiss.as_str(),
+                        ])
                         .map_err(|e| e.to_string())?
                         .with_handler({
                             let hud_state = Arc::clone(&hud_state);
                             let audio_for_shortcut = audio_for_shortcut.clone();
                             let is_paused_for_shortcut = Arc::clone(&is_paused_for_shortcut);
-                            move |app, _shortcut, event| {
+                            move |app, shortcut, event| {
                                 if event.state != ShortcutState::Pressed {
                                     return;
                                 }
-                                let _ = show_hud_from_hotkey(
-                                    app,
-                                    &hud_state,
-                                    &audio_for_shortcut,
-                                    &is_paused_for_shortcut,
-                                );
+                                let triggered_id = shortcut.id();
+                                let toggle_s = app
+                                    .state::<HotkeyBindingState>()
+                                    .current
+                                    .lock()
+                                    .map(|g| g.clone())
+                                    .unwrap_or_else(|_| DEFAULT_HOTKEY.to_string());
+                                let dismiss_s = app
+                                    .state::<DismissHotkeyBindingState>()
+                                    .current
+                                    .lock()
+                                    .map(|g| g.clone())
+                                    .unwrap_or_else(|_| DEFAULT_DISMISS_HOTKEY.to_string());
+                                let toggle_id = Shortcut::from_str(&toggle_s).ok().map(|h| h.id());
+                                let dismiss_id =
+                                    Shortcut::from_str(&dismiss_s).ok().map(|h| h.id());
+                                if dismiss_id == Some(triggered_id) {
+                                    run_dismiss_from_shortcut(
+                                        app,
+                                        app.state::<SharedHud>().inner(),
+                                        app.state::<SharedAudioPipeline>().inner(),
+                                    );
+                                } else if toggle_id == Some(triggered_id) {
+                                    let _ = show_hud_from_hotkey(
+                                        app,
+                                        &hud_state,
+                                        &audio_for_shortcut,
+                                        &is_paused_for_shortcut,
+                                    );
+                                }
                             }
                         })
                         .build();
@@ -1931,8 +2136,8 @@ pub fn run() {
                         let msg = e.to_string();
                         if is_hotkey_already_registered_error(&msg) {
                             warn!(
-                                "global shortcut `{}` already registered elsewhere; startup continues without hotkey listener ({})",
-                                configured_hotkey, msg
+                                "global shortcut(s) already registered elsewhere; startup continues without hotkey listener ({})",
+                                msg
                             );
                         } else {
                             return Err(msg.into());
@@ -1942,10 +2147,7 @@ pub fn run() {
 
                 sync_hud_window(app.handle(), HudPhase::Idle).map_err(|e| e.to_string())?;
                 emit_hud_phase(app.handle(), HudPhase::Idle);
-                #[cfg(windows)]
-                editor_window_win::configure_editor_frame(app.handle());
-                #[cfg(windows)]
-                hud_window_win::configure_hud_frame(app.handle());
+                sync_hud_webview_background(app.handle());
                 Ok(())
             }
         })
@@ -1963,6 +2165,7 @@ pub fn run() {
             get_setting,
             set_setting,
             set_hotkey,
+            set_dismiss_hotkey,
             get_settings,
             search_app_index,
             get_app_index_status,
@@ -2011,7 +2214,6 @@ mod tests {
 
     fn sample_settings(wake_engine: &str) -> db::AppSettings {
         db::AppSettings {
-            porcupine_key_stored: false,
             wake_engine: wake_engine.into(),
             oww_threshold: 0.5,
             stt_provider: "local".into(),
@@ -2040,16 +2242,15 @@ mod tests {
     }
 
     #[test]
-    fn wake_engine_uses_dedicated_thread_only_for_porcupine_and_oww() {
+    fn wake_engine_uses_dedicated_thread_only_for_oww() {
         assert!(!wake_engine_uses_dedicated_thread("hotkey"));
-        assert!(wake_engine_uses_dedicated_thread("porcupine"));
         assert!(wake_engine_uses_dedicated_thread("oww"));
     }
 
     #[test]
     fn settings_patch_wake_engine_triggers_wake_reload() {
         let patch = db::SettingsPatch {
-            wake_engine: Some("porcupine".into()),
+            wake_engine: Some("oww".into()),
             oww_threshold: None,
             stt_provider: None,
             remote_stt_url: None,
@@ -2059,7 +2260,7 @@ mod tests {
         };
         assert!(settings_patch_triggers_wake_reload(
             &patch,
-            &sample_settings("porcupine")
+            &sample_settings("oww")
         ));
     }
 
@@ -2141,6 +2342,32 @@ mod tests {
     }
 
     #[test]
+    fn no_match_idle_no_words_uses_listen_start_deadline() {
+        let mut rt = HudRuntime::default();
+        rt.visible = true;
+        rt.phase = HudPhase::Listening;
+        rt.nonempty_transcript_this_listen = false;
+        rt.listening_started_at = Instant::now() - NO_WORDS_DISMISS_AFTER - Duration::from_millis(50);
+        assert!(no_match_idle_should_dismiss(&rt));
+        rt.listening_started_at = Instant::now();
+        assert!(!no_match_idle_should_dismiss(&rt));
+    }
+
+    #[test]
+    fn no_match_idle_after_words_uses_last_transcript_deadline() {
+        let mut rt = HudRuntime::default();
+        rt.visible = true;
+        rt.phase = HudPhase::Listening;
+        rt.nonempty_transcript_this_listen = true;
+        rt.last_nonempty_transcript_at = Some(
+            Instant::now() - AFTER_WORDS_NO_MATCH_DISMISS_AFTER - Duration::from_millis(50),
+        );
+        assert!(no_match_idle_should_dismiss(&rt));
+        rt.last_nonempty_transcript_at = Some(Instant::now());
+        assert!(!no_match_idle_should_dismiss(&rt));
+    }
+
+    #[test]
     fn no_match_timeout_requires_same_session_and_listening() {
         let mut rt = HudRuntime::default();
         rt.visible = true;
@@ -2150,13 +2377,6 @@ mod tests {
         assert!(!should_fire_no_match_timeout(&rt, 8));
         rt.phase = HudPhase::Done;
         assert!(!should_fire_no_match_timeout(&rt, 7));
-    }
-
-    /// Watchdog fires only once `last.elapsed()` exceeds the window (speech resets `last`).
-    #[test]
-    fn no_match_fires_when_idle_since_last_speech_exceeds_timeout() {
-        let last = Instant::now() - NO_MATCH_TIMEOUT - Duration::from_millis(50);
-        assert!(last.elapsed() >= NO_MATCH_TIMEOUT);
     }
 
     #[test]

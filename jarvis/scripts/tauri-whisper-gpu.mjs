@@ -53,6 +53,29 @@ function hasPath(dir) {
   return typeof dir === "string" && dir.trim().length > 0 && fs.existsSync(dir);
 }
 
+/**
+ * Directory containing `libclang.dll` for whisper-rs-sys bindgen (unset → try default LLVM install).
+ * @param {string | undefined} alreadySet
+ * @returns {string | null}
+ */
+function windowsDefaultLibClangDir(alreadySet) {
+  if (process.platform !== "win32") return null;
+  const trimmed = alreadySet?.trim();
+  if (trimmed) {
+    const dll = path.join(trimmed, "libclang.dll");
+    return fs.existsSync(dll) ? trimmed : null;
+  }
+  const candidates = [
+    process.env.LLVM_PATH ? path.join(process.env.LLVM_PATH, "bin") : "",
+    path.join(process.env.ProgramFiles ?? "C:\\Program Files", "LLVM", "bin"),
+    path.join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "LLVM", "bin"),
+  ].filter((p) => typeof p === "string" && p.length > 0);
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, "libclang.dll"))) return dir;
+  }
+  return null;
+}
+
 function windowsCudaToolkitLayoutOk(cudaRoot) {
   if (!cudaRoot) return false;
   const nvcc = path.join(cudaRoot, "bin", "nvcc.exe");
@@ -184,6 +207,76 @@ function discoverWindowsMsvcHostX64BinDir() {
   return null;
 }
 
+/** VC Tools `include` next to a discovered `cl.exe` (for bindgen / libclang). */
+function discoverWindowsMsvcIncludeDir() {
+  const hostBin = discoverWindowsMsvcHostX64BinDir();
+  if (!hostBin) return null;
+  // hostBin is …/MSVC/<ver>/bin/Hostx64/x64 — include is …/MSVC/<ver>/include (three levels up).
+  const inc = path.normalize(path.join(hostBin, "..", "..", "..", "include"));
+  return fs.existsSync(path.join(inc, "vcruntime.h")) ? inc : null;
+}
+
+/**
+ * UCRT + shared + um include dirs for a current Windows 10/11 SDK (bindgen / libclang).
+ * @returns {string[]}
+ */
+function discoverWindowsKitsBindgenIncludes() {
+  const incRoot = path.join(
+    process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
+    "Windows Kits",
+    "10",
+    "Include",
+  );
+  if (!fs.existsSync(incRoot)) return [];
+  const versions = fs
+    .readdirSync(incRoot, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name)
+    .filter((n) => /^\d+\.\d+\.\d+/.test(n))
+    .sort(compareVersionNamesDesc);
+  for (const ver of versions) {
+    const base = path.join(incRoot, ver);
+    const ucrt = path.join(base, "ucrt");
+    // UCRT ships `stdbool.h` on some SDK layouts only via MSVC include; use `corecrt.h` to
+    // detect a usable UCRT tree (bindgen still gets `stdbool.h` from MSVC include below).
+    if (!fs.existsSync(path.join(ucrt, "corecrt.h"))) continue;
+    const out = [ucrt, path.join(base, "shared"), path.join(base, "um")].filter((p) =>
+      fs.existsSync(p),
+    );
+    return out.length >= 1 ? out : [];
+  }
+  return [];
+}
+
+/**
+ * Extra clang args so whisper-rs-sys bindgen can parse headers outside a VS Developer shell.
+ * @returns {string | null}
+ */
+function windowsBindgenExtraClangArgs() {
+  const msvcInc = discoverWindowsMsvcIncludeDir();
+  const kits = discoverWindowsKitsBindgenIncludes();
+  if (!msvcInc) return null;
+  if (kits.length === 0 && !fs.existsSync(path.join(msvcInc, "stdbool.h"))) return null;
+  const slash = (/** @type {string} */ p) => p.replace(/\\/g, "/");
+  // bindgen splits BINDGEN_EXTRA_CLANG_ARGS with shlex — use `-isystem "path"` (space + quotes).
+  const parts = [msvcInc, ...kits].map((p) => {
+    const n = slash(p);
+    return n.includes(" ") ? `-isystem "${n}"` : `-isystem ${n}`;
+  });
+  return parts.join(" ");
+}
+
+/** Append a flag to `CL` / `_CL_` so nvcc-invoked `cl.exe` sees it (whisper-rs-sys overwrites CMAKE_CUDA_FLAGS). */
+function appendWindowsClFlag(envObj, flag) {
+  const token = flag.trim();
+  if (!token) return;
+  for (const key of ["CL", "_CL_"]) {
+    const prev = envObj[key]?.trim();
+    if (prev?.includes(token)) continue;
+    envObj[key] = prev ? `${prev} ${token}` : token;
+  }
+}
+
 function applyWindowsCudaBuildEnvIfNeeded(envObj) {
   if (process.platform !== "win32") return null;
   const cudaRoot = resolveWindowsCudaToolkitRoot();
@@ -212,6 +305,8 @@ function applyWindowsCudaBuildEnvIfNeeded(envObj) {
   if (!envObj.CMAKE_CUDA_COMPILER) envObj.CMAKE_CUDA_COMPILER = nvccExe;
   if (!envObj.CMAKE_CUDA_HOST_COMPILER) envObj.CMAKE_CUDA_HOST_COMPILER = clExe;
   if (!envObj.CMAKE_CUDA_FLAGS) envObj.CMAKE_CUDA_FLAGS = "-Xcompiler=/Zc:preprocessor";
+  // whisper-rs-sys passes `-Xcompiler=-fPIC` only; CUDA 13 + CCCL require conforming preprocessor on MSVC.
+  appendWindowsClFlag(envObj, "/Zc:preprocessor");
   if (!envObj.CMAKE_SUPPRESS_DEVELOPER_WARNINGS) {
     envObj.CMAKE_SUPPRESS_DEVELOPER_WARNINGS = "1";
   }
@@ -779,6 +874,8 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
   );
 
   const childEnv = { ...process.env };
+  // CUDA on Windows must use NMake + nvcc (see applyWindowsCudaBuildEnvIfNeeded). Pinning VS2022
+  // first breaks that path (VS generator + CMAKE_MAKE_PROGRAM=nmake is invalid).
   if (withGpuSelection && selected.backend === "cuda" && process.platform === "win32") {
     const cudaBuildEnv = applyWindowsCudaBuildEnvIfNeeded(childEnv);
     if (cudaBuildEnv) {
@@ -792,6 +889,29 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
       childEnv.Path = mergedPath;
       console.log(
         `tauri-whisper-gpu: configured CUDA build env (generator=${cudaBuildEnv.generator}; CUDA_PATH=${cudaBuildEnv.cudaRoot})`,
+      );
+    }
+  } else if (process.platform === "win32" && !childEnv.CMAKE_GENERATOR?.trim()) {
+    // CMake 4+ may default to "Visual Studio 18 2026", which many dev boxes do not have.
+    childEnv.CMAKE_GENERATOR = "Visual Studio 17 2022";
+  }
+  if (process.platform === "win32") {
+    const libClang = windowsDefaultLibClangDir(childEnv.LIBCLANG_PATH);
+    if (libClang && !childEnv.LIBCLANG_PATH?.trim()) {
+      childEnv.LIBCLANG_PATH = libClang;
+      console.log(`tauri-whisper-gpu: set LIBCLANG_PATH=${libClang} (whisper-rs-sys bindgen)`);
+    }
+    const bindgenExtra = windowsBindgenExtraClangArgs();
+    if (bindgenExtra) {
+      const prev = childEnv.BINDGEN_EXTRA_CLANG_ARGS?.trim();
+      const merged = prev ? `${prev} ${bindgenExtra}` : bindgenExtra;
+      childEnv.BINDGEN_EXTRA_CLANG_ARGS = merged;
+      childEnv["BINDGEN_EXTRA_CLANG_ARGS_x86_64-pc-windows-msvc"] = merged;
+      childEnv.BINDGEN_EXTRA_CLANG_ARGS_x86_64_pc_windows_msvc = merged;
+      console.log("tauri-whisper-gpu: set BINDGEN_EXTRA_CLANG_ARGS for MSVC + Windows SDK includes");
+    } else {
+      console.warn(
+        "tauri-whisper-gpu: could not resolve MSVC/Windows SDK include paths for whisper-rs-sys bindgen; install VS 2022 Build Tools + Windows SDK or use a Developer shell.",
       );
     }
   }

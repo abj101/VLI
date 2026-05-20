@@ -13,8 +13,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:wake": "vitest run scripts/fetch-wake-models.config.test.mjs && cargo test --manifest-path src-tauri/Cargo.toml --features oww audio::wake::oww",
-    "test:cargo-whisper-vulkan": "cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features whisper-vulkan,porcupine,oww",
-    "test:cargo-whisper-cuda": "cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features whisper-cuda,porcupine,oww",
+    "test:cargo-whisper-vulkan": "cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features whisper-vulkan,oww",
+    "test:cargo-whisper-cuda": "cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features whisper-cuda,oww",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
     "tauri": "node scripts/tauri-whisper-gpu.mjs"

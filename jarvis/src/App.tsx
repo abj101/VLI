@@ -1,8 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { invoke } from "@tauri-apps/api/core";
 import {
   applyEditorThemeToDocument,
+  hotkeyChordMatchesKeyboardEvent,
   normalizeThemePreference,
 } from "./components/editor/SettingsPanel.logic";
 import { HudPanel } from "./components/hud/HudPanel";
@@ -10,6 +12,17 @@ import { subscribeHudIpc } from "./store/hudIpc";
 import "./App.css";
 
 export default function App() {
+  const [dismissHotkeyChord, setDismissHotkeyChord] = useState("escape");
+  const dismissChordRef = useRef("escape");
+  dismissChordRef.current = dismissHotkeyChord;
+
+  /** WebView2 on Win: alpha≠0 in host `backgroundColor` → opaque backing → ghost when DOM fades. */
+  useEffect(() => {
+    void getCurrentWebview()
+      .setBackgroundColor([0, 0, 0, 0])
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     let mounted = true;
     void invoke<string | null>("get_setting", { key: "theme" })
@@ -63,8 +76,34 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let mounted = true;
+    void invoke<string | null>("get_setting", { key: "dismiss_hotkey" })
+      .then((raw) => {
+        if (!mounted || !raw?.trim()) return;
+        setDismissHotkeyChord(raw.trim());
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<{ hotkey?: string }>("dismiss-hotkey-changed", (e) => {
+      const raw = e.payload.hotkey;
+      if (raw?.trim()) setDismissHotkeyChord(raw.trim());
+    }).then((u) => {
+      unlisten = u;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      if (!hotkeyChordMatchesKeyboardEvent(dismissChordRef.current, e)) return;
       e.preventDefault();
       void invoke("hud_dismiss").catch(() => {});
     };
@@ -72,5 +111,5 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  return <HudPanel />;
+  return <HudPanel dismissHotkeyChord={dismissHotkeyChord} />;
 }

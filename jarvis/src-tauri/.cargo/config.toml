@@ -4,5 +4,10 @@
 # If a local setup needs a custom executable path, set CMAKE in the shell/user profile:
 #   PowerShell: $env:CMAKE = "C:\path\to\cmake.exe"
 #   bash/zsh:   export CMAKE=/path/to/cmake
+#
+# Windows: newer CMake may pick "Visual Studio 18 2026"; `npm run tauri *` sets CMAKE_GENERATOR to
+# VS 2022 and LIBCLANG_PATH when LLVM is in a default install path (see `scripts/tauri-whisper-gpu.mjs`).
+# For raw `cargo` on Windows, set `CMAKE_GENERATOR=Visual Studio 17 2022` and `LIBCLANG_PATH` to your
+# LLVM `bin` folder (see README) if configure or whisper-rs-sys bindgen fails.
 [env]
 CMAKE = { value = "cmake", force = false }

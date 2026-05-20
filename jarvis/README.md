@@ -3,10 +3,11 @@
 ## Prerequisites (Windows)
 
 - [Rust](https://rustup.rs/) stable, [Node.js](https://nodejs.org/) LTS
-- **Whisper / `whisper-rs`:** **CMake** (e.g. `winget install Kitware.CMake`) and **LLVM 18.x** (winget; for bindgen set user env `LIBCLANG_PATH` to `C:\Program Files\LLVM\bin` so `libclang.dll` is found), plus a **MSVC** C++ build environment (Visual Studio “Desktop development with C++” workload, or Build Tools). `whisper-rs` builds native `whisper.cpp` sources via CMake.
+- **Whisper / `whisper-rs`:** **CMake** (`winget install Kitware.CMake`), **LLVM** (`winget install LLVM.LLVM` — `libclang.dll` in `C:\Program Files\LLVM\bin`), and **MSVC** (**VS 2022** Build Tools or full VS — use **x64 Native Tools** / **Developer PowerShell** when `cl.exe` is missing from `PATH`). `whisper-rs-sys` runs **bindgen** (needs `LIBCLANG_PATH` plus MSVC + Windows SDK include paths unless you use a VS Developer shell). **`npm run tauri dev` / `npm run tauri build`** (via `scripts/tauri-whisper-gpu.mjs`) sets `LIBCLANG_PATH` when LLVM is in the default folder, fills `BINDGEN_EXTRA_CLANG_ARGS` from your MSVC + Windows SDK install, sets **`CMAKE_GENERATOR=Visual Studio 17 2022`** for non-CUDA builds (CMake 4+ otherwise may pick **Visual Studio 18 2026**), and leaves the **CUDA** path on **NMake + nvcc** unchanged. For raw `cargo`, mirror those env vars or open a **Developer** shell.
 - **Piper TTS (`Speak` action):** install/download `piper.exe` (Windows) or `piper` (macOS/Linux) and one `.onnx` voice model. Configure with env vars `JARVIS_PIPER_BIN` and `JARVIS_PIPER_MODEL` (or `PIPER_BIN` / `PIPER_MODEL`). Fallback search paths include `src-tauri/resources/piper/`.
 - **PATH / discovery:** Rust builds read `src-tauri/.cargo/config.toml`, which defaults `CMAKE` to `cmake` and expects your shell `PATH` to resolve the executable. For shells outside the editor, add your CMake install location to `PATH` or export `CMAKE`.
 - **Microphone** permission for the dev or packaged app
+- **PowerShell:** If you run `cargo` yourself in PowerShell, do not append `2>&1` to the command — Cargo uses stderr for progress lines, and merging streams makes PowerShell show spurious `RemoteException` / `CategoryInfo` output even when the build succeeded. Use the command’s exit code (`$LASTEXITCODE`) to detect failure.
 
 ## Prerequisites (macOS)
 
@@ -68,7 +69,7 @@ Rust (from `jarvis/src-tauri/`):
 
 ## CI / release checklist (local or automation)
 
-Run in order after a clean checkout (with Rust + Node + CMake + MSVC + LLVM as above):
+Run in order after a clean checkout (with Rust + Node + CMake + MSVC or Xcode as above):
 
 1. `cd jarvis` → `npm ci` (or `npm install`)
 2. `npm run lint`
@@ -127,7 +128,7 @@ The **React command editor** is a second window (not the HUD). Open it from the 
 
 ### Keyboard and shortcuts
 
-- **HUD (overlay):** global hotkey (default **Ctrl+Shift+J**, configurable in Settings) starts listening; **Esc** stops (same as the on-screen stop control). Shortcut hint under the stop button is **9px** mono per design spec.
+- **HUD (overlay):** global shortcut (default **Ctrl+Shift+J**, configurable in Settings → Hotkeys) shows or toggles the HUD; **Dismiss voice overlay** (default **escape**, also under Hotkeys) stops the session and hides the HUD. The two shortcuts must use different combos.
 - **Editor window:** standard **Tab** / **Shift+Tab** focus order; form fields and buttons have no separate global chord beyond OS defaults. After changing the hotkey in Settings, the new combo applies immediately after a successful save.
 
 ### Migrations

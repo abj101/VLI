@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  hotkeyChordMatchesKeyboardEvent,
   normalizeSttProvider,
   normalizeThemePreference,
   parseRemoteSttTimeoutSecs,
@@ -78,6 +79,46 @@ describe("SettingsPanel logic", () => {
     );
     expect(resolveEditorTheme("system")).toBe("dark");
     vi.unstubAllGlobals();
+  });
+
+  it("matches hotkey chord against keyboard events", () => {
+    const esc = {
+      key: "Escape",
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      metaKey: false,
+    } as KeyboardEvent;
+    expect(hotkeyChordMatchesKeyboardEvent("escape", esc)).toBe(true);
+    expect(hotkeyChordMatchesKeyboardEvent("Escape", esc)).toBe(true);
+
+    const j = {
+      key: "j",
+      ctrlKey: true,
+      shiftKey: true,
+      altKey: false,
+      metaKey: false,
+    } as KeyboardEvent;
+    expect(hotkeyChordMatchesKeyboardEvent("ctrl+shift+j", j)).toBe(true);
+    expect(hotkeyChordMatchesKeyboardEvent("ctrl+shift+J", j)).toBe(true);
+
+    const jNoMod = {
+      key: "j",
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      metaKey: false,
+    } as KeyboardEvent;
+    expect(hotkeyChordMatchesKeyboardEvent("ctrl+shift+j", jNoMod)).toBe(false);
+
+    const escWithCtrl = {
+      key: "Escape",
+      ctrlKey: true,
+      shiftKey: false,
+      altKey: false,
+      metaKey: false,
+    } as KeyboardEvent;
+    expect(hotkeyChordMatchesKeyboardEvent("escape", escWithCtrl)).toBe(false);
   });
 
   it("requires non-empty hotkey input", () => {

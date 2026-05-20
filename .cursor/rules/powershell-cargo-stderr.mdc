@@ -1,0 +1,14 @@
+---
+description: PowerShell on Windows — do not merge Cargo stderr into stdout
+alwaysApply: true
+---
+
+# PowerShell + Rust CLI (Windows)
+
+When the shell is **PowerShell** on Windows (including Cursor’s Shell tool):
+
+- **Never** suffix `cargo`, `rustc`, or `rustup` with **`2>&1`**, **`*>&1`**, or other merges that fold **stderr into the success stream**. Cargo prints normal progress (e.g. `Checking …`) to stderr; that merge makes PowerShell emit bogus **`CategoryInfo` / `RemoteException`** blocks even when exit code is **0**.
+- Invoke Rust tooling **without** those redirects, e.g. `cargo check --features oww`, and use the process **exit code** for success vs failure.
+- If full log capture is required, prefer **`cmd /c`** for that command so stderr is not reinterpreted as PowerShell errors, or capture streams separately without `2>&1` into the success pipeline.
+
+Repo scripts (`package.json`, `.ps1`) already avoid `2>&1` for Cargo; keep it that way.

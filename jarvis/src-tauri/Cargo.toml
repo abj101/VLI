@@ -18,10 +18,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [features]
-# Ship both wake backends: Porcupine (Picovoice) + OpenWakeWord (ONNX via ort).
-default = ["porcupine", "oww"]
+# OpenWakeWord wake backend (ONNX via ort).
+default = ["oww"]
 oww = ["dep:ort", "dep:ndarray"]
-porcupine = ["dep:libloading"]
 # Optional Whisper.cpp GPU backends (requires matching SDK/toolchain when building).
 # Example: `cargo build --features whisper-vulkan` (Vulkan SDK on PATH).
 whisper-vulkan = ["whisper-rs/vulkan"]
@@ -47,13 +46,11 @@ ureq = { version = "2.12", default-features = false, features = ["tls"] }
 base64 = "0.22"
 png = "0.17"
 url = "2"
-libloading = { version = "0.8", optional = true }
 # ONNX Runtime via ort (OpenWakeWord); only linked when `oww` feature is enabled.
 ort = { version = "2.0.0-rc.12", optional = true, default-features = true, features = ["download-binaries", "ndarray"] }
 ndarray = { version = "0.17", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-raw-window-handle = "0.6"
 winreg = "0.52"
 windows = { version = "0.61", features = [
     "Win32_Foundation",

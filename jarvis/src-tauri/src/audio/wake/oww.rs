@@ -446,7 +446,6 @@ mod tests {
             return;
         }
         let settings = AppSettings {
-            porcupine_key_stored: false,
             wake_engine: "oww".into(),
             oww_threshold: 0.73,
             stt_provider: "local".into(),

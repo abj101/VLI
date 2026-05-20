@@ -2,7 +2,6 @@ use crate::db::DbError;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-pub const SETTING_PORCUPINE_KEY_STORED: &str = "porcupine_key_stored";
 pub const SETTING_WAKE_ENGINE: &str = "wake_engine";
 pub const SETTING_OWW_THRESHOLD: &str = "oww_threshold";
 pub const SETTING_STT_PROVIDER: &str = "stt_provider";
@@ -32,6 +31,20 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<(), DbEr
     Ok(())
 }
 
+/// Drops retired settings rows and normalizes values from removed features (best-effort idempotent).
+pub fn prune_legacy_settings(conn: &Connection) -> Result<(), DbError> {
+    conn.execute(
+        "DELETE FROM settings WHERE key IN ('porcupine_key_stored')",
+        [],
+    )?;
+    if let Some(raw) = get_setting(conn, SETTING_WAKE_ENGINE)? {
+        if raw.trim().eq_ignore_ascii_case("porcupine") {
+            set_setting(conn, SETTING_WAKE_ENGINE, "oww")?;
+        }
+    }
+    Ok(())
+}
+
 fn bool_from_setting(raw: Option<String>) -> bool {
     raw.map(|v| v.trim() == "1").unwrap_or(false)
 }
@@ -41,10 +54,11 @@ fn parse_wake_engine(raw: Option<String>) -> String {
         .map(|v| v.trim().to_ascii_lowercase())
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| "oww".to_string());
-    if matches!(s.as_str(), "hotkey" | "porcupine" | "oww") {
-        s
-    } else {
-        "oww".to_string()
+    match s.as_str() {
+        "hotkey" => "hotkey".into(),
+        "oww" => "oww".into(),
+        "porcupine" => "oww".into(),
+        _ => "oww".into(),
     }
 }
 
@@ -80,7 +94,6 @@ fn normalize_optional_trimmed(s: Option<String>) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    pub porcupine_key_stored: bool,
     pub wake_engine: String,
     pub oww_threshold: f32,
     /// `local` | `os` | `remote`
@@ -108,7 +121,6 @@ pub struct SettingsPatch {
 
 pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
     Ok(AppSettings {
-        porcupine_key_stored: bool_from_setting(get_setting(conn, SETTING_PORCUPINE_KEY_STORED)?),
         wake_engine: parse_wake_engine(get_setting(conn, SETTING_WAKE_ENGINE)?),
         oww_threshold: parse_oww_threshold(get_setting(conn, SETTING_OWW_THRESHOLD)?),
         stt_provider: parse_stt_provider_str(get_setting(conn, SETTING_STT_PROVIDER)?),
@@ -146,7 +158,7 @@ fn validate_remote_stt_url(url: &str) -> Result<(), DbError> {
 pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<(), DbError> {
     if let Some(ref raw) = patch.wake_engine {
         let normalized = raw.trim().to_ascii_lowercase();
-        if !matches!(normalized.as_str(), "hotkey" | "porcupine" | "oww") {
+        if !matches!(normalized.as_str(), "hotkey" | "oww") {
             return Err(DbError::Validation(format!(
                 "invalid wake_engine `{normalized}`"
             )));
@@ -202,7 +214,6 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
 
 pub fn set_key_stored_flag(conn: &Connection, service: &str, stored: bool) -> Result<(), DbError> {
     let key = match service {
-        "porcupine" => SETTING_PORCUPINE_KEY_STORED,
         "remote_stt" => SETTING_REMOTE_STT_KEY_STORED,
         _ => {
             return Err(DbError::Validation(format!(
@@ -247,10 +258,22 @@ mod tests {
     }
 
     #[test]
+    fn prune_legacy_settings_clears_porcupine_and_migrates_wake_engine() {
+        let (_dir, conn) = open_temp();
+        set_setting(&conn, "porcupine_key_stored", "1").expect("seed legacy flag");
+        set_setting(&conn, SETTING_WAKE_ENGINE, "porcupine").expect("seed legacy engine");
+        prune_legacy_settings(&conn).expect("prune");
+        assert_eq!(get_setting(&conn, "porcupine_key_stored").expect("get"), None);
+        assert_eq!(
+            get_setting(&conn, SETTING_WAKE_ENGINE).expect("get").as_deref(),
+            Some("oww")
+        );
+    }
+
+    #[test]
     fn get_app_settings_defaults_when_empty() {
         let (_dir, conn) = open_temp();
         let s = get_app_settings(&conn).expect("get_app_settings");
-        assert!(!s.porcupine_key_stored);
         assert_eq!(s.wake_engine, "oww");
         assert!((s.oww_threshold - 0.5).abs() < f32::EPSILON);
         assert_eq!(s.stt_provider, "local");

@@ -1,18 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { oww, porcupine } from "./fetch-wake-models.config.mjs";
+import { describe, expect, it } from "vitest";
+import { oww } from "./fetch-wake-models.config.mjs";
 
 describe("fetch-wake-models.config", () => {
-  it("lists Porcupine Windows bundle files", () => {
-    expect(porcupine.files.map(([, name]) => name)).toEqual(
-      expect.arrayContaining([
-        "libpv_porcupine.dll",
-        "porcupine_params.pv",
-        "porcupine_windows.ppn",
-      ]),
-    );
-  });
-
-  it("lists OpenWakeWord ONNX files expected by oww.rs", () => {
+  it("lists OpenWakeWord bundle files", () => {
     expect(oww.files).toEqual([
       "melspectrogram.onnx",
       "embedding_model.onnx",

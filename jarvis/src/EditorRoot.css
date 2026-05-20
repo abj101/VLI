@@ -2,7 +2,7 @@
 
 /* --- Theme tokens: resolved palette on `html[data-theme="light"|"dark"]` --- */
 
-/* Frameless editor: shell radius 0 — outer corners from native host (`DWMWCP_ROUND` in editor_window_win.rs). */
+/* Frameless editor: shell radius from CSS; window is transparent undecorated (tauri.conf). */
 html {
   /* Default until theme sync sets `data-theme` */
   --editor-bg: #0a0a0a;
@@ -17,7 +17,7 @@ html {
   overflow: hidden;
   /*
    * Keep root transparent so editor glass panels can blur desktop content just
-   * like HUD. overflow clips to the client rect; window outline is native DWM.
+   * like HUD. overflow clips to the client rect.
    */
   background: transparent;
   box-shadow: none;

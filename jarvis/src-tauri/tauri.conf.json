@@ -22,7 +22,7 @@
         "resizable": true,
         "visible": false,
         "theme": "Dark",
-        "backgroundColor": "#000000",
+        "backgroundColor": "#00000000",
         "transparent": true,
         "decorations": false,
         "alwaysOnTop": true,
@@ -57,9 +57,6 @@
     "targets": "all",
     "resources": [
       "resources/ggml-tiny.en.bin",
-      "resources/porcupine/libpv_porcupine.dll",
-      "resources/porcupine/porcupine_params.pv",
-      "resources/porcupine/porcupine_windows.ppn",
       "resources/oww/melspectrogram.onnx",
       "resources/oww/embedding_model.onnx",
       "resources/oww/hey_jarvis_v0.1.onnx"

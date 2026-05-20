@@ -1,8 +1,10 @@
 //! HUD window phase + click-through policy (Task 3).
 
+use log::warn;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+use tauri::window::Color;
 use tauri::AppHandle;
 use tauri::Manager;
 
@@ -86,6 +88,17 @@ pub fn sync_hud_window(app: &AppHandle, phase: HudPhase) -> Result<(), String> {
     window
         .set_ignore_cursor_events(ignore_cursor_for_phase(phase))
         .map_err(|e| e.to_string())
+}
+
+/// Fully transparent webview background (matches `transparent` + `backgroundColor` in `tauri.conf.json`).
+/// On Windows, WebView2 treats non-zero alpha as opaque — resetting avoids a dark rim during fades.
+pub fn sync_hud_webview_background(app: &AppHandle) {
+    let Some(w) = app.get_webview_window(HUD_WINDOW_LABEL) else {
+        return;
+    };
+    if let Err(e) = w.set_background_color(Some(Color(0, 0, 0, 0))) {
+        warn!("hud webview transparent background: {e}");
+    }
 }
 
 #[cfg(test)]

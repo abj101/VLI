@@ -7,9 +7,13 @@
  *   body        → background: transparent  ✓ (set below)
  *   #root       → background: transparent  ✓ (set below)
  *   .hud-panel-fill → background: transparent  ✓ (set below — was missing!)
- *   .hud-root   → glass-panel-1 handles background + backdrop-filter
+ *   .hud-root   → single glass surface (no stacked panel utilities)
  *
  * Any opaque fill anywhere in this chain breaks the glass effect.
+ *
+ * Host layer: on Windows, WebView2 + Tauri treat backgroundColor alpha ≠ 0 as opaque (see
+ * `Webview::setBackgroundColor` docs). Use `#00000000` in tauri.conf and `[0,0,0,0]` from JS +
+ * `sync_hud_webview_background` (`hud.rs`) so the fade is only DOM alpha, not a black back-buffer.
  */
 
 html,
@@ -30,8 +34,6 @@ body,
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Match native frame curve only; no second CSS radius on the web root. */
-  --hud-shell-radius: var(--radius-outer);
   --hud-window-bg: oklch(0.1 0 0);
   --hud-material-alpha: var(--material-hud-alpha);
   --hud-material-blur: var(--material-hud-blur);
@@ -39,22 +41,6 @@ body,
   --app-scrollbar-thumb: rgb(120 120 120 / 42%);
   --app-scrollbar-thumb-hover: rgb(120 120 120 / 55%);
   --app-scrollbar-thumb-active: rgb(120 120 120 / 68%);
-}
-
-html {
-  border-radius: var(--hud-shell-radius);
-  overflow: hidden;
-  background: transparent; /* MUST stay transparent — DWM/Tauri webview sees desktop */
-}
-
-body {
-  background: transparent;
-}
-
-#root {
-  border-radius: inherit;
-  overflow: hidden;
-  background: transparent; /* MUST stay transparent */
 }
 
 * {
@@ -111,9 +97,6 @@ body {
   --hud-accent-muted: var(--glass-text-muted);
   --hud-focus-ring: var(--color-accent);
   --hud-error: var(--glass-text-muted);
-  --hud-stop-ring-dim: color-mix(in oklch, var(--glass-text) 28%, transparent);
-  --hud-stop-ring-bright: color-mix(in oklch, var(--glass-text) 58%, transparent);
-  --hud-waveform-fill: color-mix(in oklch, var(--glass-text) 70%, transparent);
   --hud-tag-text: var(--glass-text);
   --hud-match-text: var(--glass-text-muted);
 }
@@ -137,9 +120,6 @@ html[data-theme="light"] .hud-panel-fill {
   --hud-accent-muted: var(--glass-text-muted);
   --hud-focus-ring: var(--color-accent);
   --hud-error: var(--glass-text-muted);
-  --hud-stop-ring-dim: color-mix(in oklch, var(--glass-text) 28%, transparent);
-  --hud-stop-ring-bright: color-mix(in oklch, var(--glass-text) 58%, transparent);
-  --hud-waveform-fill: color-mix(in oklch, var(--glass-text) 70%, transparent);
   --hud-tag-text: var(--glass-text);
   --hud-match-text: var(--glass-text-muted);
 }
@@ -147,11 +127,10 @@ html[data-theme="light"] .hud-panel-fill {
 /* ─────────────────────────────────────────────────────────────
  * .hud-root
  *
- * Gets background + backdrop-filter from .glass-panel-1 (in
- * glassTokens.css). This class must only add layout, sizing,
- * and the local token overrides — NOT its own background.
+ * Stand-alone glass card (no `.glass-panel-*` stacking). Keeps one backdrop-filter surface so
+ * dismiss doesn’t leave staggered blur / rim layers compositing at different rates.
  *
- * In HudPanel.tsx: className="hud-root glass-panel-1"
+ * In HudPanel.tsx: className="hud-root"
  * ───────────────────────────────────────────────────────────── */
 .hud-root {
   box-sizing: border-box;
@@ -165,6 +144,10 @@ html[data-theme="light"] .hud-panel-fill {
   overflow: hidden;
   color: var(--hud-text);
   position: relative;
+  outline: none;
+  /* Blur + opacity compositing can leave a 1px halo on exit without an explicit layer. */
+  backface-visibility: hidden;
+  transform: translateZ(0);
   border: var(--material-edge-line) solid var(--glass-border-side);
   background:
     linear-gradient(
@@ -175,33 +158,17 @@ html[data-theme="light"] .hud-panel-fill {
     color-mix(in oklch, var(--glass-surface) var(--hud-material-alpha), transparent);
   backdrop-filter: blur(var(--hud-material-blur)) saturate(var(--hud-material-saturate));
   -webkit-backdrop-filter: blur(var(--hud-material-blur)) saturate(var(--hud-material-saturate));
+  box-shadow:
+    var(--glass-shadow-ambient),
+    inset 0 1px 0 var(--glass-border-top),
+    inset 1px 0 0 var(--glass-rim-side),
+    inset -1px 0 0 var(--glass-rim-side),
+    inset 0 -1px 0 oklch(0 0 0 / 0.04);
 
   border-radius: 0; /* HUD window border-radius handled by html element + DWM */
-  /* transform: translateZ(0) already set by .glass-panel-1 */
 }
 
-/* Specular sheen overlay — sits above the glass-panel-1 background */
-.hud-root::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background: linear-gradient(
-    120deg,
-    color-mix(in oklch, oklch(1 0 0 / 0.14) 100%, transparent) 0%,
-    transparent 30%
-  );
-  border-radius: inherit;
-}
-
-/* All direct children sit above the ::before sheen */
-.hud-root > * {
-  position: relative;
-  z-index: 1;
-}
-
-/* Dark HUD: flat glass fill — no vertical wash, no diagonal sheen (still blurred). */
+/* Dark HUD: flat glass fill — no vertical wash (still blurred). */
 html[data-theme="dark"] .hud-root {
   background: color-mix(in oklch, var(--glass-surface) var(--hud-material-alpha), transparent);
   box-shadow:
@@ -209,13 +176,8 @@ html[data-theme="dark"] .hud-root {
     0 10px 32px -12px color-mix(in oklch, var(--glass-text) 5%, transparent);
 }
 
-html[data-theme="dark"] .hud-root::before {
-  display: none;
-}
-
 @media (prefers-contrast: more) {
   .hud-root {
-    /* glass-panel-1 already handles this, but be explicit */
     background: var(--glass-surface);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
@@ -233,14 +195,6 @@ html[data-theme="dark"] .hud-root::before {
 /* ─────────────────────────────────────────────────────────────
  * HUD component styles
  * ───────────────────────────────────────────────────────────── */
-
-.hud-title {
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  font-weight: 600;
-  opacity: 0.5;
-}
 
 .hud-phase {
   margin-top: 6px;
@@ -264,6 +218,8 @@ html[data-theme="dark"] .hud-root::before {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* Bottom bar is overlaid so transcript flex area = full height → true vertical center. */
+  position: relative;
 }
 
 .hud-body--solo {
@@ -291,6 +247,8 @@ html[data-theme="dark"] .hud-root::before {
   flex-direction: column;
   overflow-x: hidden;
   overflow-y: auto;
+  /* Keep last lines reachable above the overlaid bottom bar when transcript scrolls. */
+  scroll-padding-bottom: 52px;
   text-align: center;
 }
 
@@ -316,6 +274,31 @@ html[data-theme="dark"] .hud-root::before {
   justify-content: center;
   width: 100%;
   padding: 0 8px;
+}
+
+/* Match `HUD_SHELL_TRANSITION_MS` in `components/hud/hudMotion.ts` (320ms). */
+@media (prefers-reduced-motion: no-preference) {
+  .hud-recognized-wrap--enter {
+    animation: hud-recognized-enter 320ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+}
+
+@keyframes hud-recognized-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-recognized-wrap--enter {
+    animation: none;
+  }
 }
 
 .hud-recognized-text {
@@ -345,13 +328,22 @@ html[data-theme="dark"] .hud-root::before {
     animation: none;
     opacity: 0.95;
   }
+
+  .hud-waveform-bar {
+    transition: none;
+  }
 }
 
 .hud-bottom-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
   display: flex;
   flex-direction: row;
   align-items: flex-end;
-  justify-content: space-between;
+  justify-content: center;
   gap: 10px;
   flex-shrink: 0;
   min-height: 44px;
@@ -371,61 +363,9 @@ html[data-theme="dark"] .hud-root::before {
   border-radius: 2px;
   background: color-mix(in oklch, var(--glass-text) 70%, transparent);
   transform-origin: bottom center;
-}
-
-.hud-stop {
-  position: relative;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-}
-
-.hud-stop:disabled { cursor: default; }
-
-.hud-stop:focus { outline: none; }
-
-.hud-stop:focus-visible {
-  outline: 2px solid var(--hud-focus-ring);
-  outline-offset: 3px;
-}
-
-.hud-stop-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 2px solid var(--hud-stop-ring-dim);
-  box-sizing: border-box;
-  pointer-events: none;
-}
-
-.hud-stop-ring--pulse {
-  animation: hud-stop-ring-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes hud-stop-ring-pulse {
-  0%, 100% { border-color: var(--hud-stop-ring-dim); }
-  50%       { border-color: var(--hud-stop-ring-bright); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .hud-stop-ring--pulse { animation: none; }
-}
-
-.hud-stop:hover:not(:disabled) .hud-stop-ring {
-  border-color: var(--hud-stop-ring-bright);
-}
-
-.hud-stop-inner {
-  width: 12px;
-  height: 12px;
-  border-radius: 4px;
-  background: var(--hud-waveform-fill);
+  transition:
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .hud-line {

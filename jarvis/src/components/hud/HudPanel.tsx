@@ -1,6 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useDebounced } from "../../hooks/useDebounced";
 import { useHudStore } from "../../store/hudStore";
@@ -12,11 +11,14 @@ import {
   type CenterSelectorResult,
 } from "./HudPanel.logic";
 import { isHudOverlayShellActive } from "./hudOverlayPhases";
+import { HUD_SHELL_TRANSITION_MS, hudShellEase } from "./hudMotion";
 
 /** Trailing debounce (ms) for streaming transcript in the SR-only live region. */
 const TRANSCRIPT_ANNOUNCE_DEBOUNCE_MS = 380;
 
-/** Fixed sleeve height for bars — motion uses `scaleY` only (no layout thrash). */
+const HUD_SHELL_TRANSITION_S = HUD_SHELL_TRANSITION_MS / 1000;
+
+/** Fixed sleeve height for bars — CSS `transform`/`opacity` (no layout thrash). */
 const WAVE_BAR_SLEEVE_PX = 28;
 
 function useHudCenterInput(): CenterSelectorInput {
@@ -33,21 +35,12 @@ function useHudCenterInput(): CenterSelectorInput {
 }
 
 function WaveformBars() {
-  const reduceMotion = useReducedMotion();
   const phase = useHudStore((s) => s.phase);
   const amplitude = useHudStore((s) => s.amplitude);
   const active = phase === "listening";
   const level = active ? amplitude : 0;
 
   const bars = useMemo(() => [0, 1, 2, 3, 4, 5, 6], []);
-
-  const barTransition = useMemo(
-    () =>
-      reduceMotion
-        ? { duration: 0.12, ease: "easeOut" as const }
-        : { duration: 0.22, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] },
-    [reduceMotion],
-  );
 
   return (
     <div className="hud-waveform" aria-hidden>
@@ -59,19 +52,14 @@ function WaveformBars() {
           : 0.14;
 
         return (
-          <motion.div
+          <div
             key={i}
             className="hud-waveform-bar"
             style={{
               height: WAVE_BAR_SLEEVE_PX,
-              transformOrigin: "bottom center",
-            }}
-            initial={false}
-            animate={{
-              scaleY,
+              transform: `scaleY(${scaleY})`,
               opacity: active ? 0.55 + level * 0.45 : 0.12,
             }}
-            transition={barTransition}
           />
         );
       })}
@@ -79,61 +67,20 @@ function WaveformBars() {
   );
 }
 
-function StopHudButton() {
-  const reduceMotion = useReducedMotion();
-  const phase = useHudStore((s) => s.phase);
-  const listening = phase === "listening";
-
-  const onStop = () => {
-    void invoke("hud_dismiss").catch(() => {});
-  };
-
-  const ringClass =
-    listening && !reduceMotion
-      ? "hud-stop-ring hud-stop-ring--pulse"
-      : "hud-stop-ring";
-
-  return (
-    <motion.button
-      type="button"
-      className="hud-stop"
-      aria-label="Stop listening. Same as Escape."
-      onClick={onStop}
-      animate={{ opacity: listening ? 1 : 0.25, scale: listening ? 1 : 0.92 }}
-      transition={{ duration: reduceMotion ? 0.08 : 0.18 }}
-      disabled={!listening}
-    >
-      <span className={ringClass} />
-      <span className="hud-stop-inner" />
-    </motion.button>
-  );
-}
-
-function RecognizedPhrase({
-  phrase,
-  motionKey,
-}: {
-  phrase: string;
-  motionKey: string;
-}) {
+function RecognizedPhrase({ phrase, motionKey }: { phrase: string; motionKey: string }) {
   const reduceMotion = useReducedMotion();
 
   return (
-    <motion.div
+    <div
       key={motionKey}
-      className="hud-recognized-wrap"
-      initial={reduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={
+      className={
         reduceMotion
-          ? { duration: 0.01 }
-          : { duration: 0.38, ease: "easeOut" as const }
+          ? "hud-recognized-wrap"
+          : "hud-recognized-wrap hud-recognized-wrap--enter"
       }
     >
-      <span className="hud-recognized-text">
-        {phrase}
-      </span>
-    </motion.div>
+      <span className="hud-recognized-text">{phrase}</span>
+    </div>
   );
 }
 
@@ -175,8 +122,9 @@ function CenterContent({
   }
 }
 
-function HudShell() {
+function HudShell({ dismissHotkeyChord }: { dismissHotkeyChord: string }) {
   const reduceMotion = useReducedMotion();
+  const shellRef = useRef<HTMLDivElement>(null);
   const centerInput = useHudCenterInput();
   const selected = useMemo(
     () => selectCenterContent(centerInput),
@@ -196,43 +144,53 @@ function HudShell() {
   const phaseLabel = selectPhaseLabel(phase);
 
   // Always show mic chrome while `listening`. `match-result` can arrive before `hud-phase`
-  // advances; hiding chrome when `match` is set produced an empty frosted shell with no stop
-  // control if the phase event was missed or reordered.
+  // advances; hiding chrome when `match` is set produced an empty frosted shell with no level
+  // indicator if the phase event was missed or reordered.
   const showListeningChrome = phase === "listening";
 
-  const transition = useMemo(() => {
-    if (reduceMotion) {
-      return { duration: 0.12, ease: "easeOut" as const };
-    }
-    return { duration: 0.4, ease: "easeOut" as const };
-  }, [reduceMotion]);
+  /**
+   * Backdrop-filter / inset shadows can outlast opacity on WebView2. Strip those layers as soon as
+   * the session leaves *any* overlay phase — `done` dismissals never hit `stopped` on the HUD
+   * window until later (auto-dismiss), so gating on `stopped` alone left a rim fading on its own.
+   */
+  useLayoutEffect(() => {
+    if (isHudOverlayShellActive(phase)) return;
+    const el = shellRef.current;
+    if (!el) return;
+    el.style.setProperty("backdrop-filter", "none");
+    el.style.setProperty("-webkit-backdrop-filter", "none");
+    el.style.setProperty("box-shadow", "none");
+    el.style.setProperty("border", "none");
+  }, [phase]);
+
+  const transition = useMemo(
+    () =>
+      reduceMotion
+        ? { duration: 0.12, ease: "easeOut" as const }
+        : { duration: HUD_SHELL_TRANSITION_S, ease: hudShellEase },
+    [reduceMotion],
+  );
+
+  const shellInitial = reduceMotion
+    ? { opacity: 1, scale: 1 }
+    : { opacity: 0, scale: 0.985 };
+
+  const shellExit = reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 1 };
 
   return (
     <motion.div
-      className="hud-root glass-panel-1"
+      ref={shellRef}
+      className="hud-root"
       role="region"
+      aria-keyshortcuts={dismissHotkeyChord.trim() || "escape"}
       {...(phaseLabel
         ? { "aria-labelledby": "hud-phase-label" }
         : { "aria-label": "Voice session" })}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+      initial={shellInitial}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={shellExit}
       transition={transition}
     >
-      {showListeningChrome && (
-        <motion.div
-          className="hud-title"
-          initial={reduceMotion ? { opacity: 1 } : { opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={
-            reduceMotion
-              ? { duration: 0.01 }
-              : { duration: 0.35, delay: 0.05 }
-          }
-        >
-          JARVIS
-        </motion.div>
-      )}
       <div
         className={
           showListeningChrome ? "hud-body" : "hud-body hud-body--solo"
@@ -254,7 +212,6 @@ function HudShell() {
         {showListeningChrome && (
           <div className="hud-bottom-bar">
             <WaveformBars />
-            <StopHudButton />
           </div>
         )}
       </div>
@@ -263,22 +220,22 @@ function HudShell() {
 }
 
 /** Fade / pulse wrapper: only mount animated shell while HUD session is active. */
-function HudBody() {
+function HudBody({ dismissHotkeyChord }: { dismissHotkeyChord: string }) {
   const phase = useHudStore((s) => s.phase);
   const active = isHudOverlayShellActive(phase);
 
-  // AnimatePresence lets `HudShell` fade its glass out on `done` unmount so the
-  // transparent HUD window does not linger as an empty frame during the auto-dismiss
-  // gap (~560ms) between `hud-phase:done` and `window.hide()`.
+  // `schedule_hud_window_hide_when_still_dismissed` in Rust delays native hide until exit finishes.
   return (
-    <AnimatePresence>{active ? <HudShell key="shell" /> : null}</AnimatePresence>
+    <AnimatePresence>
+      {active ? <HudShell key="shell" dismissHotkeyChord={dismissHotkeyChord} /> : null}
+    </AnimatePresence>
   );
 }
 
-export function HudPanel() {
+export function HudPanel({ dismissHotkeyChord = "escape" }: { dismissHotkeyChord?: string }) {
   return (
     <div className="hud-panel-fill">
-      <HudBody />
+      <HudBody dismissHotkeyChord={dismissHotkeyChord} />
     </div>
   );
 }

@@ -61,6 +61,84 @@ export function validateHotkeyInput(raw: string): string | null {
   return raw.trim().length > 0 ? null : "Hotkey is required.";
 }
 
+/**
+ * Match a Tauri/global-hotkey style chord (e.g. `escape`, `ctrl+shift+j`) against
+ * a `keydown` event. Used when the HUD webview has focus as a fallback alongside
+ * the native global shortcut.
+ */
+export function hotkeyChordMatchesKeyboardEvent(raw: string, e: KeyboardEvent): boolean {
+  const segments = raw
+    .split("+")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (segments.length === 0) return false;
+
+  let wantCtrl = false;
+  let wantShift = false;
+  let wantAlt = false;
+  let wantMeta = false;
+  const keyParts: string[] = [];
+
+  for (const seg of segments) {
+    if (seg === "ctrl" || seg === "control") wantCtrl = true;
+    else if (seg === "shift") wantShift = true;
+    else if (seg === "alt" || seg === "option") wantAlt = true;
+    else if (seg === "meta" || seg === "cmd" || seg === "command" || seg === "super") wantMeta = true;
+    else keyParts.push(seg);
+  }
+
+  if (keyParts.length !== 1) return false;
+
+  if (
+    (e.ctrlKey ?? false) !== wantCtrl ||
+    (e.shiftKey ?? false) !== wantShift ||
+    (e.altKey ?? false) !== wantAlt ||
+    (e.metaKey ?? false) !== wantMeta
+  ) {
+    return false;
+  }
+
+  const wantKey = normalizeHotkeyKeyToken(keyParts[0]);
+  const pressed = keyboardEventKeyToken(e);
+  if (!pressed) return false;
+  return pressed === wantKey;
+}
+
+function normalizeHotkeyKeyToken(s: string): string {
+  const t = s.trim().toLowerCase();
+  if (t === "esc") return "escape";
+  if (t === "return" || t === "enter") return "enter";
+  if (t === "space" || t === "spc") return "space";
+  if (t === "down") return "arrowdown";
+  if (t === "up") return "arrowup";
+  if (t === "left") return "arrowleft";
+  if (t === "right") return "arrowright";
+  return t;
+}
+
+function keyboardEventKeyToken(e: KeyboardEvent): string {
+  const k = e.key;
+  if (k === " ") return "space";
+  const lower = k.toLowerCase();
+  if (
+    lower === "control" ||
+    lower === "shift" ||
+    lower === "alt" ||
+    lower === "meta" ||
+    lower === "os" ||
+    lower === "osleft" ||
+    lower === "osright"
+  ) {
+    return "";
+  }
+  if (lower === "escape") return "escape";
+  if (lower === "enter") return "enter";
+  if (lower.length === 1) return lower;
+  if (/^f\d{1,2}$/.test(lower)) return lower;
+  if (lower.startsWith("arrow")) return lower;
+  return lower;
+}
+
 type WhisperGpuWarmupCheck = {
   nextEnabled: boolean;
   compileBackend: string;
