@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeWindowsVulkanSdkRoot,
   windowsVulkanSdkLayoutOk,
-} from "./tauri-whisper-gpu-win-sdk.mjs";
+} from "./whisper-gpu/win-sdk.mjs";
 
 describe("windowsVulkanSdkLayoutOk", () => {
   it("returns true when Include and Lib exist", () => {

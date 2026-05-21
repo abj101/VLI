@@ -9,6 +9,12 @@ export type HudPhase =
   | "done"
   | "stopped";
 
+export interface HudPhasePayload {
+  phase: HudPhase;
+  /** Matches Rust `HudRuntime::session_id` for this phase transition. */
+  session_id?: number;
+}
+
 export interface TranscriptUpdate {
   text: string;
   is_final: boolean;

@@ -6,21 +6,26 @@ pub mod transcription;
 pub mod tts;
 pub mod wake;
 
-use log::{debug, warn};
+use log::debug;
 
 use std::ops::Deref;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use tauri::AppHandle;
 use tauri::Emitter;
+use tauri::Manager;
 
 use capture::CaptureSession;
-use stt::{resolve_whisper_model_path, spawn_stt_thread};
+use stt::{load_whisper_context, resolve_whisper_model_path, spawn_stt_thread};
 use transcription::{spawn_os_stt_thread, spawn_remote_stt_thread};
-use whisper_rs::{WhisperContext, WhisperContextParameters};
 
 pub use transcription::RemoteSttParams;
+
+/// When true, the wake thread releases the default mic so the listen pipeline can open it.
+#[derive(Clone)]
+pub struct WakeMicSuppressed(pub Arc<AtomicBool>);
 
 /// Resolved STT path for [`AudioPipeline::start`].
 pub enum SttPipelineChoice {
@@ -73,59 +78,44 @@ impl AudioPipeline {
             SttPipelineChoice::Local { use_gpu } => match resolve_whisper_model_path(app) {
                 Ok(model_path) => {
                     let model_path_text = model_path.to_string_lossy().to_string();
-                    let mut params = WhisperContextParameters::default();
-                    params.use_gpu(use_gpu);
-                    if use_gpu {
-                        params.gpu_device(0);
-                        #[cfg(feature = "whisper-cuda")]
-                        params.flash_attn(true);
-                    }
-                    match WhisperContext::new_with_params(model_path_text.as_str(), params) {
-                        Ok(ctx) => Some(spawn_stt_thread(
-                            app.clone(),
-                            ctx,
-                            pcm_rx,
-                            sample_rate,
-                            hud_session_id,
-                            use_gpu,
-                        )),
-                        Err(gpu_err) if use_gpu => {
-                            warn!("whisper gpu init failed; falling back to cpu: {gpu_err}");
-                            let mut cpu_params = WhisperContextParameters::default();
-                            cpu_params.use_gpu(false);
-                            match WhisperContext::new_with_params(model_path_text.as_str(), cpu_params)
-                            {
-                                Ok(ctx) => {
-                                    let _ = app.emit(
+                    let app_load = app.clone();
+                    let app_emit = app.clone();
+                    let warmed = app
+                        .try_state::<crate::WhisperModelCache>()
+                        .and_then(|c| c.take_context());
+                    Some(std::thread::Builder::new().name("whisper-loader".into()).spawn(move || {
+                        let load_result = warmed
+                            .map(|ctx| Ok((ctx, use_gpu)))
+                            .unwrap_or_else(|| {
+                                load_whisper_context(model_path_text.as_str(), use_gpu)
+                            });
+                        match load_result {
+                            Ok((ctx, effective_gpu)) => {
+                                if use_gpu && !effective_gpu {
+                                    let _ = app_emit.emit(
                                         "audio-error",
                                         serde_json::json!({ "message": "Whisper GPU init failed; using CPU instead." }),
                                     );
-                                    Some(spawn_stt_thread(
-                                        app.clone(),
-                                        ctx,
-                                        pcm_rx,
-                                        sample_rate,
-                                        hud_session_id,
-                                        false,
-                                    ))
                                 }
-                                Err(cpu_err) => {
-                                    let _ = app.emit(
-                                        "audio-error",
-                                        serde_json::json!({ "message": format!("failed to load whisper model (gpu error: {gpu_err}; cpu retry error: {cpu_err})") }),
-                                    );
-                                    Some(spawn_pcm_drain(pcm_rx))
-                                }
+                                let inner = spawn_stt_thread(
+                                    app_load,
+                                    ctx,
+                                    pcm_rx,
+                                    sample_rate,
+                                    hud_session_id,
+                                    effective_gpu,
+                                );
+                                std::mem::forget(inner);
+                            }
+                            Err(msg) => {
+                                let _ = app_emit.emit(
+                                    "audio-error",
+                                    serde_json::json!({ "message": msg }),
+                                );
+                                std::mem::forget(spawn_pcm_drain(pcm_rx));
                             }
                         }
-                        Err(e) => {
-                            let _ = app.emit(
-                                "audio-error",
-                                serde_json::json!({ "message": format!("failed to load whisper model: {e}") }),
-                            );
-                            Some(spawn_pcm_drain(pcm_rx))
-                        }
-                    }
+                    }).map_err(|e| e.to_string())?)
                 }
                 Err(msg) => {
                     let _ = app.emit("audio-error", serde_json::json!({ "message": msg }));
@@ -175,7 +165,10 @@ impl Deref for SharedAudioPipeline {
 /// which may emit `transcript-update` and re-enter code that tries to lock the same mutex → deadlock.
 /// `AudioPipeline` is not `Send` (cpal), so we cannot move it to another thread; we `take()` then
 /// `drop` on this thread after releasing the mutex.
-pub fn stop_shared_pipeline(slot: &SharedAudioPipeline) {
+pub fn stop_shared_pipeline(app: &AppHandle, slot: &SharedAudioPipeline) {
+    if let Some(suppressed) = app.try_state::<WakeMicSuppressed>() {
+        suppressed.0.store(false, Ordering::SeqCst);
+    }
     debug!("audio: stop_shared_pipeline (take pipeline, drop outside mutex)");
     let old = {
         let mut g = slot.lock().unwrap();

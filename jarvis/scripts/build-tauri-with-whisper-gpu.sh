@@ -10,4 +10,4 @@ if [[ "$subcommand" != "build" && "$subcommand" != "dev" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-node "$SCRIPT_DIR/tauri-whisper-gpu.mjs" "$subcommand" "$@"
+node "$SCRIPT_DIR/whisper-gpu/run-tauri.mjs" "$subcommand" "$@"

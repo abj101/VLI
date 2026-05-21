@@ -69,14 +69,10 @@ fn parse_oww_threshold(raw: Option<String>) -> f32 {
 }
 
 fn parse_stt_provider_str(raw: Option<String>) -> String {
-    let s = raw
-        .map(|v| v.trim().to_ascii_lowercase())
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "local".to_string());
-    if matches!(s.as_str(), "local" | "os" | "remote") {
-        s
-    } else {
-        "local".to_string()
+    use crate::audio::transcription::{parse_stt_provider, SttProvider};
+    match parse_stt_provider(raw.as_deref()) {
+        SttProvider::Local | SttProvider::Os => "local".to_string(),
+        SttProvider::Remote => "remote".to_string(),
     }
 }
 
@@ -175,7 +171,12 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
     }
     if let Some(ref raw) = patch.stt_provider {
         let normalized = raw.trim().to_ascii_lowercase();
-        if !matches!(normalized.as_str(), "local" | "os" | "remote") {
+        if normalized == "os" {
+            return Err(DbError::Validation(
+                "OS speech recognition is not available yet; use Local or Remote.".into(),
+            ));
+        }
+        if !matches!(normalized.as_str(), "local" | "remote") {
             return Err(DbError::Validation(format!(
                 "invalid stt_provider `{normalized}`"
             )));

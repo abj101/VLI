@@ -7,5 +7,5 @@ if ($subcommand -ne "build" -and $subcommand -ne "dev") {
   throw "First arg must be 'build' or 'dev'."
 }
 
-$script = Join-Path $PSScriptRoot "tauri-whisper-gpu.mjs"
+$script = Join-Path $PSScriptRoot "whisper-gpu" "run-tauri.mjs"
 node $script $subcommand @extra

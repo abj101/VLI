@@ -3,7 +3,7 @@
 ## Prerequisites (Windows)
 
 - [Rust](https://rustup.rs/) stable, [Node.js](https://nodejs.org/) LTS
-- **Whisper / `whisper-rs`:** **CMake** (`winget install Kitware.CMake`), **LLVM** (`winget install LLVM.LLVM` — `libclang.dll` in `C:\Program Files\LLVM\bin`), and **MSVC** (**VS 2022** Build Tools or full VS — use **x64 Native Tools** / **Developer PowerShell** when `cl.exe` is missing from `PATH`). `whisper-rs-sys` runs **bindgen** (needs `LIBCLANG_PATH` plus MSVC + Windows SDK include paths unless you use a VS Developer shell). **`npm run tauri dev` / `npm run tauri build`** (via `scripts/tauri-whisper-gpu.mjs`) sets `LIBCLANG_PATH` when LLVM is in the default folder, fills `BINDGEN_EXTRA_CLANG_ARGS` from your MSVC + Windows SDK install, sets **`CMAKE_GENERATOR=Visual Studio 17 2022`** for non-CUDA builds (CMake 4+ otherwise may pick **Visual Studio 18 2026**), and leaves the **CUDA** path on **NMake + nvcc** unchanged. For raw `cargo`, mirror those env vars or open a **Developer** shell.
+- **Whisper / `whisper-rs`:** **CMake** (`winget install Kitware.CMake`), **LLVM** (`winget install LLVM.LLVM` — `libclang.dll` in `C:\Program Files\LLVM\bin`), and **MSVC** (**VS 2022** Build Tools or full VS with **Windows SDK**). `whisper-rs-sys` runs **bindgen** at build time; it needs `LIBCLANG_PATH` plus MSVC/UCRT include paths (`BINDGEN_EXTRA_CLANG_ARGS`). If bindgen cannot find `stdbool.h`, it falls back to bundled **Linux** `bindings.rs` and you get **`error[E0080]: attempt to compute 12_usize - 16_usize`**. **`npm run tauri dev` / `build`** set env via `scripts/whisper-gpu/run-tauri.mjs` and **exit early** if bindgen prerequisites are missing (instead of compiling for 15+ minutes then failing). For bare **`cargo check`** / rust-analyzer: run from **`jarvis/`**, then **`npm install`** or **`npm run sync:cargo-win-env`** (writes **`src-tauri/.cargo/config.local.toml`** and **`rust-analyzer.toml`**). After any log line **`Using bundled bindings.rs`**: **`npm run cargo -- clean -p whisper-rs-sys --manifest-path src-tauri/Cargo.toml`** before the next build. CUDA builds use **NMake + nvcc** when `whisper-cuda` is auto-selected.
 - **Piper TTS (`Speak` action):** install/download `piper.exe` (Windows) or `piper` (macOS/Linux) and one `.onnx` voice model. Configure with env vars `JARVIS_PIPER_BIN` and `JARVIS_PIPER_MODEL` (or `PIPER_BIN` / `PIPER_MODEL`). Fallback search paths include `src-tauri/resources/piper/`.
 - **PATH / discovery:** Rust builds read `src-tauri/.cargo/config.toml`, which defaults `CMAKE` to `cmake` and expects your shell `PATH` to resolve the executable. For shells outside the editor, add your CMake install location to `PATH` or export `CMAKE`.
 - **Microphone** permission for the dev or packaged app
@@ -57,9 +57,11 @@ Convention: clone the repo, then `**cd jarvis**` for every Node/npm/Tauri comman
 - `npm run build` — `tsc` + Vite production bundle
 - `npm run dev` — Vite only
 - `npm run tauri dev` — full app with auto-selected Whisper GPU backend (`metal`/`cuda`/`vulkan`/CPU fallback) and detected GPU vendor logging
+- `npm run tauri:dev:cpu` / `npm run tauri:build:cpu` — same as above but **`WHISPER_GPU_BACKEND=none`** (fast CPU Whisper; use for UI work)
 - `npm run tauri build` — release bundle with auto-selected Whisper GPU backend (run `.\scripts\download-model.ps1` first so the Whisper weights are present)
 - `npm run tauri:dev` / `npm run tauri:build` — explicit aliases to the same wrapper behavior
 - `WHISPER_GPU_BACKEND=auto|metal|cuda|vulkan|none` — optional override for deterministic CI/repro builds (`auto` default)
+- **`npm run sync:cargo-win-env`** writes bindgen env only (no `CMAKE_GENERATOR`) so rust-analyzer / `cargo check` does not invalidate a **CUDA (NMake)** CMake cache from `tauri dev`. For CUDA compile checks use **`npm run test:cargo-whisper-cuda`**.
 
 Rust (from `jarvis/src-tauri/`):
 
@@ -81,30 +83,35 @@ Run in order after a clean checkout (with Rust + Node + CMake + MSVC or Xcode as
 8. `cd ..` → `.\scripts\download-model.ps1`
 9. `npm run tauri build`
 
+### Whisper compile: “frozen” terminal?
+
+`whisper-rs-sys` with **`whisper-cuda`** compiles many CUDA kernels on the **first** build — often **20–45+ minutes** on Windows; Cargo progress may sit near the end during link. That is normal, not a hung app.
+
+- Run **one** `npm run tauri dev` or `cargo` at a time. Parallel builds block on `target/` (“Blocking waiting for file lock”) and look frozen.
+- Leftover `target/**/.cargo-lock` after Ctrl+C is removed automatically; if a real build is still running, wait or stop it. Override: `WHISPER_IGNORE_CARGO_LOCK=1` (risky).
+- The launcher prints a **heartbeat** every minute during long builds and warns on first CUDA compile.
+- If bindgen failed earlier, clean before retry: `npm run cargo -- clean -p whisper-rs-sys --manifest-path src-tauri/Cargo.toml`
+
 ### Whisper GPU backend auto-selection
 
-`scripts/tauri-whisper-gpu.mjs` chooses one backend per artifact:
+`scripts/whisper-gpu/run-tauri.mjs` chooses one backend per artifact:
 
 - macOS host -> `whisper-metal`
-- Windows/Linux + NVIDIA GPU + CUDA toolchain (`CUDA_PATH`, `nvcc`, or auto-discovered default Windows CUDA install under `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA`) -> `whisper-cuda`
-- Other GPUs (or NVIDIA without CUDA) + Vulkan toolchain -> `whisper-vulkan` (`VULKAN_SDK` is required on Windows; auto-discovered from common install paths when possible)
-- If no backend prerequisites are present -> CPU-only Whisper build (explicit warning logged)
+- Windows/Linux + NVIDIA GPU + CUDA toolkit -> `whisper-cuda`
+- Other GPUs (or NVIDIA without CUDA) + Vulkan SDK -> `whisper-vulkan`
+- Missing toolchains -> CPU-only Whisper (`whisper` GPU features off; warning logged)
 
-The wrapper runs the Tauri CLI via `node node_modules/@tauri-apps/cli/tauri.js` (not `tauri.cmd`) so `npm run tauri build|dev` reliably continues into the actual build on Windows after GPU detection.
+Install **CUDA** or **Vulkan SDK** manually (see NVIDIA / Khronos docs); set `CUDA_PATH` or `VULKAN_SDK` if not auto-discovered. `WHISPER_GPU_BACKEND=none` or **`npm run tauri:dev:cpu`** forces a faster CPU-only dev build.
 
-On **Windows**, when an **NVIDIA** GPU is detected and the **CUDA Toolkit** is missing, the wrapper first asks whether to install `Nvidia.CUDA` via winget (before Vulkan/other prompts).
+**Rebuild loop:** alternating bare `cargo check` (after sync) with `npm run tauri dev` on NVIDIA (CUDA + NMake) forces a full `whisper-rs-sys` rebuild. Stay on one workflow until `ggml-cuda.lib` exists, then incremental dev is typically ~1–2 minutes.
 
-When `tauri dev` / `tauri build` needs **Vulkan** or **CUDA** for Whisper and the SDK/toolkit is missing, the wrapper can also prompt:
+The wrapper runs the Tauri CLI via `node node_modules/@tauri-apps/cli/tauri.js` (not `tauri.cmd`) after GPU detection and bindgen preflight on Windows.
 
-- `Install … with winget now? [y/N]` — answering `y` runs `winget install` for `KhronosGroup.VulkanSDK` or `Nvidia.CUDA` (large download; may require admin / UAC).
-
-Non-interactive terminals (CI) skip prompts; set `WHISPER_SKIP_PREREQ_PROMPT=1` to skip explicitly, or install SDKs / set `VULKAN_SDK` / `CUDA_PATH` yourself.
-
-Windows wrappers:
+Legacy entry: `scripts/tauri-whisper-gpu.mjs` re-exports the same launcher.
 
 ```powershell
-.\scripts\build-tauri-with-whisper-gpu.ps1 build
-.\scripts\build-tauri-with-whisper-gpu.ps1 dev
+npm run tauri dev
+npm run tauri build
 ```
 
 Manual QA matrix (GPU path):

@@ -8,8 +8,10 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
-use crate::audio::stt::{resample_mono_to_16k, TranscriptUpdate};
-use crate::audio::stt::{INFER_EVERY, MIN_DECODE_SAMPLES, TARGET_RATE};
+use crate::audio::stt::{
+    resample_mono_to_16k, SilenceResetTracker, TranscriptUpdate, INFER_EVERY, MIN_DECODE_SAMPLES,
+    TARGET_RATE,
+};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -132,9 +134,16 @@ fn remote_stt_loop(
     let mut buffer_16k: Vec<f32> = Vec::new();
     let mut last_infer = Instant::now() - INFER_EVERY;
     let mut last_text = String::new();
+    let mut silence_reset = SilenceResetTracker::default();
+    let mut consecutive_errors: u32 = 0;
 
     while let Ok(chunk) = pcm_rx.recv() {
         let chunk_16k = resample_mono_to_16k(&chunk, input_sample_rate);
+        if silence_reset.push_and_should_reset(&chunk_16k) {
+            buffer_16k.clear();
+            last_text.clear();
+            continue;
+        }
         buffer_16k.extend_from_slice(&chunk_16k);
         let cap = TARGET_RATE as usize * 4;
         if buffer_16k.len() > cap {
@@ -148,11 +157,20 @@ fn remote_stt_loop(
         last_infer = Instant::now();
 
         let text = match post_transcription(&params, &buffer_16k) {
-            Ok(t) => t,
+            Ok(t) => {
+                consecutive_errors = 0;
+                t
+            }
             Err(e) => {
                 // Never log bearer token or raw HTTP bodies.
                 debug!("remote STT inference error (session {hud_session_id}): {e}");
-                let _ = app.emit("audio-error", serde_json::json!({ "message": e }));
+                consecutive_errors = consecutive_errors.saturating_add(1);
+                if consecutive_errors == 1 || consecutive_errors % 5 == 0 {
+                    let _ = app.emit("audio-error", serde_json::json!({ "message": e }));
+                }
+                if consecutive_errors >= 3 {
+                    std::thread::sleep(Duration::from_secs(2));
+                }
                 continue;
             }
         };

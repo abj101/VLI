@@ -16,8 +16,10 @@
   --material-settings-pane-alpha: 90%;
   --material-settings-group-alpha: 90%;
   --material-edge-line: 1px;
-  /* Window shell: 0 — outer curve comes from the native host (e.g. Win DWM), not CSS. */
-  --radius-outer: 0px;
+  /* Frameless window shell — one radius for host + glass (Win: DWM rounding off, see window_frame_win.rs). */
+  --radius-window: 12px;
+  --radius-outer: var(--radius-window);
+  --radius-window-hud: var(--radius-window);
   --radius-large: 14px;
   --radius-medium: 12px;
   --radius-control: 10px;

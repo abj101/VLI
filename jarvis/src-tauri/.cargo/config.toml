@@ -5,9 +5,8 @@
 #   PowerShell: $env:CMAKE = "C:\path\to\cmake.exe"
 #   bash/zsh:   export CMAKE=/path/to/cmake
 #
-# Windows: newer CMake may pick "Visual Studio 18 2026"; `npm run tauri *` sets CMAKE_GENERATOR to
-# VS 2022 and LIBCLANG_PATH when LLVM is in a default install path (see `scripts/tauri-whisper-gpu.mjs`).
-# For raw `cargo` on Windows, set `CMAKE_GENERATOR=Visual Studio 17 2022` and `LIBCLANG_PATH` to your
-# LLVM `bin` folder (see README) if configure or whisper-rs-sys bindgen fails.
+# Windows: `npm run sync:cargo-win-env` writes `.cargo/config.local.toml` with CMAKE_GENERATOR (VS 2022
+# for CPU), LIBCLANG_PATH, and BINDGEN_EXTRA_CLANG_ARGS. CUDA builds use NMake+nvcc via whisper-gpu launcher.
+# E0080 in whisper-rs-sys out/bindings.rs = bindgen failed (often missing stdbool.h) → Linux fallback.
 [env]
 CMAKE = { value = "cmake", force = false }

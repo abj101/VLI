@@ -60,6 +60,21 @@ describe("reduceHudState", () => {
     expect(next.transcriptFinal).toBe(false);
   });
 
+  it("ignores transcript-update from a stale hud_session_id", () => {
+    const listening = {
+      ...initialHudState,
+      phase: "listening" as const,
+      sessionId: 5,
+      transcript: "hello",
+    };
+    const next = reduceHudState(listening, "transcript-update", {
+      text: "stale",
+      is_final: false,
+      hud_session_id: 4,
+    });
+    expect(next).toBe(listening);
+  });
+
   it("applies transcript-update text and is_final", () => {
     let s = reduceHudState(initialHudState, "transcript-update", {
       text: "open",

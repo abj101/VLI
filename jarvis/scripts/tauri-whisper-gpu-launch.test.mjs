@@ -6,7 +6,7 @@ import {
   isWingetInstallSuccessStatus,
   prependWindowsPathEntries,
   shouldReleaseWindowsJarvisExeLockForSubcommand,
-} from "./tauri-whisper-gpu-launch.mjs";
+} from "./whisper-gpu/launch.mjs";
 
 describe("buildWingetInstallArgs", () => {
   it("includes core flags", () => {

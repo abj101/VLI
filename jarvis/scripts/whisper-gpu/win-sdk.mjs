@@ -1,5 +1,5 @@
 /**
- * Windows Vulkan SDK path helpers (shared by `tauri-whisper-gpu.mjs` + Vitest).
+ * Windows Vulkan SDK path helpers.
  */
 
 import fs from "fs";
@@ -12,9 +12,6 @@ export function windowsVulkanSdkLayoutOk(sdkRoot, existsSync = fs.existsSync) {
   return existsSync(includeDir) && existsSync(libDir);
 }
 
-/**
- * `VULKAN_SDK` is sometimes set to `...\\Bin` or similar; whisper-rs-sys needs the SDK root.
- */
 export function normalizeWindowsVulkanSdkRoot(raw, existsSync = fs.existsSync) {
   if (!raw || typeof raw !== "string") return null;
   let cur = path.resolve(raw.trim());

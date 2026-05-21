@@ -3,6 +3,7 @@ import type {
   ActionStatus,
   AudioErrorPayload,
   HudPhase,
+  HudPhasePayload,
   MatchResult,
   TranscriptUpdate,
 } from "../types";
@@ -18,6 +19,8 @@ export type HudWireTopic =
 
 export type HudState = {
   phase: HudPhase;
+  /** Authoritative session from Rust `hud-phase` events; filters stale STT. */
+  sessionId: number;
   transcript: string;
   transcriptFinal: boolean;
   match: MatchResult | null;
@@ -29,6 +32,7 @@ export type HudState = {
 
 export const initialHudState: HudState = {
   phase: "idle",
+  sessionId: 0,
   transcript: "",
   transcriptFinal: false,
   match: null,
@@ -57,8 +61,6 @@ export function sliceTranscriptBySpan(
   };
 }
 
-type HudPhasePayload = { phase: HudPhase };
-
 export function reduceHudState(
   state: HudState,
   topic: HudWireTopic,
@@ -73,8 +75,12 @@ export function reduceHudState(
 ): HudState {
   switch (topic) {
     case "hud-phase": {
-      const { phase } = payload as HudPhasePayload;
-      const next: HudState = { ...state, phase };
+      const { phase, session_id: sessionId } = payload as HudPhasePayload;
+      const next: HudState = {
+        ...state,
+        phase,
+        sessionId: sessionId ?? state.sessionId,
+      };
       if (phase === "listening") {
         next.transcript = "";
         next.transcriptFinal = false;
@@ -94,6 +100,12 @@ export function reduceHudState(
     }
     case "transcript-update": {
       const u = payload as TranscriptUpdate;
+      if (
+        u.hud_session_id != null &&
+        u.hud_session_id !== state.sessionId
+      ) {
+        return state;
+      }
       return {
         ...state,
         transcript: u.text,

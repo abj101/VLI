@@ -4,6 +4,7 @@ import { SettingsPanel } from "./components/Settings/SettingsPanel";
 import "./EditorRoot.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -61,6 +62,13 @@ export default function EditorRoot() {
   const syncMaximized = useCallback(() => {
     const w = getCurrentWindow();
     void w.isMaximized().then(setIsMaximized);
+  }, []);
+
+  /** WebView2: non-zero host alpha → square opaque backing outside CSS clip. */
+  useEffect(() => {
+    void getCurrentWebview()
+      .setBackgroundColor([0, 0, 0, 0])
+      .catch(() => {});
   }, []);
 
   useEffect(() => {

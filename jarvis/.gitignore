@@ -24,6 +24,11 @@ coverage
 *.sln
 *.sw?
 
+# Generated Windows Cargo env for bare `cargo check` (see scripts/sync-cargo-win-env.mjs)
+src-tauri/.cargo/config.local.toml
+.cargo/config.local.toml
+rust-analyzer.toml
+
 # OpenWakeWord ONNX (fetch via npm run fetch-wake-models)
 src-tauri/resources/oww/*.onnx
 

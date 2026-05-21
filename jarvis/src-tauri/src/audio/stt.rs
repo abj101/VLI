@@ -7,7 +7,7 @@ use std::sync::mpsc::Receiver;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 const WHISPER_MODEL_FILE: &str = "ggml-tiny.en.bin";
 pub(crate) const TARGET_RATE: u32 = 16_000;
@@ -53,6 +53,37 @@ fn whisper_model_candidates(app: &AppHandle) -> Vec<PathBuf> {
             .join(WHISPER_MODEL_FILE),
     );
     out
+}
+
+/// Load Whisper weights (may take seconds on first GPU init). Call from a background thread.
+/// Returns `(context, use_accelerator)` where `use_accelerator` is false after a GPU→CPU fallback.
+pub fn load_whisper_context(
+    model_path: &str,
+    use_gpu: bool,
+) -> Result<(WhisperContext, bool), String> {
+    let mut params = WhisperContextParameters::default();
+    params.use_gpu(use_gpu);
+    if use_gpu {
+        params.gpu_device(0);
+        #[cfg(feature = "whisper-cuda")]
+        params.flash_attn(true);
+    }
+    match WhisperContext::new_with_params(model_path, params) {
+        Ok(ctx) => Ok((ctx, use_gpu)),
+        Err(gpu_err) if use_gpu => {
+            log::warn!("whisper gpu init failed; falling back to cpu: {gpu_err}");
+            let mut cpu_params = WhisperContextParameters::default();
+            cpu_params.use_gpu(false);
+            WhisperContext::new_with_params(model_path, cpu_params)
+                .map(|ctx| (ctx, false))
+                .map_err(|cpu_err| {
+                    format!(
+                        "failed to load whisper model (gpu error: {gpu_err}; cpu retry error: {cpu_err})"
+                    )
+                })
+        }
+        Err(e) => Err(format!("failed to load whisper model: {e}")),
+    }
 }
 
 pub fn resolve_whisper_model_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -196,7 +227,7 @@ fn normalize_transcript_candidate(raw: &str) -> Option<String> {
 }
 
 #[derive(Debug, Default)]
-struct SilenceResetTracker {
+pub(crate) struct SilenceResetTracker {
     silent_samples: usize,
 }
 
@@ -205,7 +236,7 @@ impl SilenceResetTracker {
         Self::default()
     }
 
-    fn push_and_should_reset(&mut self, chunk_16k: &[f32]) -> bool {
+    pub(crate) fn push_and_should_reset(&mut self, chunk_16k: &[f32]) -> bool {
         if chunk_16k.is_empty() {
             return false;
         }

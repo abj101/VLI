@@ -55,11 +55,14 @@ export async function subscribeHudIpc(): Promise<() => void> {
     uAmp,
     uAudErr,
   ] = await Promise.all([
-    listen<{ phase: string }>("hud-phase", (e) => {
+    listen<{ phase: string; session_id?: number }>("hud-phase", (e) => {
       ipcLog("hud-phase", e.payload);
       const p = e.payload.phase;
       if (isHudPhase(p)) {
-        useHudStore.getState().applyIpc("hud-phase", { phase: p });
+        useHudStore.getState().applyIpc("hud-phase", {
+          phase: p,
+          session_id: e.payload.session_id,
+        });
       }
     }),
     listen<TranscriptUpdate>("transcript-update", (e) => {

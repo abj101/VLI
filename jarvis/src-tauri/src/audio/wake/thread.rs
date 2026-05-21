@@ -41,23 +41,42 @@ fn extend_i16_from_f32(out: &mut Vec<i16>, samples: &[f32]) {
 pub(crate) fn spawn_wake_thread(
     app: AppHandle,
     resource_dir: std::path::PathBuf,
-    engine: &str,
-    settings: &crate::db::AppSettings,
+    engine: String,
+    settings: crate::db::AppSettings,
     is_paused: Arc<AtomicBool>,
+    mic_suppressed: Arc<AtomicBool>,
     on_wake: Arc<dyn Fn() + Send + Sync + 'static>,
 ) -> Result<WakeSupervisor, String> {
-    let detector = super::build_wake_detector(engine, resource_dir.as_path(), settings)?;
-    let fixed = detector.fixed_input_frame_len();
-    let label = detector.backend_name().to_string();
-    info!("wake: spawning thread backend={label}");
-
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
 
     let join = std::thread::Builder::new()
         .name("jarvis-wake".into())
         .spawn(move || {
-            wake_thread_main(app, detector, fixed, label, stop_thread, is_paused, on_wake);
+            let detector = match super::build_wake_detector(
+                engine.as_str(),
+                resource_dir.as_path(),
+                &settings,
+            ) {
+                Ok(d) => d,
+                Err(e) => {
+                    warn!("wake: detector init failed ({e}); wake word disabled");
+                    return;
+                }
+            };
+            let fixed = detector.fixed_input_frame_len();
+            let label = detector.backend_name().to_string();
+            info!("wake: thread started backend={label}");
+            wake_thread_main(
+                app,
+                detector,
+                fixed,
+                label,
+                stop_thread,
+                is_paused,
+                mic_suppressed,
+                on_wake,
+            );
         })
         .map_err(|e| e.to_string())?;
 
@@ -74,34 +93,77 @@ fn wake_thread_main(
     backend_label: String,
     stop: Arc<AtomicBool>,
     is_paused: Arc<AtomicBool>,
+    mic_suppressed: Arc<AtomicBool>,
     on_wake: Arc<dyn Fn() + Send + Sync + 'static>,
 ) {
-    let (pcm_tx, pcm_rx) = std::sync::mpsc::channel();
-    let (mut capture, sample_rate) = match capture::start_capture(app.clone(), pcm_tx) {
-        Ok(x) => x,
-        Err(e) => {
-            warn!("wake: could not open mic ({e}); wake word disabled");
-            return;
+    struct WakeMic {
+        session: capture::CaptureSession,
+        pcm_rx: std::sync::mpsc::Receiver<Vec<f32>>,
+        sample_rate: u32,
+    }
+
+    let mut mic: Option<WakeMic> = None;
+    let mut pending_i16: Vec<i16> = Vec::new();
+
+    let open_mic = |app: &AppHandle| -> Option<WakeMic> {
+        let (pcm_tx, pcm_rx) = std::sync::mpsc::channel();
+        match capture::start_capture(app.clone(), pcm_tx) {
+            Ok((session, sample_rate)) => Some(WakeMic {
+                session,
+                pcm_rx,
+                sample_rate,
+            }),
+            Err(e) => {
+                warn!("wake: could not open mic ({e}); retrying");
+                None
+            }
         }
     };
-
-    let mut pending_i16: Vec<i16> = Vec::new();
 
     loop {
         if stop.load(Ordering::Relaxed) {
             break;
         }
+
+        if mic_suppressed.load(Ordering::Relaxed) {
+            if mic.take().is_some() {
+                pending_i16.clear();
+            }
+            std::thread::sleep(WAKE_RECV_TICK);
+            continue;
+        }
+
+        if mic.is_none() {
+            mic = open_mic(&app);
+            if mic.is_none() {
+                std::thread::sleep(WAKE_RECV_TICK);
+                continue;
+            }
+        }
+
+        let WakeMic {
+            ref pcm_rx,
+            sample_rate,
+            ..
+        } = mic.as_ref().expect("mic open");
+
         let chunk = match pcm_rx.recv_timeout(WAKE_RECV_TICK) {
             Ok(c) => c,
             Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Disconnected) => {
+                mic = None;
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                continue;
+            }
         };
 
         if is_paused.load(Ordering::Relaxed) {
             continue;
         }
 
-        let resampled = resample_mono_to_16k(&chunk, sample_rate);
+        let resampled = resample_mono_to_16k(&chunk, *sample_rate);
 
         match fixed {
             Some(len) => {
@@ -145,7 +207,9 @@ fn wake_thread_main(
         }
     }
 
-    capture.stop();
+    if let Some(mut m) = mic.take() {
+        m.session.stop();
+    }
     info!("wake: thread exiting ({backend_label})");
 }
 

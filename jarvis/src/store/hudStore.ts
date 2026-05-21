@@ -10,6 +10,7 @@ import type {
   ActionStatus,
   AudioErrorPayload,
   HudPhase,
+  HudPhasePayload,
   MatchResult,
   TranscriptUpdate,
 } from "../types";
@@ -17,6 +18,7 @@ import type {
 function pickHudState(s: HudStore): HudState {
   return {
     phase: s.phase,
+    sessionId: s.sessionId,
     transcript: s.transcript,
     transcriptFinal: s.transcriptFinal,
     match: s.match,
@@ -31,7 +33,7 @@ export type HudStore = HudState & {
   applyIpc: (
     topic: HudWireTopic,
     payload:
-      | { phase: HudPhase }
+      | HudPhasePayload
       | TranscriptUpdate
       | MatchResult
       | ActionStatus

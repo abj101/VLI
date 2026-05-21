@@ -41,7 +41,7 @@
         "visible": false,
         "center": true,
         "theme": "Dark",
-        "backgroundColor": "#000000",
+        "backgroundColor": "#00000000",
         "transparent": true,
         "decorations": false,
         "shadow": false,

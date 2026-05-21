@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
@@ -339,9 +340,19 @@ export function SettingsPanel({
       });
       setLocalWhisperUseGpu(s.localWhisperUseGpu);
       if (shouldWarmup && s.localWhisperUseGpu) {
+        const unlisten = await listen<WhisperGpuWarmupPayload>("whisper-gpu-warmup", (event) => {
+          setWhisperGpuPrepMessage(event.payload.message);
+          setToastText(event.payload.message);
+          setWhisperGpuPreparing(false);
+          void unlisten();
+        });
         const warmup = await invoke<WhisperGpuWarmupPayload>("warmup_whisper_gpu");
         setWhisperGpuPrepMessage(warmup.message);
-        setToastText(warmup.message);
+        if (warmup.ready) {
+          setToastText(warmup.message);
+          setWhisperGpuPreparing(false);
+          void unlisten();
+        }
       } else {
         setToastText(next ? "Whisper will use GPU on next listen." : "Whisper will use CPU on next listen.");
       }
@@ -556,7 +567,6 @@ export function SettingsPanel({
                       onChange={(v) => void persistSttProvider(normalizeSttProvider(v))}
                       options={[
                         { value: "local", label: "Local on-device (Whisper)" },
-                        { value: "os", label: "Operating system API" },
                         { value: "remote", label: "Remote HTTP API" },
                       ]}
                     />

@@ -87,7 +87,7 @@ pub fn setup_tray(
                 let now_paused = !old;
                 is_paused_for_menu.store(now_paused, Ordering::SeqCst);
                 if now_paused {
-                    stop_shared_pipeline(&audio_for_menu);
+                    stop_shared_pipeline(app, &audio_for_menu);
                 }
                 let label = if now_paused { "Resume" } else { "Pause" };
                 let _ = pause_item_for_menu.set_text(label);
