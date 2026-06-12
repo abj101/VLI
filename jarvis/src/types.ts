@@ -27,6 +27,7 @@ export interface MatchResult {
   matched_phrase: string;
   span_start: number;
   span_end: number;
+  remainder: string;
 }
 
 export interface ActionStatus {
@@ -34,8 +35,10 @@ export interface ActionStatus {
 }
 
 export type CommandAction =
-  | { open_app: { name: string; path: string } }
+  | { open_app: { name: string; path: string; placement?: string } }
   | { open_url: { url: string } }
+  | { open_target: { target: string; placement?: string } }
+  | { place_window: { zone: string; monitor?: string } }
   | { run_script: { script: string; args: string[] } }
   | { send_keys: { keys: string } }
   | { wait: { ms: number } }
@@ -57,6 +60,8 @@ export function isEditorPendingAction(a: FormActionPayload): a is EditorPendingA
   return "editor_pending" in a;
 }
 
+export type MatchMode = "phrase" | "prefix";
+
 export interface CommandNodePayload {
   id: number;
   name: string;
@@ -64,6 +69,7 @@ export interface CommandNodePayload {
   actions: ActionPayload[];
   enabled: boolean;
   fuzzy_threshold_pct: number;
+  match_mode?: MatchMode;
   created_at: string;
 }
 
@@ -96,6 +102,27 @@ export interface NewToolDefinitionPayload {
   actions: ActionPayload[];
   enabled: boolean;
   builtin?: boolean;
+}
+
+export type ResolvedTargetPreview =
+  | {
+      app: { display_name: string; exe_path: string; placement?: string };
+    }
+  | { url: { url: string; placement?: string } }
+  | {
+      ambiguous: {
+        query: string;
+        app_candidates: { display_name: string; exe_path: string; score: number }[];
+        url_candidate: { url: string; score: number };
+        placement?: string;
+      };
+    };
+
+export interface OpenTargetPreview {
+  utterance: string;
+  target: string;
+  placement?: string | null;
+  resolved: ResolvedTargetPreview;
 }
 
 /** Mic level 0..1 from `amplitude-update` (Task 4a). */
@@ -136,6 +163,7 @@ const _ipcContract: {
     matched_phrase: "open notepad",
     span_start: 0,
     span_end: 12,
+    remainder: "",
   },
   action: { text: "Opening Notepad…" },
   amplitude: { amplitude: 0.35 },

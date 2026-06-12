@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FormActionPayload } from "../../types";
-import { deriveFollowUpVariableMap, extractVariableTokenContext } from "./CommandFormulaRow";
+import { deriveFollowUpVariableMap, deriveFormulaVariableLabels, extractVariableTokenContext } from "./CommandFormulaRow";
 
 describe("CommandFormulaRow variable helpers", () => {
   it("numbers follow-up variables in action order for one row", () => {
@@ -23,6 +23,21 @@ describe("CommandFormulaRow variable helpers", () => {
       start: 5,
       end: value.length,
       query: "2",
+    });
+  });
+
+  it("includes remainder token when prefix mode is enabled", () => {
+    const labels = deriveFormulaVariableLabels([], true);
+    expect(labels).toEqual(["{{remainder}}"]);
+  });
+
+  it("extracts template token context at caret", () => {
+    const value = "open {{rem";
+    const token = extractVariableTokenContext(value, value.length);
+    expect(token).toEqual({
+      start: 5,
+      end: value.length,
+      query: "rem",
     });
   });
 

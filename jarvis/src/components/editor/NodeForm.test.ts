@@ -104,6 +104,17 @@ describe("NodeForm logic", () => {
     expect(payload.actions).toEqual([{ open_url: { url: "https://example.com" } }]);
   });
 
+  it("maps prefix mode to match_mode prefix in payload", () => {
+    const payload = toCommandPayload({
+      id: 3,
+      triggerPhrases: ["open"],
+      enabled: true,
+      prefixMode: true,
+      actions: [{ open_app: { name: "{{remainder}}", path: "" } }],
+    });
+    expect(payload.match_mode).toBe("prefix");
+  });
+
   it("defaultActionForKind returns expected shape", () => {
     expect(defaultActionForKind("open_app")).toEqual({ open_app: { name: "", path: "" } });
     expect(defaultActionForKind("open_url")).toEqual({ open_url: { url: "" } });

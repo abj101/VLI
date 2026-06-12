@@ -454,6 +454,9 @@ mod tests {
             remote_stt_timeout_secs: 30,
             remote_stt_key_stored: false,
             local_whisper_use_gpu: false,
+            llm_router_model_path: None,
+            llm_router_confidence_threshold: crate::db::settings::DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD,
+            llm_router_tier2_enabled: false,
         };
         let b = crate::audio::wake::try_open_wake_word_oww(&base, &settings).expect("oww init");
         assert!((b.threshold() - 0.73).abs() < 0.000_1);

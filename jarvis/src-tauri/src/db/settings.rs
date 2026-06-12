@@ -11,6 +11,10 @@ pub const SETTING_REMOTE_STT_MODEL: &str = "remote_stt_model";
 pub const SETTING_REMOTE_STT_TIMEOUT_SECS: &str = "remote_stt_timeout_secs";
 pub const SETTING_REMOTE_STT_KEY_STORED: &str = "remote_stt_key_stored";
 pub const SETTING_LOCAL_WHISPER_USE_GPU: &str = "local_whisper_use_gpu";
+pub const SETTING_LLM_ROUTER_MODEL_PATH: &str = "llm_router_model_path";
+pub const SETTING_LLM_ROUTER_CONFIDENCE_THRESHOLD: &str = "llm_router_confidence_threshold";
+pub const DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD: f32 = 0.7;
+pub const SETTING_LLM_ROUTER_TIER2_ENABLED: &str = "llm_router_tier2_enabled";
 
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>, DbError> {
     let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
@@ -77,6 +81,12 @@ fn parse_stt_provider_str(raw: Option<String>) -> String {
     }
 }
 
+fn parse_llm_router_confidence_threshold(raw: Option<String>) -> f32 {
+    raw.and_then(|s| s.trim().parse::<f32>().ok())
+        .filter(|t| t.is_finite() && *t >= 0.0 && *t <= 1.0)
+        .unwrap_or(DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD)
+}
+
 fn parse_remote_stt_timeout_secs(raw: Option<String>) -> u32 {
     raw.and_then(|s| s.trim().parse::<u32>().ok())
         .filter(|&n| n > 0 && n <= 300)
@@ -102,6 +112,12 @@ pub struct AppSettings {
     pub remote_stt_key_stored: bool,
     /// When true and the binary includes a GPU backend, local Whisper uses GPU (see `whisper_gpu_compile_supported`).
     pub local_whisper_use_gpu: bool,
+    /// Optional override path to the router GGUF model.
+    pub llm_router_model_path: Option<String>,
+    /// Reject LLM router output below this confidence (0–1).
+    pub llm_router_confidence_threshold: f32,
+    /// When true, Tier 2 on-device LLM routing is allowed (Phase C).
+    pub llm_router_tier2_enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -114,6 +130,9 @@ pub struct SettingsPatch {
     pub remote_stt_model: Option<String>,
     pub remote_stt_timeout_secs: Option<u32>,
     pub local_whisper_use_gpu: Option<bool>,
+    pub llm_router_model_path: Option<String>,
+    pub llm_router_confidence_threshold: Option<f32>,
+    pub llm_router_tier2_enabled: Option<bool>,
 }
 
 pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
@@ -133,6 +152,18 @@ pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
         local_whisper_use_gpu: bool_from_setting(get_setting(
             conn,
             SETTING_LOCAL_WHISPER_USE_GPU,
+        )?),
+        llm_router_model_path: normalize_optional_trimmed(get_setting(
+            conn,
+            SETTING_LLM_ROUTER_MODEL_PATH,
+        )?),
+        llm_router_confidence_threshold: parse_llm_router_confidence_threshold(get_setting(
+            conn,
+            SETTING_LLM_ROUTER_CONFIDENCE_THRESHOLD,
+        )?),
+        llm_router_tier2_enabled: bool_from_setting(get_setting(
+            conn,
+            SETTING_LLM_ROUTER_TIER2_ENABLED,
         )?),
     })
 }
@@ -211,6 +242,33 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
             if on { "1" } else { "0" },
         )?;
     }
+    if let Some(ref path) = patch.llm_router_model_path {
+        let stored = path.trim();
+        if stored.is_empty() {
+            set_setting(conn, SETTING_LLM_ROUTER_MODEL_PATH, "")?;
+        } else {
+            set_setting(conn, SETTING_LLM_ROUTER_MODEL_PATH, stored)?;
+        }
+    }
+    if let Some(t) = patch.llm_router_confidence_threshold {
+        if !(t.is_finite() && t >= 0.0 && t <= 1.0) {
+            return Err(DbError::Validation(
+                "llm_router_confidence_threshold must be between 0 and 1".into(),
+            ));
+        }
+        set_setting(
+            conn,
+            SETTING_LLM_ROUTER_CONFIDENCE_THRESHOLD,
+            &format!("{t}"),
+        )?;
+    }
+    if let Some(on) = patch.llm_router_tier2_enabled {
+        set_setting(
+            conn,
+            SETTING_LLM_ROUTER_TIER2_ENABLED,
+            if on { "1" } else { "0" },
+        )?;
+    }
     Ok(())
 }
 
@@ -284,6 +342,12 @@ mod tests {
         assert_eq!(s.remote_stt_timeout_secs, 30);
         assert!(!s.remote_stt_key_stored);
         assert!(!s.local_whisper_use_gpu);
+        assert_eq!(s.llm_router_model_path, None);
+        assert!(
+            (s.llm_router_confidence_threshold - DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD).abs()
+                < f32::EPSILON
+        );
+        assert!(!s.llm_router_tier2_enabled);
     }
 
     #[test]
@@ -299,6 +363,9 @@ mod tests {
                 remote_stt_model: None,
                 remote_stt_timeout_secs: None,
                 local_whisper_use_gpu: None,
+                llm_router_model_path: None,
+                llm_router_confidence_threshold: None,
+                llm_router_tier2_enabled: None,
             },
         )
         .expect("patch");
@@ -320,6 +387,9 @@ mod tests {
                 remote_stt_model: None,
                 remote_stt_timeout_secs: None,
                 local_whisper_use_gpu: None,
+                llm_router_model_path: None,
+                llm_router_confidence_threshold: None,
+                llm_router_tier2_enabled: None,
             },
         )
         .expect_err("expected validation error");
@@ -342,6 +412,9 @@ mod tests {
                 remote_stt_model: Some("test-model".into()),
                 remote_stt_timeout_secs: Some(60),
                 local_whisper_use_gpu: None,
+                llm_router_model_path: None,
+                llm_router_confidence_threshold: None,
+                llm_router_tier2_enabled: None,
             },
         )
         .expect("patch");
@@ -365,6 +438,9 @@ mod tests {
                 remote_stt_model: None,
                 remote_stt_timeout_secs: None,
                 local_whisper_use_gpu: None,
+                llm_router_model_path: None,
+                llm_router_confidence_threshold: None,
+                llm_router_tier2_enabled: None,
             },
         )
         .expect_err("expected validation error");
@@ -384,6 +460,9 @@ mod tests {
                 remote_stt_model: None,
                 remote_stt_timeout_secs: None,
                 local_whisper_use_gpu: Some(true),
+                llm_router_model_path: None,
+                llm_router_confidence_threshold: None,
+                llm_router_tier2_enabled: None,
             },
         )
         .expect("patch");
@@ -399,10 +478,41 @@ mod tests {
                 remote_stt_model: None,
                 remote_stt_timeout_secs: None,
                 local_whisper_use_gpu: Some(false),
+                llm_router_model_path: None,
+                llm_router_confidence_threshold: None,
+                llm_router_tier2_enabled: None,
             },
         )
         .expect("patch off");
         let s = get_app_settings(&conn).expect("reload");
         assert!(!s.local_whisper_use_gpu);
+    }
+
+    #[test]
+    fn apply_settings_patch_persists_llm_router_settings() {
+        let (_dir, conn) = open_temp();
+        apply_settings_patch(
+            &conn,
+            &SettingsPatch {
+                wake_engine: None,
+                oww_threshold: None,
+                stt_provider: None,
+                remote_stt_url: None,
+                remote_stt_model: None,
+                remote_stt_timeout_secs: None,
+                local_whisper_use_gpu: None,
+                llm_router_model_path: Some(r"C:\models\router.gguf".into()),
+                llm_router_confidence_threshold: Some(0.55),
+                llm_router_tier2_enabled: Some(true),
+            },
+        )
+        .expect("patch");
+        let s = get_app_settings(&conn).expect("reload");
+        assert_eq!(
+            s.llm_router_model_path.as_deref(),
+            Some(r"C:\models\router.gguf")
+        );
+        assert!((s.llm_router_confidence_threshold - 0.55).abs() < 0.0001);
+        assert!(s.llm_router_tier2_enabled);
     }
 }

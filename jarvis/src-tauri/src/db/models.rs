@@ -1,5 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+/// How trigger phrases match transcript text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchMode {
+    /// Full phrase match anywhere in the transcript (default).
+    #[default]
+    Phrase,
+    /// Trigger at a word boundary; words after the trigger become `remainder`.
+    Prefix,
+}
+
 /// Persisted command definition loaded from SQLite.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandNode {
@@ -9,6 +20,8 @@ pub struct CommandNode {
     pub actions: Vec<Action>,
     pub enabled: bool,
     pub fuzzy_threshold_pct: u16,
+    #[serde(default)]
+    pub match_mode: MatchMode,
     pub created_at: String,
 }
 
@@ -20,6 +33,8 @@ pub struct NewCommandNode {
     pub actions: Vec<Action>,
     pub enabled: bool,
     pub fuzzy_threshold_pct: u16,
+    #[serde(default)]
+    pub match_mode: MatchMode,
 }
 
 /// JSON-schema-style slot declared on a user- or builtin-defined tool.
@@ -64,8 +79,23 @@ pub struct NewToolDefinition {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
-    OpenApp { name: String, path: String },
+    OpenApp {
+        name: String,
+        path: String,
+        #[serde(default)]
+        placement: Option<String>,
+    },
     OpenUrl { url: String },
+    OpenTarget {
+        target: String,
+        #[serde(default)]
+        placement: Option<String>,
+    },
+    PlaceWindow {
+        zone: String,
+        #[serde(default)]
+        monitor: Option<String>,
+    },
     RunScript { script: String, args: Vec<String> },
     SendKeys { keys: String },
     Wait { ms: u64 },
@@ -83,6 +113,7 @@ mod tests {
             Action::OpenApp {
                 name: "notepad".into(),
                 path: "notepad.exe".into(),
+                placement: None,
             },
             Action::OpenUrl {
                 url: "https://github.com".into(),
@@ -113,6 +144,7 @@ mod tests {
         let a = Action::OpenApp {
             name: "notepad".into(),
             path: "notepad.exe".into(),
+            placement: None,
         };
         let j = serde_json::to_string(&a).unwrap();
         let back: Action = serde_json::from_str(&j).unwrap();

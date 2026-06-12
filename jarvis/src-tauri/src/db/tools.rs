@@ -21,6 +21,50 @@ pub fn ensure_tools_schema(conn: &Connection) -> Result<(), DbError> {
         ",
     )?;
     seed_builtin_open_url(conn)?;
+    seed_builtin_open_target(conn)?;
+    seed_builtin_snap_window(conn)?;
+    Ok(())
+}
+
+fn seed_builtin_open_target(conn: &Connection) -> Result<(), DbError> {
+    let parameters = vec![
+        ToolParameter {
+            name: "target".into(),
+            param_type: "string".into(),
+            description: Some("Spoken app or site name to open".into()),
+            required: true,
+            enum_values: vec![],
+        },
+        ToolParameter {
+            name: "placement".into(),
+            param_type: "enum".into(),
+            description: Some(
+                "Optional window zone: left_half, right_half, maximize".into(),
+            ),
+            required: false,
+            enum_values: vec![
+                "left_half".into(),
+                "right_half".into(),
+                "maximize".into(),
+            ],
+        },
+    ];
+    let actions = vec![Action::OpenTarget {
+        target: "{{target}}".into(),
+        placement: Some("{{placement}}".into()),
+    }];
+    let row = NewToolDefinition {
+        name: "open_target".into(),
+        display_name: "Open app or site".into(),
+        description: "Opens an installed app or browser URL from a spoken name".into(),
+        parameters,
+        actions,
+        enabled: true,
+        builtin: true,
+    };
+    if get_tool_by_name(conn, "open_target")?.is_none() {
+        insert_tool(conn, &row)?;
+    }
     Ok(())
 }
 
@@ -45,6 +89,37 @@ fn seed_builtin_open_url(conn: &Connection) -> Result<(), DbError> {
         builtin: true,
     };
     if get_tool_by_name(conn, "open_url")?.is_none() {
+        insert_tool(conn, &row)?;
+    }
+    Ok(())
+}
+
+fn seed_builtin_snap_window(conn: &Connection) -> Result<(), DbError> {
+    let parameters = vec![ToolParameter {
+        name: "zone".into(),
+        param_type: "enum".into(),
+        description: Some("Window zone for the focused window".into()),
+        required: true,
+        enum_values: vec![
+            "left_half".into(),
+            "right_half".into(),
+            "maximize".into(),
+        ],
+    }];
+    let actions = vec![Action::PlaceWindow {
+        zone: "{{zone}}".into(),
+        monitor: Some("monitor_primary".into()),
+    }];
+    let row = NewToolDefinition {
+        name: "snap_window".into(),
+        display_name: "Snap window".into(),
+        description: "Moves the focused window to a screen zone".into(),
+        parameters,
+        actions,
+        enabled: true,
+        builtin: true,
+    };
+    if get_tool_by_name(conn, "snap_window")?.is_none() {
         insert_tool(conn, &row)?;
     }
     Ok(())
@@ -199,6 +274,36 @@ mod tests {
         init_db(&path).unwrap();
         let conn = Connection::open(&path).unwrap();
         (dir, conn)
+    }
+
+    #[test]
+    fn init_db_seeds_open_target_builtin() {
+        let (_dir, conn) = open_temp();
+        let tool = get_tool_by_name(&conn, "open_target")
+            .unwrap()
+            .expect("builtin open_target");
+        assert!(tool.builtin);
+        assert!(tool.enabled);
+        assert_eq!(tool.parameters.len(), 2);
+        assert_eq!(tool.parameters[0].name, "target");
+        assert!(matches!(
+            tool.actions.first(),
+            Some(Action::OpenTarget { .. })
+        ));
+    }
+
+    #[test]
+    fn init_db_seeds_snap_window_builtin() {
+        let (_dir, conn) = open_temp();
+        let tool = get_tool_by_name(&conn, "snap_window")
+            .unwrap()
+            .expect("builtin snap_window");
+        assert!(tool.builtin);
+        assert_eq!(tool.parameters[0].name, "zone");
+        assert!(matches!(
+            tool.actions.first(),
+            Some(Action::PlaceWindow { .. })
+        ));
     }
 
     #[test]

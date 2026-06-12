@@ -1,6 +1,6 @@
 //! Case-insensitive substring match of transcript against command trigger phrases.
 
-use crate::db::CommandNode;
+use crate::db::{CommandNode, MatchMode};
 use rapidfuzz::fuzz;
 use serde::Serialize;
 
@@ -11,73 +11,159 @@ pub struct MatchResult {
     pub matched_phrase: String,
     pub span_start: usize,
     pub span_end: usize,
+    /// Words after a prefix trigger (`span_end..`), trimmed; empty for phrase mode or no tail.
+    pub remainder: String,
 }
 
 /// Byte offsets in `transcript` (UTF-8) suitable for slicing `&transcript[span_start..span_end]`.
 pub fn match_command(transcript: &str, nodes: &[CommandNode]) -> Option<MatchResult> {
-    // Keep Phase 1 exact behavior as a fast path and avoid regressions.
-    for node in nodes {
-        if !node.enabled {
-            continue;
-        }
-        for phrase in &node.trigger_phrases {
-            if let Some((span_start, span_end)) = find_substring_ci(transcript, phrase) {
-                return Some(MatchResult {
-                    node_id: node.id.to_string(),
-                    matched_phrase: phrase.clone(),
-                    span_start,
-                    span_end,
-                });
-            }
-        }
-    }
+    let mut best: Option<CandidateMatch> = None;
 
-    let mut best: Option<ScoredMatch> = None;
-    for node in nodes {
+    for (node_index, node) in nodes.iter().enumerate() {
         if !node.enabled {
             continue;
         }
         let threshold = threshold_to_ratio(node.fuzzy_threshold_pct);
         for phrase in &node.trigger_phrases {
-            let (score, span_start, span_end) = best_fuzzy_match(transcript, phrase);
-            if score < threshold {
+            if phrase.trim().is_empty() {
                 continue;
             }
 
-            let candidate = ScoredMatch {
-                score,
-                result: MatchResult {
-                    node_id: node.id.to_string(),
-                    matched_phrase: phrase.clone(),
-                    span_start,
-                    span_end,
-                },
-            };
+            if let Some((span_start, span_end)) =
+                find_exact_match(transcript, phrase, &node.match_mode)
+            {
+                let candidate = CandidateMatch {
+                    phrase_len: span_end.saturating_sub(span_start),
+                    score: 1.0,
+                    node_index,
+                    result: MatchResult {
+                        node_id: node.id.to_string(),
+                        matched_phrase: phrase.clone(),
+                        span_start,
+                        span_end,
+                        remainder: String::new(),
+                    },
+                };
+                best = pick_better(best, candidate);
+            }
 
-            let should_replace = match &best {
-                None => true,
-                Some(current) => candidate.score > current.score + 1e-9,
-            };
-            if should_replace {
-                best = Some(candidate);
+            let (score, span_start, span_end) =
+                best_fuzzy_match(transcript, phrase, &node.match_mode);
+            if score >= threshold {
+                let candidate = CandidateMatch {
+                    phrase_len: span_end.saturating_sub(span_start),
+                    score,
+                    node_index,
+                    result: MatchResult {
+                        node_id: node.id.to_string(),
+                        matched_phrase: phrase.clone(),
+                        span_start,
+                        span_end,
+                        remainder: String::new(),
+                    },
+                };
+                best = pick_better(best, candidate);
             }
         }
     }
 
-    best.map(|m| m.result)
+    best.map(|mut candidate| {
+        if nodes
+            .iter()
+            .find(|n| n.id.to_string() == candidate.result.node_id)
+            .is_some_and(|n| n.match_mode == MatchMode::Prefix)
+        {
+            candidate.result.remainder = extract_remainder(transcript, candidate.result.span_end);
+        }
+        candidate.result
+    })
 }
 
 #[derive(Debug)]
-struct ScoredMatch {
+struct CandidateMatch {
+    phrase_len: usize,
     score: f64,
+    node_index: usize,
     result: MatchResult,
+}
+
+fn pick_better(current: Option<CandidateMatch>, next: CandidateMatch) -> Option<CandidateMatch> {
+    match current {
+        None => Some(next),
+        Some(prev) => {
+            if next.phrase_len > prev.phrase_len {
+                Some(next)
+            } else if next.phrase_len < prev.phrase_len {
+                Some(prev)
+            } else if next.score > prev.score + 1e-9 {
+                Some(next)
+            } else if next.score + 1e-9 < prev.score {
+                Some(prev)
+            } else if next.node_index < prev.node_index {
+                Some(next)
+            } else {
+                Some(prev)
+            }
+        }
+    }
 }
 
 fn threshold_to_ratio(threshold_pct: u16) -> f64 {
     f64::from(threshold_pct.min(100)) / 100.0
 }
 
-fn best_fuzzy_match(transcript: &str, phrase: &str) -> (f64, usize, usize) {
+fn extract_remainder(transcript: &str, span_end: usize) -> String {
+    transcript.get(span_end..).unwrap_or("").trim().to_string()
+}
+
+fn find_exact_match(
+    transcript: &str,
+    phrase: &str,
+    mode: &MatchMode,
+) -> Option<(usize, usize)> {
+    match mode {
+        MatchMode::Phrase => find_substring_ci(transcript, phrase),
+        MatchMode::Prefix => find_prefix_at_word_boundary_ci(transcript, phrase),
+    }
+}
+
+fn find_prefix_at_word_boundary_ci(transcript: &str, phrase: &str) -> Option<(usize, usize)> {
+    if phrase.is_empty() {
+        return None;
+    }
+    for (start_idx, _) in transcript.char_indices() {
+        if !is_word_boundary_before(transcript, start_idx) {
+            continue;
+        }
+        if let Some(len) = prefix_match_byte_len_ci(&transcript[start_idx..], phrase) {
+            let end = start_idx + len;
+            if is_word_boundary_after(transcript, end) {
+                return Some((start_idx, end));
+            }
+        }
+    }
+    None
+}
+
+fn is_word_boundary_before(transcript: &str, start: usize) -> bool {
+    if start == 0 {
+        return true;
+    }
+    transcript[..start]
+        .chars()
+        .last()
+        .is_none_or(|c| c.is_whitespace())
+}
+
+fn is_word_boundary_after(transcript: &str, end: usize) -> bool {
+    end >= transcript.len()
+        || transcript[end..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_whitespace())
+}
+
+fn best_fuzzy_match(transcript: &str, phrase: &str, mode: &MatchMode) -> (f64, usize, usize) {
     if transcript.trim().is_empty() || phrase.trim().is_empty() {
         return (0.0, 0, transcript.len());
     }
@@ -85,7 +171,11 @@ fn best_fuzzy_match(transcript: &str, phrase: &str) -> (f64, usize, usize) {
     let transcript_lower = transcript.to_lowercase();
     let phrase_lower = phrase.to_lowercase();
 
-    let mut best_score = fuzz::ratio(transcript_lower.chars(), phrase_lower.chars());
+    let mut best_score = if matches!(mode, MatchMode::Phrase) {
+        fuzz::ratio(transcript_lower.chars(), phrase_lower.chars())
+    } else {
+        0.0
+    };
     let mut best_span = (0usize, transcript.len());
 
     let windows = word_windows(transcript);
@@ -97,10 +187,17 @@ fn best_fuzzy_match(transcript: &str, phrase: &str) -> (f64, usize, usize) {
     let min_window = phrase_word_count.saturating_sub(1).max(1);
     let max_window = (phrase_word_count + 2).min(windows.len());
     for window_size in min_window..=max_window {
-        for start in 0..=windows.len() - window_size {
+        for start in 0..=windows.len().saturating_sub(window_size) {
             let end = start + window_size - 1;
             let span_start = windows[start].0;
             let span_end = windows[end].1;
+            if matches!(mode, MatchMode::Prefix) {
+                if !is_word_boundary_before(transcript, span_start)
+                    || !is_word_boundary_after(transcript, span_end)
+                {
+                    continue;
+                }
+            }
             let chunk = &transcript[span_start..span_end];
             let score = fuzz::ratio(chunk.to_lowercase().chars(), phrase_lower.chars());
             if score > best_score {
@@ -187,6 +284,17 @@ mod tests {
         enabled: bool,
         fuzzy_threshold_pct: u16,
     ) -> CommandNode {
+        node_with_mode(id, name, phrases, enabled, fuzzy_threshold_pct, MatchMode::Phrase)
+    }
+
+    fn node_with_mode(
+        id: i64,
+        name: &str,
+        phrases: Vec<&str>,
+        enabled: bool,
+        fuzzy_threshold_pct: u16,
+        match_mode: MatchMode,
+    ) -> CommandNode {
         CommandNode {
             id,
             name: name.into(),
@@ -194,6 +302,7 @@ mod tests {
             actions: vec![],
             enabled,
             fuzzy_threshold_pct,
+            match_mode,
             created_at: "now".into(),
         }
     }
@@ -208,6 +317,7 @@ mod tests {
         assert_eq!(&t[m.span_start..m.span_end], "open notepad");
         assert_eq!(m.span_start, 7);
         assert_eq!(m.span_end, 7 + "open notepad".len());
+        assert_eq!(m.remainder, "");
     }
 
     #[test]
@@ -271,9 +381,11 @@ mod tests {
             actions: vec![Action::OpenApp {
                 name: "notepad".into(),
                 path: "notepad.exe".into(),
+                placement: None,
             }],
             enabled: true,
             fuzzy_threshold_pct: 80,
+            match_mode: MatchMode::Phrase,
             created_at: "x".into(),
         };
         let t = "OPEN NOTEPAD";
@@ -313,5 +425,53 @@ mod tests {
         let t = "please open notpad now";
         let m = match_command(t, &[n]).expect("match");
         assert_eq!(m.matched_phrase, "open notepad");
+    }
+
+    #[test]
+    fn longest_phrase_wins_over_shorter_substring() {
+        let short = node(1, "short", vec!["open"], true, 80);
+        let long = node(2, "long", vec!["open notepad"], true, 80);
+        let t = "please open notepad now";
+        let m = match_command(t, &[short, long]).expect("match");
+        assert_eq!(m.node_id, "2");
+        assert_eq!(m.matched_phrase, "open notepad");
+    }
+
+    #[test]
+    fn prefix_mode_extracts_remainder_after_trigger() {
+        let n = node_with_mode(41, "open", vec!["open"], true, 80, MatchMode::Prefix);
+        let t = "open notepad";
+        let m = match_command(t, std::slice::from_ref(&n)).expect("match");
+        assert_eq!(m.matched_phrase, "open");
+        assert_eq!(&t[m.span_start..m.span_end], "open");
+        assert_eq!(m.remainder, "notepad");
+    }
+
+    #[test]
+    fn prefix_mode_finds_trigger_after_leading_words() {
+        let n = node_with_mode(42, "open", vec!["open"], true, 80, MatchMode::Prefix);
+        let t = "please open notepad";
+        let m = match_command(t, std::slice::from_ref(&n)).expect("match");
+        assert_eq!(m.remainder, "notepad");
+    }
+
+    #[test]
+    fn prefix_mode_rejects_word_prefix_without_boundary() {
+        let n = node_with_mode(43, "open", vec!["open"], true, 80, MatchMode::Prefix);
+        assert!(match_command("opening notepad", std::slice::from_ref(&n)).is_none());
+    }
+
+    #[test]
+    fn prefix_mode_empty_remainder_when_trigger_only() {
+        let n = node_with_mode(44, "open", vec!["open"], true, 80, MatchMode::Prefix);
+        let m = match_command("open", std::slice::from_ref(&n)).expect("match");
+        assert_eq!(m.remainder, "");
+    }
+
+    #[test]
+    fn phrase_mode_does_not_populate_remainder() {
+        let n = node(45, "open", vec!["open notepad"], true, 80);
+        let m = match_command("open notepad please", std::slice::from_ref(&n)).expect("match");
+        assert_eq!(m.remainder, "");
     }
 }

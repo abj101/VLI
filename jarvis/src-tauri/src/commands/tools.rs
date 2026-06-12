@@ -3,8 +3,12 @@
 
 use crate::{
     apps::AppEntry,
-    commands::executor::{execute_resolved_actions, resolve_action_templates, ToolCallContext},
+    commands::{
+        executor::{execute_resolved_actions, resolve_action_templates, ToolCallContext},
+        open_target::execute_open_target_tool,
+    },
     db::{get_tool_by_name, Action, ToolDefinition},
+    window::{snap_foreground_window, DEFAULT_MONITOR},
 };
 use rusqlite::Connection;
 use std::collections::HashMap;
@@ -38,8 +42,32 @@ pub fn execute_tool(
         return Err(format!("tool `{tool_id}` is disabled"));
     }
     validate_tool_args(&tool, args)?;
+    if tool_id == "open_target" {
+        return execute_open_target_tool(conn, args, runtime, app_index);
+    }
+    if tool_id == "snap_window" {
+        return execute_snap_window_tool(args, runtime);
+    }
     let resolved = substitute_tool_args(&tool.actions, args);
     execute_resolved_actions(&resolved, runtime, app_index);
+    Ok(())
+}
+
+fn execute_snap_window_tool(
+    args: &HashMap<String, String>,
+    runtime: &impl crate::commands::executor::ActionRuntime,
+) -> Result<(), String> {
+    let zone = args
+        .get("zone")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "missing required tool argument `zone` for `snap_window`".to_string())?;
+    runtime.emit_status(&format!("Snapping window to {zone}…"));
+    snap_foreground_window(zone, DEFAULT_MONITOR).map_err(|err| {
+        runtime.emit_error(&err);
+        err
+    })?;
+    runtime.emit_status(&format!("Snapped window to {zone}"));
     Ok(())
 }
 
@@ -157,6 +185,24 @@ mod tests {
         execute_tool(&conn, "open_url", &args, &runtime, None).expect("execute open_url");
         let state = runtime.state.lock().unwrap();
         assert_eq!(state.url_calls, vec!["https://example.com".to_string()]);
+        assert!(state.errors.is_empty());
+    }
+
+    #[test]
+    fn execute_tool_open_target_resolves_app() {
+        let (_dir, conn) = test_conn();
+        let runtime = MockRuntime::default();
+        let index = vec![crate::apps::AppEntry {
+            display_name: "Brave".into(),
+            exe_path: r"C:\Brave\brave.exe".into(),
+            icon_data_url: None,
+        }];
+        let args = [("target".to_string(), "brave".to_string())]
+            .into_iter()
+            .collect();
+        execute_tool(&conn, "open_target", &args, &runtime, Some(&index))
+            .expect("execute open_target");
+        let state = runtime.state.lock().unwrap();
         assert!(state.errors.is_empty());
     }
 

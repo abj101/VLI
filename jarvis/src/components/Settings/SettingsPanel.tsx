@@ -51,6 +51,25 @@ type AppSettingsPayload = {
   remoteSttTimeoutSecs: number;
   remoteSttKeyStored: boolean;
   localWhisperUseGpu: boolean;
+  llmRouterModelPath: string | null;
+  llmRouterConfidenceThreshold: number;
+  llmRouterTier2Enabled: boolean;
+};
+
+type RouterStatusPayload = {
+  featureCompiled: boolean;
+  compileBackend: "none" | "vulkan" | "cuda" | "metal" | string;
+  runtimeAvailable: boolean;
+  modelPresent: boolean;
+  modelPath: string | null;
+  tier2Enabled: boolean;
+  confidenceThreshold: number;
+  message: string | null;
+};
+
+type RouterWarmupPayload = {
+  ready: boolean;
+  message: string;
 };
 
 type WhisperGpuStatusPayload = {
@@ -116,6 +135,21 @@ export function SettingsPanel({
     compileBackend: "none",
     runtimeAvailable: false,
     message: "This build was compiled without a Whisper GPU backend.",
+  });
+  const [llmRouterTier2Enabled, setLlmRouterTier2Enabled] = useState(false);
+  const [llmRouterConfidenceThreshold, setLlmRouterConfidenceThreshold] = useState(0.7);
+  const [llmRouterModelPath, setLlmRouterModelPath] = useState("");
+  const [routerPreparing, setRouterPreparing] = useState(false);
+  const [routerPrepMessage, setRouterPrepMessage] = useState<string | null>(null);
+  const [routerStatus, setRouterStatus] = useState<RouterStatusPayload>({
+    featureCompiled: false,
+    compileBackend: "none",
+    runtimeAvailable: false,
+    modelPresent: false,
+    modelPath: null,
+    tier2Enabled: false,
+    confidenceThreshold: 0.7,
+    message: "LLM router is not available in this build.",
   });
 
   const panelRef = useRef<HTMLElement | null>(null);
@@ -189,8 +223,16 @@ export function SettingsPanel({
   }, [embedded, activeNav]);
 
   const refreshFromBackend = async () => {
-    const [savedHotkey, savedThreshold, savedTheme, savedHudTransparency, savedEditorTransparency, app, gpuStatus] =
-      await Promise.all([
+    const [
+      savedHotkey,
+      savedThreshold,
+      savedTheme,
+      savedHudTransparency,
+      savedEditorTransparency,
+      app,
+      gpuStatus,
+      router,
+    ] = await Promise.all([
         invoke<string | null>("get_setting", { key: HOTKEY_KEY }),
         invoke<string | null>("get_setting", { key: DEFAULT_THRESHOLD_KEY }),
         invoke<string | null>("get_setting", { key: THEME_KEY }),
@@ -198,6 +240,7 @@ export function SettingsPanel({
         invoke<string | null>("get_setting", { key: EDITOR_TRANSPARENCY_KEY }),
         invoke<AppSettingsPayload>("get_settings"),
         invoke<WhisperGpuStatusPayload>("whisper_gpu_status"),
+        invoke<RouterStatusPayload>("router_status"),
       ]);
     if (savedHotkey && savedHotkey.trim().length > 0) {
       setHotkey(savedHotkey.trim());
@@ -224,10 +267,17 @@ export function SettingsPanel({
     setRemoteSttKeyStored(app.remoteSttKeyStored);
     setLocalWhisperUseGpu(app.localWhisperUseGpu);
     setWhisperGpuStatus(gpuStatus);
+    setLlmRouterTier2Enabled(app.llmRouterTier2Enabled);
+    setLlmRouterConfidenceThreshold(app.llmRouterConfidenceThreshold);
+    setLlmRouterModelPath(app.llmRouterModelPath ?? "");
+    setRouterStatus(router);
   };
 
   const whisperGpuCanEnable =
     whisperGpuStatus.compileBackend !== "none" && whisperGpuStatus.runtimeAvailable;
+
+  const routerCanEnable =
+    routerStatus.featureCompiled && routerStatus.modelPresent;
 
   useEffect(() => {
     let mounted = true;
@@ -477,6 +527,75 @@ export function SettingsPanel({
       setLocalWhisperUseGpu(s.localWhisperUseGpu);
     } catch (err) {
       showSettingsNotice(formatUserError(err, "Could not save the transcription provider."));
+    }
+  };
+
+  const persistLlmRouterTier2 = async (next: boolean) => {
+    const prev = llmRouterTier2Enabled;
+    setLlmRouterTier2Enabled(next);
+    if (!next) {
+      setRouterPreparing(false);
+      setRouterPrepMessage(null);
+    } else if (routerCanEnable) {
+      setRouterPreparing(true);
+      setRouterPrepMessage("Warming router model…");
+    }
+    try {
+      const s = await invoke<AppSettingsPayload>("update_settings", {
+        patch: { llmRouterTier2Enabled: next },
+      });
+      setLlmRouterTier2Enabled(s.llmRouterTier2Enabled);
+      if (next && s.llmRouterTier2Enabled && routerCanEnable) {
+        const unlisten = await listen<RouterWarmupPayload>("router-warmup", (event) => {
+          setRouterPrepMessage(event.payload.message);
+          showSettingsNotice(event.payload.message);
+          setRouterPreparing(false);
+          void unlisten();
+        });
+        const warmup = await invoke<RouterWarmupPayload>("router_warmup");
+        setRouterPrepMessage(warmup.message);
+        if (warmup.ready) {
+          showSettingsNotice(warmup.message);
+          setRouterPreparing(false);
+          void unlisten();
+        }
+      }
+      const status = await invoke<RouterStatusPayload>("router_status");
+      setRouterStatus(status);
+    } catch (err) {
+      setLlmRouterTier2Enabled(prev);
+      showSettingsNotice(formatUserError(err, "Could not save the LLM router option."));
+      setRouterPrepMessage(null);
+    } finally {
+      if (next) {
+        setRouterPreparing(false);
+      }
+    }
+  };
+
+  const commitLlmRouterConfidence = async (next: number) => {
+    const clamped = Math.max(0, Math.min(1, next));
+    setLlmRouterConfidenceThreshold(clamped);
+    try {
+      await invoke<AppSettingsPayload>("update_settings", {
+        patch: { llmRouterConfidenceThreshold: clamped },
+      });
+    } catch (err) {
+      showSettingsNotice(formatUserError(err, "Could not save router confidence threshold."));
+    }
+  };
+
+  const saveLlmRouterModelPath = async () => {
+    try {
+      const s = await invoke<AppSettingsPayload>("update_settings", {
+        patch: { llmRouterModelPath: llmRouterModelPath.trim() || "" },
+      });
+      setLlmRouterModelPath(s.llmRouterModelPath ?? "");
+      const status = await invoke<RouterStatusPayload>("router_status");
+      setRouterStatus(status);
+      showSettingsNotice("Router model path saved");
+    } catch (err) {
+      showSettingsNotice(formatUserError(err, "Could not save router model path."));
     }
   };
 
@@ -879,6 +998,117 @@ export function SettingsPanel({
                       </p>
                     </>
                   )}
+                  </section>
+
+                  <section className="editor-settings-section editor-settings-section--compact">
+                    <p className="editor-settings-group-label">LLM router (Tier 2)</p>
+                    <div className="editor-settings-row editor-settings-row--switch">
+                      <div className="editor-settings-row-label editor-settings-row-label--stack">
+                        <SettingsLabelWithInfo
+                          id="editor-llm-router-tier2-label"
+                          tipId="tip-llm-router-tier2"
+                          tip="Routes natural speech to tools with a small on-device model. Requires the router GGUF and an llm-local build."
+                        >
+                          Enable Tier 2 routing
+                        </SettingsLabelWithInfo>
+                        {(routerPreparing ||
+                          routerPrepMessage ||
+                          !routerCanEnable ||
+                          routerStatus.message) && (
+                          <span
+                            className="editor-settings-switch-meta"
+                            role="status"
+                            aria-live="polite"
+                          >
+                            {routerPreparing && (
+                              <span className="editor-settings-spinner" aria-hidden />
+                            )}
+                            {routerPreparing
+                              ? (routerPrepMessage ?? "Preparing model…")
+                              : (routerPrepMessage ??
+                                routerStatus.message ??
+                                (!routerCanEnable
+                                  ? "Router model or feature unavailable"
+                                  : null))}
+                          </span>
+                        )}
+                      </div>
+                      <div className="editor-settings-row-control editor-settings-row-control--switch">
+                        <button
+                          type="button"
+                          id="editor-llm-router-tier2"
+                          className={`editor-switch${llmRouterTier2Enabled ? " is-on" : ""}`}
+                          role="switch"
+                          aria-labelledby="editor-llm-router-tier2-label"
+                          aria-checked={llmRouterTier2Enabled}
+                          disabled={!routerCanEnable}
+                          onClick={() => void persistLlmRouterTier2(!llmRouterTier2Enabled)}
+                        >
+                          <span className="editor-switch-knob" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="editor-settings-row">
+                      <div className="editor-settings-row-label">
+                        <SettingsLabelWithInfo
+                          tipId="tip-llm-router-confidence"
+                          tip="Reject tool calls when the model confidence is below this value."
+                        >
+                          Confidence threshold
+                        </SettingsLabelWithInfo>
+                      </div>
+                      <div className="editor-settings-row-control editor-settings-row-control--slider">
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          value={llmRouterConfidenceThreshold}
+                          aria-valuenow={llmRouterConfidenceThreshold}
+                          aria-valuemin={0}
+                          aria-valuemax={1}
+                          aria-valuetext={llmRouterConfidenceThreshold.toFixed(2)}
+                          aria-describedby="tip-llm-router-confidence"
+                          onChange={(e) =>
+                            setLlmRouterConfidenceThreshold(Number(e.target.value))
+                          }
+                          onPointerUp={(e) =>
+                            void commitLlmRouterConfidence(
+                              Number((e.target as HTMLInputElement).value),
+                            )
+                          }
+                          onKeyUp={(e) => {
+                            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                            void commitLlmRouterConfidence(
+                              Number((e.target as HTMLInputElement).value),
+                            );
+                          }}
+                        />
+                        <span className="editor-settings-slider-value" aria-hidden>
+                          {llmRouterConfidenceThreshold.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                    <label htmlFor="editor-llm-router-model-path">
+                      Model path (optional)
+                      <input
+                        id="editor-llm-router-model-path"
+                        type="text"
+                        autoComplete="off"
+                        placeholder="Default: bundled qwen2.5 router GGUF"
+                        value={llmRouterModelPath}
+                        onChange={(e) => setLlmRouterModelPath(e.target.value)}
+                      />
+                    </label>
+                    <div className="editor-settings-inline">
+                      <button
+                        type="button"
+                        className="editor-btn editor-btn--primary"
+                        onClick={() => void saveLlmRouterModelPath()}
+                      >
+                        Save model path
+                      </button>
+                    </div>
                   </section>
 
                   <section className="editor-settings-section editor-settings-section--compact">

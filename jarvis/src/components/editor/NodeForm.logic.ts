@@ -8,6 +8,8 @@ import {
 export type ActionKind =
   | "open_app"
   | "open_url"
+  | "open_target"
+  | "place_window"
   | "run_script"
   | "send_keys"
   | "speak"
@@ -22,6 +24,8 @@ export type FormModel = {
   id: number | null;
   triggerPhrases: string[];
   enabled: boolean;
+  /** When true, words after the trigger become `{{remainder}}` for actions. */
+  prefixMode: boolean;
   actions: FormActionPayload[];
 };
 
@@ -44,6 +48,10 @@ export function defaultActionForKind(kind: ConcreteActionKind): ActionPayload {
       return { open_app: { name: "", path: "" } };
     case "open_url":
       return { open_url: { url: "" } };
+    case "open_target":
+      return { open_target: { target: "{{remainder}}" } };
+    case "place_window":
+      return { place_window: { zone: "right_half" } };
     case "run_script":
       return { run_script: { script: "", args: [] } };
     case "send_keys":
@@ -62,6 +70,7 @@ export function emptyFormModel(): FormModel {
     id: null,
     triggerPhrases: [],
     enabled: true,
+    prefixMode: false,
     actions: [],
   };
 }
@@ -74,6 +83,7 @@ export function modelFromNode(node: CommandNodePayload | null): FormModel {
     id: node.id,
     triggerPhrases: [...node.trigger_phrases],
     enabled: node.enabled,
+    prefixMode: node.match_mode === "prefix",
     actions: [...node.actions],
   };
 }
@@ -89,6 +99,7 @@ export function toCommandPayload(model: FormModel): Omit<CommandNodePayload, "id
     actions: model.actions.filter((a): a is ActionPayload => !isEditorPendingAction(a)),
     enabled: model.enabled,
     fuzzy_threshold_pct: 0,
+    match_mode: model.prefixMode ? "prefix" : "phrase",
   };
 }
 

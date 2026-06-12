@@ -37,6 +37,7 @@ import {
   type FormModel,
 } from "./NodeForm.logic";
 import { searchAppIndexInvokeArgs } from "./appIndexInvoke";
+import { PlacementZoneSelect } from "./PlacementZoneSelect";
 import { CommandDeleteConfirm } from "./CommandDeleteConfirm";
 import { EditorCheckIcon } from "./EditorCheckIcon";
 import { EditorCloseXIcon } from "./EditorCloseXIcon";
@@ -217,6 +218,10 @@ export function CommandFormulaRow({
     }));
   };
   const followUpVariableMeta = useMemo(() => deriveFollowUpVariableMap(model.actions), [model.actions]);
+  const formulaVariableLabels = useMemo(
+    () => deriveFormulaVariableLabels(model.actions, model.prefixMode),
+    [model.actions, model.prefixMode],
+  );
 
   const errors = validateFormModel(model);
 
@@ -254,14 +259,26 @@ export function CommandFormulaRow({
         )}
 
         <div className="editor-command-formula">
-          <input
-            type="text"
-            className="editor-formula-input editor-formula-input--phrase"
-            value={primaryPhrase}
-            onChange={(e) => setPrimaryPhrase(e.target.value)}
-            placeholder="Trigger phrase"
-            aria-label="Trigger phrase"
-          />
+          <div className="editor-formula-trigger-wrap">
+            <input
+              type="text"
+              className="editor-formula-input editor-formula-input--phrase"
+              value={primaryPhrase}
+              onChange={(e) => setPrimaryPhrase(e.target.value)}
+              placeholder="Trigger phrase"
+              aria-label="Trigger phrase"
+            />
+            <label className="editor-prefix-mode-toggle">
+              <input
+                type="checkbox"
+                checked={model.prefixMode}
+                onChange={(e) =>
+                  updateModel((prev) => ({ ...prev, prefixMode: e.target.checked }))
+                }
+              />
+              <span>Words after trigger are input</span>
+            </label>
+          </div>
           <span className="editor-formula-eq" aria-hidden>
             =
           </span>
@@ -281,7 +298,7 @@ export function CommandFormulaRow({
                     key={`${model.id ?? "draft"}-${index}-${getActionKind(action)}`}
                     action={action}
                     index={index}
-                    availableVariableLabels={followUpVariableMeta.labels}
+                    availableVariableLabels={formulaVariableLabels}
                     variableLabel={
                       followUpVariableMeta.byActionIndex.get(index)
                         ? `Variable ${followUpVariableMeta.byActionIndex.get(index)}`
@@ -416,6 +433,10 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
     }));
   };
   const followUpVariableMeta = useMemo(() => deriveFollowUpVariableMap(model.actions), [model.actions]);
+  const formulaVariableLabels = useMemo(
+    () => deriveFormulaVariableLabels(model.actions, model.prefixMode),
+    [model.actions, model.prefixMode],
+  );
 
   return (
     <li className="editor-command-item editor-command-item--draft">
@@ -426,14 +447,26 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
           </div>
         )}
         <div className="editor-command-formula">
-          <input
-            type="text"
-            className="editor-formula-input editor-formula-input--phrase"
-            value={primaryPhrase}
-            onChange={(e) => setPrimaryPhrase(e.target.value)}
-            placeholder="Phrase"
-            aria-label="Trigger phrase"
-          />
+          <div className="editor-formula-trigger-wrap">
+            <input
+              type="text"
+              className="editor-formula-input editor-formula-input--phrase"
+              value={primaryPhrase}
+              onChange={(e) => setPrimaryPhrase(e.target.value)}
+              placeholder="Phrase"
+              aria-label="Trigger phrase"
+            />
+            <label className="editor-prefix-mode-toggle">
+              <input
+                type="checkbox"
+                checked={model.prefixMode}
+                onChange={(e) =>
+                  updateModel((prev) => ({ ...prev, prefixMode: e.target.checked }))
+                }
+              />
+              <span>Words after trigger are input</span>
+            </label>
+          </div>
           <span className="editor-formula-eq" aria-hidden>
             =
           </span>
@@ -449,7 +482,7 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
                   key={`draft-${index}-${getActionKind(action)}`}
                   action={action}
                   index={index}
-                  availableVariableLabels={followUpVariableMeta.labels}
+                  availableVariableLabels={formulaVariableLabels}
                   variableLabel={
                     followUpVariableMeta.byActionIndex.get(index)
                       ? `Variable ${followUpVariableMeta.byActionIndex.get(index)}`
@@ -526,16 +559,38 @@ export function deriveFollowUpVariableMap(actions: FormActionPayload[]) {
   };
 }
 
+export function deriveFormulaVariableLabels(
+  actions: FormActionPayload[],
+  prefixMode: boolean,
+): string[] {
+  const followUp = deriveFollowUpVariableMap(actions);
+  const labels = [...followUp.labels];
+  if (prefixMode) {
+    labels.push("{{remainder}}");
+  }
+  return labels;
+}
+
 export function extractVariableTokenContext(inputValue: string, caret: number): VariableTokenContext | null {
   const before = inputValue.slice(0, caret);
-  const match = /(^|\s)(Variable(?:\s+\d*)?)$/i.exec(before);
-  if (!match) return null;
-  const token = match[2];
-  return {
-    start: before.length - token.length,
-    end: caret,
-    query: token.replace(/^Variable/i, "").trim(),
-  };
+  const varMatch = /(^|\s)(Variable(?:\s+\d*)?)$/i.exec(before);
+  if (varMatch) {
+    const token = varMatch[2];
+    return {
+      start: before.length - token.length,
+      end: caret,
+      query: token.replace(/^Variable/i, "").trim(),
+    };
+  }
+  const tplMatch = /\{\{([a-z_]*)$/i.exec(before);
+  if (tplMatch) {
+    return {
+      start: before.length - tplMatch[0].length,
+      end: caret,
+      query: tplMatch[1] ?? "",
+    };
+  }
+  return null;
 }
 
 function AppIconImg({
@@ -822,8 +877,15 @@ function ActionSegmentEditor({
   const variableHits = useMemo(() => {
     if (!availableVariableLabels.length) return [];
     const q = variableQuery.trim().toLowerCase();
-    if (!q) return availableVariableLabels;
-    return availableVariableLabels.filter((label) => label.toLowerCase().startsWith(`variable ${q}`));
+    return availableVariableLabels.filter((label) => {
+      if (label.startsWith("{{")) {
+        if (!q) return true;
+        const inner = label.slice(2, label.endsWith("}}") ? -2 : undefined).toLowerCase();
+        return inner.startsWith(q) || label.toLowerCase().startsWith(`{{${q}`);
+      }
+      if (!q) return true;
+      return label.toLowerCase().startsWith(`variable ${q}`);
+    });
   }, [availableVariableLabels, variableQuery]);
 
   const updateVariableSuggest = useCallback(
@@ -899,13 +961,17 @@ function ActionSegmentEditor({
         .filter(Boolean)
         .join(" ");
       return (
+        <div className="editor-formula-arg-wrap editor-formula-arg-wrap--with-placement">
         <div
           className={
             showAppLeadingIcon
               ? "editor-formula-arg-wrap editor-formula-arg-wrap--leading-app-icon"
               : "editor-formula-arg-wrap"
           }
-          ref={appAnchorRef}
+          ref={(el) => {
+            appAnchorRef.current = el;
+            variableAnchorRef.current = el;
+          }}
         >
           {showAppLeadingIcon ? (
             <span className="editor-formula-input-leading-icon" aria-hidden>
@@ -924,14 +990,15 @@ function ActionSegmentEditor({
             value={appQuery}
             readOnly={appConfirmed}
             title={appConfirmed ? action.open_app.name || "App" : undefined}
-            onChange={(e) => {
-              const v = e.target.value;
-              setAppQuery(v);
-              setAppEditing(true);
-              onChange({
-                open_app: { name: v, path: "" },
-              });
-            }}
+            {...(!appConfirmed
+              ? bindVariableSuggestInput(appQuery, (value) => {
+                  setAppQuery(value);
+                  setAppEditing(true);
+                  onChange({
+                    open_app: { name: value, path: "", placement: action.open_app.placement },
+                  });
+                })
+              : {})}
             onFocus={() => {
               setAppEditing(true);
               setAppOpen(true);
@@ -969,7 +1036,13 @@ function ActionSegmentEditor({
                       aria-label={`${h.display_name}, ${h.exe_path}`}
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => {
-                        onChange({ open_app: { name: h.display_name, path: h.exe_path } });
+                        onChange({
+                          open_app: {
+                            name: h.display_name,
+                            path: h.exe_path,
+                            placement: action.open_app.placement,
+                          },
+                        });
                         setAppQuery(h.display_name);
                         setAppHasSearched(false);
                         const picked = h.icon_data_url ?? appHitIcons[h.exe_path] ?? null;
@@ -1004,6 +1077,55 @@ function ActionSegmentEditor({
             </FormulaSuggestPortal>
           ) : null}
         </div>
+        {appConfirmed ? (
+          <PlacementZoneSelect
+            value={action.open_app.placement}
+            ariaLabel={`Placement for step ${index + 1}`}
+            onChange={(placement) =>
+              onChange({
+                open_app: { ...action.open_app, placement },
+              })
+            }
+          />
+        ) : null}
+        </div>
+      );
+    }
+    if ("open_target" in action) {
+      return (
+        <div className="editor-formula-arg-wrap editor-formula-arg-wrap--with-placement" ref={variableAnchorRef}>
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.open_target.target}
+            {...bindVariableSuggestInput(action.open_target.target, (value) =>
+              onChange({ open_target: { ...action.open_target, target: value } }),
+            )}
+            placeholder="App or site name"
+            aria-label={`Open target for step ${index + 1}`}
+          />
+          <PlacementZoneSelect
+            value={action.open_target.placement}
+            ariaLabel={`Placement for step ${index + 1}`}
+            onChange={(placement) =>
+              onChange({ open_target: { ...action.open_target, placement } })
+            }
+          />
+        </div>
+      );
+    }
+    if ("place_window" in action) {
+      return (
+        <PlacementZoneSelect
+          allowEmpty={false}
+          value={action.place_window.zone}
+          ariaLabel={`Snap zone for step ${index + 1}`}
+          onChange={(zone) =>
+            onChange({
+              place_window: { ...action.place_window, zone: zone ?? "right_half" },
+            })
+          }
+        />
       );
     }
     if ("open_url" in action) {

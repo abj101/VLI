@@ -1,3 +1,6 @@
+# Machine-specific bindgen paths (LIBCLANG_PATH, BINDGEN_EXTRA_CLANG_ARGS) from sync:cargo-win-env.
+include = ["config.local.toml"]
+
 # Keep Cargo environment cross-platform.
 # CMake should come from the active shell PATH (Homebrew on macOS, package install on Windows/Linux).
 #
@@ -5,8 +8,10 @@
 #   PowerShell: $env:CMAKE = "C:\path\to\cmake.exe"
 #   bash/zsh:   export CMAKE=/path/to/cmake
 #
-# Windows: `npm run sync:cargo-win-env` writes `.cargo/config.local.toml` with CMAKE_GENERATOR (VS 2022
-# for CPU), LIBCLANG_PATH, and BINDGEN_EXTRA_CLANG_ARGS. CUDA builds use NMake+nvcc via whisper-gpu launcher.
+# Windows: `npm run sync:cargo-win-env` writes `config.local.toml` (included below) with LIBCLANG_PATH,
+# BINDGEN_EXTRA_CLANG_ARGS, and CMAKE_GENERATOR for bare `cargo check` / rust-analyzer only.
+# Do not pin CMAKE here — tracked [env] invalidates whisper-cuda CMake cache and forces 30+ min rebuilds.
+# `npm run tauri *` sets generator via process env (VS 2022 CPU, NMake CUDA).
 # E0080 in whisper-rs-sys out/bindings.rs = bindgen failed (often missing stdbool.h) → Linux fallback.
 [env]
 CMAKE = { value = "cmake", force = false }

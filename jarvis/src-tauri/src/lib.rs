@@ -3,8 +3,10 @@ mod audio;
 mod commands;
 mod db;
 mod hud;
+mod llm;
 mod keychain;
 mod tray;
+mod window;
 #[cfg(windows)]
 mod window_frame_win;
 
@@ -185,6 +187,8 @@ struct CommandNodePayload {
     actions: Vec<ActionPayload>,
     enabled: bool,
     fuzzy_threshold_pct: i64,
+    #[serde(default)]
+    match_mode: db::MatchMode,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -236,6 +240,7 @@ impl CommandNodePayload {
             actions: self.actions.clone(),
             enabled: self.enabled,
             fuzzy_threshold_pct: self.fuzzy_threshold_pct as u16,
+            match_mode: self.match_mode.clone(),
         })
     }
 }
@@ -1068,6 +1073,11 @@ fn try_match_and_execute(
             s.pending_follow_up_candidate_at = None;
         }
         info!("flow: spawn execute_command for node_id={}", node.id);
+        let tool_context = if matched.remainder.is_empty() {
+            None
+        } else {
+            Some(commands::ToolCallContext::with_remainder(&matched.remainder))
+        };
         let app_index_snapshot = {
             let st = app.state::<AppIndexStore>();
             let guard = st
@@ -1075,6 +1085,10 @@ fn try_match_and_execute(
                 .map_err(|_| "app index lock poisoned".to_string())?;
             guard.clone()
         };
+        let target_aliases_snapshot = open_db_connection(app)
+            .ok()
+            .and_then(|conn| db::get_all_target_aliases(&conn).ok())
+            .unwrap_or_default();
         std::thread::spawn(move || {
             let followup_cancel = cancel_flag.clone();
             let app_for_followup = app_h.clone();
@@ -1097,7 +1111,13 @@ fn try_match_and_execute(
                     Ok(response)
                 }),
             );
-            commands::execute_command(&node, &runtime, Some(app_index_snapshot.as_slice()));
+            commands::execute_command_with_context(
+                &node,
+                &runtime,
+                Some(app_index_snapshot.as_slice()),
+                tool_context,
+                Some(target_aliases_snapshot.as_slice()),
+            );
             let should_finalize = {
                 let mut s = match rt_h.lock() {
                     Ok(g) => g,
@@ -1138,7 +1158,7 @@ fn try_match_and_execute(
 /// 2. **Orchestrator** (this function): if HUD is `listening` and text is non-empty, run substring
 ///    match against SQLite command nodes (`commands::matcher`).
 /// 3. On match: emit `match-result` → **matched** → **executing** (HUD hides; shell unmounts).
-///    → spawn [`commands::execute_command`] → [`finalize_command_run`] (`Stopped`, no `Done` linger).
+///    → spawn [`commands::execute_command_with_context`] → [`finalize_command_run`] (`Stopped`, no `Done` linger).
 ///    Follow-ups reopen the window + shell on **awaiting_input** only.
 /// 4. **React** (`subscribeHudIpc`): applies events to Zustand; transcript + span highlight from
 ///    `match-result`; status line from `action-status`.
@@ -1606,6 +1626,100 @@ fn delete_tool(app: AppHandle, id: i64) -> Result<bool, String> {
     db::delete_tool(&conn, id).map_err(|e| e.to_string())
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenTargetPreview {
+    utterance: String,
+    target: String,
+    placement: Option<String>,
+    resolved: apps::resolve_target::ResolvedTarget,
+}
+
+#[tauri::command]
+fn preview_open_target(
+    app: AppHandle,
+    utterance: String,
+    app_index: State<'_, AppIndexStore>,
+) -> Result<OpenTargetPreview, String> {
+    let conn = open_db_connection(&app)?;
+    let aliases = db::get_all_target_aliases(&conn).map_err(|e| e.to_string())?;
+    let entries = app_index
+        .read()
+        .map_err(|_| "app index lock poisoned".to_string())?
+        .clone();
+    let (target, placement) =
+        apps::resolve_target::strip_placement_suffix(utterance.trim());
+    let resolved = apps::resolve_target::resolve_target(&target, &entries, &aliases);
+    let mut resolved_with_placement = resolved;
+    if let Some(zone) = placement.clone() {
+        match &mut resolved_with_placement {
+            apps::resolve_target::ResolvedTarget::App { placement: slot, .. } => {
+                *slot = Some(zone);
+            }
+            apps::resolve_target::ResolvedTarget::Url { placement: slot, .. } => {
+                *slot = Some(zone);
+            }
+            apps::resolve_target::ResolvedTarget::Ambiguous { placement: slot, .. } => {
+                *slot = Some(zone);
+            }
+        }
+    }
+    Ok(OpenTargetPreview {
+        utterance: utterance.trim().to_string(),
+        target,
+        placement,
+        resolved: resolved_with_placement,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct TargetAliasPayload {
+    spoken: String,
+    kind: String,
+    value: String,
+}
+
+impl TargetAliasPayload {
+    fn into_alias(self) -> Result<db::TargetAlias, String> {
+        let kind = match self.kind.trim().to_ascii_lowercase().as_str() {
+            "app" => db::TargetAliasKind::App,
+            "url" => db::TargetAliasKind::Url,
+            other => {
+                return Err(format!(
+                    "target alias kind must be `app` or `url`, got `{other}`"
+                ));
+            }
+        };
+        Ok(db::TargetAlias {
+            spoken: self.spoken,
+            kind,
+            value: self.value,
+        })
+    }
+}
+
+#[tauri::command]
+fn list_target_aliases(app: AppHandle) -> Result<Vec<db::TargetAlias>, String> {
+    let conn = open_db_connection(&app)?;
+    db::get_all_target_aliases(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn upsert_target_alias(app: AppHandle, alias: TargetAliasPayload) -> Result<db::TargetAlias, String> {
+    let conn = open_db_connection(&app)?;
+    let row = alias.into_alias()?;
+    db::upsert_target_alias(&conn, &row).map_err(|e| e.to_string())?;
+    db::get_target_alias(&conn, &row.spoken)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "upserted alias was not found".to_string())
+}
+
+#[tauri::command]
+fn delete_target_alias(app: AppHandle, spoken: String) -> Result<bool, String> {
+    let conn = open_db_connection(&app)?;
+    db::delete_target_alias(&conn, &spoken).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn get_setting(app: AppHandle, key: String) -> Result<Option<String>, String> {
     let normalized_key = validate_setting_key(&key)?;
@@ -2033,6 +2147,7 @@ pub fn run() {
     let hotkey_recording_suppressed = Arc::new(AtomicBool::new(false));
     let wake_mic_suppressed = audio::WakeMicSuppressed(Arc::new(AtomicBool::new(false)));
     let whisper_model_cache = WhisperModelCache(Mutex::new(None));
+    let router_model_cache = llm::RouterModelCache::default();
     let command_cache: CommandCache = Arc::new(RwLock::new(Vec::new()));
     let app_index_store: AppIndexStore = Arc::new(RwLock::new(Vec::new()));
     let app_icon_cache: AppIconCache = Arc::new(apps::IconCache::new());
@@ -2044,6 +2159,7 @@ pub fn run() {
         .manage(HotkeyRecordingSuppressed(Arc::clone(&hotkey_recording_suppressed)))
         .manage(wake_mic_suppressed)
         .manage(whisper_model_cache)
+        .manage(router_model_cache)
         .manage(command_cache.clone())
         .manage(app_index_store.clone())
         .manage(app_icon_cache.clone())
@@ -2213,6 +2329,10 @@ pub fn run() {
             create_tool,
             update_tool,
             delete_tool,
+            preview_open_target,
+            list_target_aliases,
+            upsert_target_alias,
+            delete_target_alias,
             get_setting,
             set_setting,
             set_hotkey,
@@ -2225,6 +2345,9 @@ pub fn run() {
             whisper_gpu_compile_supported,
             whisper_gpu_status,
             warmup_whisper_gpu,
+            llm::tauri_cmds::router_status,
+            llm::tauri_cmds::router_warmup,
+            llm::tauri_cmds::route_transcript,
             update_settings,
             save_api_key,
             delete_api_key
@@ -2273,6 +2396,9 @@ mod tests {
             remote_stt_timeout_secs: 30,
             remote_stt_key_stored: false,
             local_whisper_use_gpu: false,
+            llm_router_model_path: None,
+            llm_router_confidence_threshold: db::settings::DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD,
+            llm_router_tier2_enabled: false,
         }
     }
 
@@ -2308,6 +2434,9 @@ mod tests {
             remote_stt_model: None,
             remote_stt_timeout_secs: None,
             local_whisper_use_gpu: None,
+            llm_router_model_path: None,
+            llm_router_confidence_threshold: None,
+            llm_router_tier2_enabled: None,
         };
         assert!(settings_patch_triggers_wake_reload(
             &patch,
@@ -2325,6 +2454,9 @@ mod tests {
             remote_stt_model: None,
             remote_stt_timeout_secs: None,
             local_whisper_use_gpu: None,
+            llm_router_model_path: None,
+            llm_router_confidence_threshold: None,
+            llm_router_tier2_enabled: None,
         };
         assert!(!settings_patch_triggers_wake_reload(
             &patch,
@@ -2546,9 +2678,11 @@ mod tests {
             actions: vec![ActionPayload::OpenApp {
                 name: "notepad".into(),
                 path: "notepad.exe".into(),
+                placement: None,
             }],
             enabled: true,
             fuzzy_threshold_pct: 80,
+            match_mode: db::MatchMode::Phrase,
         };
         assert!(validate_command_node_payload(&payload).is_err());
     }
@@ -2563,6 +2697,7 @@ mod tests {
             }],
             enabled: true,
             fuzzy_threshold_pct: 80,
+            match_mode: db::MatchMode::Phrase,
         };
         assert!(validate_command_node_payload(&payload).is_err());
     }
@@ -2577,6 +2712,7 @@ mod tests {
             }],
             enabled: true,
             fuzzy_threshold_pct: 101,
+            match_mode: db::MatchMode::Phrase,
         };
         assert!(validate_command_node_payload(&payload).is_err());
     }
@@ -2594,6 +2730,7 @@ mod tests {
             ],
             enabled: false,
             fuzzy_threshold_pct: 90,
+            match_mode: db::MatchMode::Phrase,
         };
         let node = payload.try_into_new_command_node().expect("valid payload");
         assert_eq!(node.name, "Open App");
@@ -2694,6 +2831,7 @@ mod tests {
                 actions: vec![Action::Wait { ms: 25 }],
                 enabled: true,
                 fuzzy_threshold_pct: 80,
+                match_mode: db::MatchMode::Phrase,
             },
         )
         .expect("insert");

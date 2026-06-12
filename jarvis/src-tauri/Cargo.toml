@@ -26,6 +26,11 @@ oww = ["dep:ort", "dep:ndarray"]
 whisper-vulkan = ["whisper-rs/vulkan"]
 whisper-cuda = ["whisper-rs/cuda"]
 whisper-metal = ["whisper-rs/metal"]
+# On-device LLM tool router (llama.cpp). Example: `cargo build --features llm-local,llm-vulkan`
+llm-local = ["dep:llama-cpp-2", "dep:encoding_rs"]
+llm-vulkan = ["llm-local", "llama-cpp-2/vulkan"]
+llm-cuda = ["llm-local", "llama-cpp-2/cuda"]
+llm-metal = ["llm-local", "llama-cpp-2/metal"]
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
@@ -50,6 +55,8 @@ url = "2"
 ort = { version = "2.0.0-rc.12", optional = true, default-features = true, features = ["download-binaries", "ndarray"] }
 ndarray = { version = "0.17", optional = true }
 raw-window-handle = "0.6"
+llama-cpp-2 = { version = "0.1", optional = true }
+encoding_rs = { version = "0.8", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
@@ -59,6 +66,7 @@ windows = { version = "0.61", features = [
     "Win32_Graphics_Gdi",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
+    "Win32_System_Threading",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }

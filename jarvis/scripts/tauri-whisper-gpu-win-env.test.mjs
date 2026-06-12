@@ -16,10 +16,16 @@ describe("buildWindowsWhisperCargoEnv", () => {
     expect(env.CMAKE_GENERATOR).toBe("Visual Studio 17 2022");
   });
 
-  it("omits CMAKE_GENERATOR when includeCmakeGenerator is false (sync path)", () => {
+  it("omits CMAKE_GENERATOR when includeCmakeGenerator is false", () => {
     if (process.platform !== "win32") return;
     const env = buildWindowsWhisperCargoEnv({}, { includeCmakeGenerator: false });
     expect(env.CMAKE_GENERATOR).toBeUndefined();
+  });
+
+  it("includes CMAKE_GENERATOR for sync-cargo-win-env (includeCmakeGenerator true)", () => {
+    if (process.platform !== "win32") return;
+    const env = buildWindowsWhisperCargoEnv({}, { force: true, includeCmakeGenerator: true });
+    expect(env.CMAKE_GENERATOR).toBe("Visual Studio 17 2022");
   });
 
   it("does not override CMAKE_GENERATOR when already set", () => {

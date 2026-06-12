@@ -1,4 +1,5 @@
 import { CommandsTab } from "./components/editor/CommandsTab";
+import { ToolsTab } from "./components/editor/ToolsTab";
 import { EDITOR_SETTINGS_NAV, type EditorSettingsNavId } from "./components/Settings/settingsNav";
 import { SettingsPanel } from "./components/Settings/SettingsPanel";
 import "./EditorRoot.css";
@@ -16,7 +17,7 @@ import {
 } from "./components/editor/SettingsPanel.logic";
 import { useSettingsStore } from "./store/settingsStore";
 
-type ShellSection = "commands" | EditorSettingsNavId;
+type ShellSection = "commands" | "tools" | EditorSettingsNavId;
 
 function CaptionMinimizeIcon() {
   return (
@@ -233,6 +234,13 @@ export default function EditorRoot() {
             >
               Commands
             </button>
+            <button
+              type="button"
+              className={`editor-app-nav-btn${section === "tools" ? " is-active" : ""}`}
+              onClick={() => setSection("tools")}
+            >
+              Tools
+            </button>
           </div>
 
           <div className="editor-app-nav-group">
@@ -254,6 +262,8 @@ export default function EditorRoot() {
         <section className="editor-app-main" aria-label="Editor content">
           {section === "commands" ? (
             <CommandsTab />
+          ) : section === "tools" ? (
+            <ToolsTab />
           ) : (
             <SettingsPanel embedded activeNav={section} />
           )}

@@ -28,12 +28,21 @@ export function fingerprintCommandNode(node: CommandNodePayload): string {
     trigger_phrases: node.trigger_phrases,
     actions: node.actions,
     enabled: node.enabled,
+    match_mode: node.match_mode ?? "phrase",
   });
 }
 
 function actionSnippet(action: ActionPayload): string {
-  if ("open_app" in action) return action.open_app.name || action.open_app.path;
+  if ("open_app" in action) {
+    const base = action.open_app.name || action.open_app.path;
+    return action.open_app.placement ? `${base} (${action.open_app.placement})` : base;
+  }
   if ("open_url" in action) return action.open_url.url;
+  if ("open_target" in action) {
+    const base = action.open_target.target;
+    return action.open_target.placement ? `${base} (${action.open_target.placement})` : base;
+  }
+  if ("place_window" in action) return action.place_window.zone;
   if ("run_script" in action) return action.run_script.script;
   if ("send_keys" in action) return action.send_keys.keys;
   if ("speak" in action) return action.speak.text;

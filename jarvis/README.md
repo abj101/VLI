@@ -56,12 +56,13 @@ Convention: clone the repo, then `**cd jarvis**` for every Node/npm/Tauri comman
 - `npm test` — Vitest
 - `npm run build` — `tsc` + Vite production bundle
 - `npm run dev` — Vite only
-- `npm run tauri dev` — full app with auto-selected Whisper GPU backend (`metal`/`cuda`/`vulkan`/CPU fallback) and detected GPU vendor logging
-- `npm run tauri:dev:cpu` / `npm run tauri:build:cpu` — same as above but **`WHISPER_GPU_BACKEND=none`** (fast CPU Whisper; use for UI work)
+- `npm run tauri dev` — full app; **`dev` defaults to CPU Whisper** (fast). **`build`** still auto-selects GPU (`metal`/`cuda`/`vulkan`/CPU fallback).
+- `npm run tauri:dev:gpu` / `npm run tauri:build:gpu` — force **`WHISPER_GPU_BACKEND=auto`** (first CUDA build often 20–45+ min on Windows).
+- `npm run tauri:dev:cpu` / `npm run tauri:build:cpu` — explicit **`WHISPER_GPU_BACKEND=none`**
 - `npm run tauri build` — release bundle with auto-selected Whisper GPU backend (run `.\scripts\download-model.ps1` first so the Whisper weights are present)
 - `npm run tauri:dev` / `npm run tauri:build` — explicit aliases to the same wrapper behavior
 - `WHISPER_GPU_BACKEND=auto|metal|cuda|vulkan|none` — optional override for deterministic CI/repro builds (`auto` default)
-- **`npm run sync:cargo-win-env`** writes bindgen env only (no `CMAKE_GENERATOR`) so rust-analyzer / `cargo check` does not invalidate a **CUDA (NMake)** CMake cache from `tauri dev`. For CUDA compile checks use **`npm run test:cargo-whisper-cuda`**.
+- **`npm run sync:cargo-win-env`** (runs on **`npm install`**) fills **`src-tauri/.cargo/config.local.toml`** with bindgen + **`CMAKE_GENERATOR`** for bare **`cargo check`** only. **`npm run tauri *`** sets generator via process env (not tracked **`config.toml`**) so whisper-cuda CMake cache stays warm (~1 min incremental dev). After CPU↔CUDA switches: **`npm run cargo -- clean -p whisper-rs-sys --manifest-path src-tauri/Cargo.toml`**. CUDA checks: **`npm run test:cargo-whisper-cuda`**.
 
 Rust (from `jarvis/src-tauri/`):
 

@@ -235,6 +235,9 @@ mod tests {
             remote_stt_timeout_secs: 30,
             remote_stt_key_stored: false,
             local_whisper_use_gpu: false,
+            llm_router_model_path: None,
+            llm_router_confidence_threshold: crate::db::settings::DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD,
+            llm_router_tier2_enabled: false,
         };
         let r = build_wake_detector("hotkey", tmp.path(), &s);
         assert!(r.is_err());

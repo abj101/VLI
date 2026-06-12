@@ -27,6 +27,7 @@ import {
 import {
   checkCargoBuildLock,
   logFirstCudaBuildNotice,
+  summarizeWhisperRsSysBuildActivity,
   warnIfCmakeGeneratorMismatch,
 } from "./preflight.mjs";
 
@@ -97,7 +98,12 @@ function buildChildEnv(withGpuSelection, selected) {
 
   if (process.platform === "win32") {
     assertWindowsWhisperBindgenEnv("whisper-gpu");
-    const whisperEnv = buildWindowsWhisperCargoEnv(childEnv, { force: true });
+    const whisperEnv = buildWindowsWhisperCargoEnv(childEnv, {
+      force: true,
+      // Never inject VS CMake generator when CUDA already pinned NMake — avoids cache invalidation.
+      includeCmakeGenerator:
+        !(withGpuSelection && selected.backend === "cuda" && childEnv.CMAKE_GENERATOR?.trim()),
+    });
     Object.assign(childEnv, whisperEnv);
     if (whisperEnv.LIBCLANG_PATH) {
       console.log(`whisper-gpu: set LIBCLANG_PATH=${whisperEnv.LIBCLANG_PATH} (whisper-rs-sys bindgen)`);
@@ -181,9 +187,21 @@ function spawnTauriWithHeartbeat(spawnExecutable, spawnArgv, childEnv, opts) {
       }
       const mins = Math.floor((Date.now() - started) / 60_000);
       if (mins < 1) return;
-      const hint = cudaFirstBuild
-        ? " (first whisper-cuda build can take 30+ min)"
-        : "";
+      let hint = cudaFirstBuild ? " (first whisper-cuda build often 20–45+ min)" : "";
+      if (cudaFirstBuild) {
+        const activity = summarizeWhisperRsSysBuildActivity(JARVIS_ROOT);
+        if (activity.artifactCount > 0) {
+          const age =
+            activity.newestAgeSec == null
+              ? "unknown"
+              : activity.newestAgeSec < 90
+                ? `${activity.newestAgeSec}s ago`
+                : `${Math.floor(activity.newestAgeSec / 60)}m ago`;
+          hint += `; ${activity.artifactCount} build artifacts, last activity ${age}`;
+        } else {
+          hint += "; cmake/nvcc stage (little Cargo output yet)";
+        }
+      }
       console.warn(`whisper-gpu: still building… ${mins} min elapsed${hint}`);
     }, 60_000);
 
@@ -216,6 +234,17 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
   if (lock.blocked) {
     console.error(`whisper-gpu: ${lock.message}`);
     process.exit(1);
+  }
+
+  if (
+    withGpuSelection &&
+    subcommand === "dev" &&
+    !(process.env.WHISPER_GPU_BACKEND ?? "").trim()
+  ) {
+    process.env.WHISPER_GPU_BACKEND = "none";
+    console.warn(
+      "whisper-gpu: dev defaults to CPU Whisper (fast). Use npm run tauri:dev:gpu or WHISPER_GPU_BACKEND=auto for CUDA/Vulkan.",
+    );
   }
 
   releaseWindowsDevJarvisExeLock(subcommand);

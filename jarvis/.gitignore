@@ -24,13 +24,14 @@ coverage
 *.sln
 *.sw?
 
-# Generated Windows Cargo env for bare `cargo check` (see scripts/sync-cargo-win-env.mjs)
-src-tauri/.cargo/config.local.toml
-.cargo/config.local.toml
+# Generated rust-analyzer bindgen env (see scripts/sync-cargo-win-env.mjs)
 rust-analyzer.toml
 
 # OpenWakeWord ONNX (fetch via npm run fetch-wake-models)
 src-tauri/resources/oww/*.onnx
+
+# On-device router GGUF (fetch via scripts/download-router-model.ps1)
+src-tauri/resources/qwen2.5-0.5b-instruct-q4_k_m.gguf
 
 # Legacy Picovoice Porcupine assets (wake engine removed; do not commit)
 src-tauri/resources/porcupine/

@@ -1,7 +1,12 @@
 use crate::{
     apps::AppEntry,
     audio::tts,
-    db::{Action, CommandNode},
+    commands::open_target::execute_open_target_with_aliases,
+    db::{Action, CommandNode, TargetAlias},
+    window::{
+        place_window_after_app_launch, snap_foreground_window, snapshot_top_level_windows,
+        DEFAULT_MONITOR,
+    },
 };
 use log::debug;
 use serde::Serialize;
@@ -31,6 +36,12 @@ impl ToolCallContext {
         Self {
             args: args.clone(),
         }
+    }
+
+    pub fn with_remainder(remainder: &str) -> Self {
+        let mut args = HashMap::new();
+        args.insert("remainder".to_string(), remainder.to_string());
+        Self { args }
     }
 }
 
@@ -209,10 +220,12 @@ impl ActionRuntime for TauriActionRuntime<'_> {
     }
 }
 
-pub fn execute_command(
+pub fn execute_command_with_context(
     node: &CommandNode,
     runtime: &impl ActionRuntime,
     app_index: Option<&[AppEntry]>,
+    tool_context: Option<ToolCallContext>,
+    target_aliases: Option<&[TargetAlias]>,
 ) {
     debug!(
         "executor: execute_command node_id={} name={:?} actions={}",
@@ -220,7 +233,13 @@ pub fn execute_command(
         node.name,
         node.actions.len()
     );
-    execute_actions(&node.actions, runtime, app_index, None);
+    execute_actions(
+        &node.actions,
+        runtime,
+        app_index,
+        tool_context.as_ref(),
+        target_aliases,
+    );
     debug!("executor: execute_command finished node_id={}", node.id);
 }
 
@@ -230,7 +249,7 @@ pub fn execute_resolved_actions(
     runtime: &impl ActionRuntime,
     app_index: Option<&[AppEntry]>,
 ) {
-    execute_actions(actions, runtime, app_index, None);
+    execute_actions(actions, runtime, app_index, None, None);
 }
 
 fn execute_actions(
@@ -238,6 +257,7 @@ fn execute_actions(
     runtime: &impl ActionRuntime,
     app_index: Option<&[AppEntry]>,
     tool_context: Option<&ToolCallContext>,
+    target_aliases: Option<&[TargetAlias]>,
 ) {
     let mut follow_up_responses: Vec<String> = Vec::new();
     for action in actions {
@@ -246,7 +266,7 @@ fn execute_actions(
             return;
         }
         let resolved = resolve_action_templates(action, &follow_up_responses, tool_context);
-        match execute_one_action(&resolved, runtime, app_index) {
+        match execute_one_action(&resolved, runtime, app_index, target_aliases) {
             Ok(text) => runtime.emit_status(&text),
             Err(err) => {
                 if err == ACTION_CANCELLED_MSG {
@@ -289,11 +309,38 @@ fn execute_one_action(
     action: &Action,
     runtime: &impl ActionRuntime,
     app_index: Option<&[AppEntry]>,
+    target_aliases: Option<&[TargetAlias]>,
 ) -> Result<String, String> {
     match action {
-        Action::OpenApp { name, path } => {
+        Action::OpenTarget { target, placement } => {
+            let target_trimmed = target.trim();
+            if target_trimmed.is_empty() {
+                return Err("OpenTarget target cannot be empty".to_string());
+            }
+            let placement_ref = placement
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            execute_open_target_with_aliases(
+                target_trimmed,
+                placement_ref,
+                target_aliases.unwrap_or(&[]),
+                runtime,
+                app_index,
+            )
+        }
+        Action::OpenApp {
+            name,
+            path,
+            placement,
+        } => {
             let trimmed = path.trim();
-            if trimmed.is_empty() {
+            let placement_ref = placement
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let snapshot = placement_ref.map(|_| snapshot_top_level_windows());
+            let (launch_path, display) = if trimmed.is_empty() {
                 let n = name.trim();
                 if n.is_empty() {
                     return Err("OpenApp path cannot be empty".to_string());
@@ -301,17 +348,45 @@ fn execute_one_action(
                 if let Some(entries) = app_index {
                     if let Some(hit) = crate::apps::resolve_app(n, entries) {
                         validate_open_app_path(&hit.exe_path)?;
-                        runtime.open_app(&hit.exe_path)?;
-                        return Ok(format!("Opening {name}..."));
+                        (hit.exe_path.clone(), name.clone())
+                    } else {
+                        validate_open_app_start_fallback(n)?;
+                        (n.to_string(), name.clone())
                     }
+                } else {
+                    validate_open_app_start_fallback(n)?;
+                    (n.to_string(), name.clone())
                 }
-                validate_open_app_start_fallback(n)?;
-                runtime.open_app(n)?;
-                return Ok(format!("Opening {name}..."));
+            } else {
+                validate_open_app_path(trimmed)?;
+                (trimmed.to_string(), name.clone())
+            };
+            runtime.open_app(&launch_path)?;
+            if let (Some(zone), Some(before)) = (placement_ref, snapshot) {
+                place_window_after_app_launch(&launch_path, zone, DEFAULT_MONITOR, &before)
+                    .map_err(|err| {
+                        runtime.emit_error(&err);
+                        err
+                    })?;
+                return Ok(format!("Opening {display} ({zone})..."));
             }
-            validate_open_app_path(trimmed)?;
-            runtime.open_app(trimmed)?;
-            Ok(format!("Opening {name}..."))
+            Ok(format!("Opening {display}..."))
+        }
+        Action::PlaceWindow { zone, monitor } => {
+            let zone = zone.trim();
+            if zone.is_empty() {
+                return Err("PlaceWindow zone cannot be empty".to_string());
+            }
+            let monitor = monitor
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(DEFAULT_MONITOR);
+            snap_foreground_window(zone, monitor).map_err(|err| {
+                runtime.emit_error(&err);
+                err
+            })?;
+            Ok(format!("Snapped window to {zone}"))
         }
         Action::OpenUrl { url } => {
             validate_open_url(url)?;
@@ -359,11 +434,24 @@ pub fn resolve_action_templates(
         apply_tool_arg_templates(&numbered, tool_context)
     };
     match action {
-        Action::OpenApp { name, path } => Action::OpenApp {
+        Action::OpenApp {
+            name,
+            path,
+            placement,
+        } => Action::OpenApp {
             name: render(name),
             path: render(path),
+            placement: placement.as_ref().map(|value| render(value)),
+        },
+        Action::PlaceWindow { zone, monitor } => Action::PlaceWindow {
+            zone: render(zone),
+            monitor: monitor.as_ref().map(|value| render(value)),
         },
         Action::OpenUrl { url } => Action::OpenUrl { url: render(url) },
+        Action::OpenTarget { target, placement } => Action::OpenTarget {
+            target: render(target),
+            placement: placement.as_ref().map(|value| render(value)),
+        },
         Action::RunScript { script, args } => Action::RunScript {
             script: render(script),
             args: args.iter().map(|arg| render(arg)).collect(),
@@ -595,6 +683,7 @@ mod tests {
             actions,
             enabled: true,
             fuzzy_threshold_pct: 80,
+            match_mode: crate::db::MatchMode::Phrase,
             created_at: "now".into(),
         }
     }
@@ -784,8 +873,9 @@ mod tests {
         let node = node_with_actions(vec![Action::OpenApp {
             name: "calc".into(),
             path: "".into(),
+            placement: None,
         }]);
-        execute_command(&node, &runtime, Some(&index));
+        execute_command_with_context(&node, &runtime, Some(&index), None, None);
         let s = runtime.snapshot();
         assert_eq!(s.app_calls, vec!["calc.exe".to_string()]);
         assert!(s.errors.is_empty());
@@ -797,8 +887,9 @@ mod tests {
         let node = node_with_actions(vec![Action::OpenApp {
             name: "notepad".into(),
             path: "   ".into(),
+            placement: None,
         }]);
-        execute_command(&node, &runtime, Some(&[]));
+        execute_command_with_context(&node, &runtime, Some(&[]), None, None);
         let s = runtime.snapshot();
         assert_eq!(s.app_calls, vec!["notepad".to_string()]);
     }
@@ -815,9 +906,10 @@ mod tests {
         let node = node_with_actions(vec![Action::OpenApp {
             name: "calc".into(),
             path: "calc.exe & whoami".into(),
+            placement: None,
         }]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert!(s.app_calls.is_empty());
         assert_eq!(s.statuses.len(), 1);
@@ -832,7 +924,7 @@ mod tests {
             url: "file:///etc/passwd".into(),
         }]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert!(s.url_calls.is_empty());
         assert_eq!(s.statuses.len(), 1);
@@ -847,13 +939,14 @@ mod tests {
             Action::OpenApp {
                 name: "notepad".into(),
                 path: "notepad.exe".into(),
+                placement: None,
             },
             Action::OpenUrl {
                 url: "https://github.com".into(),
             },
         ]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.app_calls, vec!["notepad.exe".to_string()]);
         assert_eq!(s.url_calls, vec!["https://github.com".to_string()]);
@@ -868,13 +961,14 @@ mod tests {
             Action::OpenApp {
                 name: "notepad".into(),
                 path: "notepad.exe".into(),
+                placement: None,
             },
             Action::OpenUrl {
                 url: "https://github.com".into(),
             },
         ]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.statuses,
@@ -903,7 +997,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.script_calls,
@@ -923,7 +1017,7 @@ mod tests {
             args: vec![],
         }]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert!(s.script_calls.is_empty());
         assert_eq!(s.errors.len(), 1);
@@ -937,7 +1031,7 @@ mod tests {
             keys: "CTRL+ALT+DEL;shutdown".into(),
         }]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert!(s.key_calls.is_empty());
         assert_eq!(s.errors.len(), 1);
@@ -955,7 +1049,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.wait_calls, vec![10]);
         assert_eq!(
@@ -981,7 +1075,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert!(s.errors.is_empty());
         assert_eq!(s.speak_calls, vec!["task complete".to_string()]);
@@ -997,7 +1091,7 @@ mod tests {
         let runtime = MockRuntime::default();
         let node = node_with_actions(vec![Action::Speak { text: "   ".into() }]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert!(s.speak_calls.is_empty());
         assert_eq!(s.errors.len(), 1);
@@ -1016,7 +1110,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert!(s.url_calls.is_empty());
         assert!(s.speak_calls.is_empty());
@@ -1036,7 +1130,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.follow_up_prompts,
@@ -1062,7 +1156,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.follow_up_prompts,
@@ -1087,7 +1181,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert!(s
             .speak_calls
@@ -1103,10 +1197,52 @@ mod tests {
             prompt: "Which page should I open?".into(),
         }]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert!(s.statuses.iter().any(|status| status == "follow up"));
         assert!(s.statuses.iter().any(|status| status == "docs"));
+        assert!(s.errors.is_empty());
+    }
+
+    #[test]
+    fn remainder_template_substitutes_in_open_app_name() {
+        let ctx = ToolCallContext::with_remainder("notepad");
+        let resolved = resolve_action_templates(
+            &Action::OpenApp {
+                name: "{{remainder}}".into(),
+                path: "".into(),
+                placement: None,
+            },
+            &[],
+            Some(&ctx),
+        );
+        assert_eq!(
+            resolved,
+            Action::OpenApp {
+                name: "notepad".into(),
+                path: "".into(),
+                placement: None,
+            }
+        );
+    }
+
+    #[test]
+    fn open_app_remainder_resolves_from_index() {
+        let runtime = MockRuntime::default();
+        let index = vec![AppEntry {
+            display_name: "Notepad".into(),
+            exe_path: "notepad.exe".into(),
+            icon_data_url: None,
+        }];
+        let node = node_with_actions(vec![Action::OpenApp {
+            name: "{{remainder}}".into(),
+            path: "".into(),
+            placement: None,
+        }]);
+        let ctx = ToolCallContext::with_remainder("notepad");
+        execute_actions(&node.actions, &runtime, Some(&index), Some(&ctx), None);
+        let s = runtime.snapshot();
+        assert_eq!(s.app_calls, vec!["notepad.exe".to_string()]);
         assert!(s.errors.is_empty());
     }
 
@@ -1145,7 +1281,7 @@ mod tests {
             },
         ]);
 
-        execute_command(&node, &runtime, None);
+        execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.follow_up_prompts, vec!["Need input".to_string()]);
         assert!(s.url_calls.is_empty());

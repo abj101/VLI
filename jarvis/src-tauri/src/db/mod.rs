@@ -3,11 +3,17 @@
 mod app_index;
 mod models;
 pub mod settings;
+mod target_aliases;
 mod tools;
 
 pub use app_index::{load_app_index, replace_app_index};
 pub use models::{
-    Action, CommandNode, NewCommandNode, NewToolDefinition, ToolDefinition, ToolParameter,
+    Action, CommandNode, MatchMode, NewCommandNode, NewToolDefinition, ToolDefinition,
+    ToolParameter,
+};
+pub use target_aliases::{
+    delete_target_alias, get_all_target_aliases, get_target_alias, upsert_target_alias,
+    TargetAlias, TargetAliasKind,
 };
 pub use tools::{
     delete_tool, get_all_tools, get_tool_by_id, get_tool_by_name, insert_tool, update_tool,
@@ -54,8 +60,11 @@ pub fn init_db(path: &Path) -> Result<(), DbError> {
     )?;
     ensure_fuzzy_threshold_column(&conn)?;
     ensure_sort_order_column(&conn)?;
+    ensure_match_mode_column(&conn)?;
     app_index::ensure_app_index_schema(&conn)?;
     tools::ensure_tools_schema(&conn)?;
+    target_aliases::ensure_target_aliases_schema(&conn)?;
+    seed_builtin_open_command(&conn)?;
     drop_legacy_ai_command_columns(&conn)?;
     purge_legacy_shipped_sample_commands(&conn)?;
     settings::prune_legacy_settings(&conn)?;
@@ -102,6 +111,26 @@ fn ensure_sort_order_column(conn: &Connection) -> Result<(), DbError> {
     Ok(())
 }
 
+fn ensure_match_mode_column(conn: &Connection) -> Result<(), DbError> {
+    let mut stmt = conn.prepare("PRAGMA table_info(command_nodes)")?;
+    let mut rows = stmt.query([])?;
+    let mut has_column = false;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == "match_mode" {
+            has_column = true;
+            break;
+        }
+    }
+    if !has_column {
+        conn.execute(
+            "ALTER TABLE command_nodes ADD COLUMN match_mode TEXT NOT NULL DEFAULT 'phrase'",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 /// Phase 4: remove Haiku / `ai_mode` columns (SQLite 3.35+ `DROP COLUMN`).
 fn drop_legacy_ai_command_columns(conn: &Connection) -> Result<(), DbError> {
     let mut stmt = conn.prepare("PRAGMA table_info(command_nodes)")?;
@@ -135,6 +164,34 @@ fn legacy_shipped_sample_trigger_json() -> [&'static str; 4] {
     ]
 }
 
+const BUILTIN_OPEN_COMMAND_NAME: &str = "Open target";
+
+fn seed_builtin_open_command(conn: &Connection) -> Result<(), DbError> {
+    let exists: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM command_nodes WHERE name = ?1",
+        [BUILTIN_OPEN_COMMAND_NAME],
+        |row| row.get(0),
+    )?;
+    if exists > 0 {
+        return Ok(());
+    }
+    insert_command(
+        conn,
+        &NewCommandNode {
+            name: BUILTIN_OPEN_COMMAND_NAME.into(),
+            trigger_phrases: vec!["open".into()],
+            actions: vec![Action::OpenTarget {
+                target: "{{remainder}}".into(),
+                placement: None,
+            }],
+            enabled: true,
+            fuzzy_threshold_pct: 80,
+            match_mode: MatchMode::Prefix,
+        },
+    )?;
+    Ok(())
+}
+
 fn purge_legacy_shipped_sample_commands(conn: &Connection) -> Result<(), DbError> {
     for tp in legacy_shipped_sample_trigger_json() {
         conn.execute(
@@ -150,16 +207,17 @@ pub fn insert_command(conn: &Connection, row: &NewCommandNode) -> Result<i64, Db
     let actions = serde_json::to_string(&row.actions)?;
     let enabled = i32::from(row.enabled);
     let fuzzy_threshold_pct = i64::from(row.fuzzy_threshold_pct.min(100));
+    let match_mode = match_mode_to_db(&row.match_mode);
     conn.execute(
-        "INSERT INTO command_nodes (name, trigger_phrases, actions, enabled, fuzzy_threshold_pct) VALUES (?1, ?2, ?3, ?4, ?5)",
-        rusqlite::params![row.name, trigger_phrases, actions, enabled, fuzzy_threshold_pct,],
+        "INSERT INTO command_nodes (name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, match_mode) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![row.name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, match_mode,],
     )?;
     Ok(conn.last_insert_rowid())
 }
 
 pub fn get_all_commands(conn: &Connection) -> Result<Vec<CommandNode>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, created_at FROM command_nodes ORDER BY sort_order ASC, id ASC",
+        "SELECT id, name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, match_mode, created_at FROM command_nodes ORDER BY sort_order ASC, id ASC",
     )?;
     let mut rows = stmt.query([])?;
     let mut out = Vec::new();
@@ -175,9 +233,10 @@ pub fn update_command(conn: &Connection, id: i64, row: &NewCommandNode) -> Resul
     let actions = serde_json::to_string(&row.actions)?;
     let enabled = i32::from(row.enabled);
     let fuzzy_threshold_pct = i64::from(row.fuzzy_threshold_pct.min(100));
+    let match_mode = match_mode_to_db(&row.match_mode);
     let n = conn.execute(
-        "UPDATE command_nodes SET name = ?1, trigger_phrases = ?2, actions = ?3, enabled = ?4, fuzzy_threshold_pct = ?5 WHERE id = ?6",
-        rusqlite::params![row.name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, id],
+        "UPDATE command_nodes SET name = ?1, trigger_phrases = ?2, actions = ?3, enabled = ?4, fuzzy_threshold_pct = ?5, match_mode = ?6 WHERE id = ?7",
+        rusqlite::params![row.name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, match_mode, id],
     )?;
     Ok(n > 0)
 }
@@ -185,7 +244,7 @@ pub fn update_command(conn: &Connection, id: i64, row: &NewCommandNode) -> Resul
 #[allow(dead_code)] // used in tests and upcoming editor APIs
 pub fn get_command_by_id(conn: &Connection, id: i64) -> Result<Option<CommandNode>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, created_at FROM command_nodes WHERE id = ?1",
+        "SELECT id, name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, match_mode, created_at FROM command_nodes WHERE id = ?1",
     )?;
     let mut rows = stmt.query(rusqlite::params![id])?;
     if let Some(row) = rows.next()? {
@@ -230,6 +289,7 @@ fn row_to_command(row: &rusqlite::Row<'_>) -> Result<CommandNode, DbError> {
     let actions: String = row.get(3)?;
     let enabled_i: i32 = row.get(4)?;
     let fuzzy_threshold_pct: i64 = row.get(5)?;
+    let match_mode_raw: String = row.get(6)?;
     Ok(CommandNode {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -237,8 +297,23 @@ fn row_to_command(row: &rusqlite::Row<'_>) -> Result<CommandNode, DbError> {
         actions: serde_json::from_str(&actions)?,
         enabled: enabled_i != 0,
         fuzzy_threshold_pct: fuzzy_threshold_pct.clamp(0, 100) as u16,
-        created_at: row.get(6)?,
+        match_mode: match_mode_from_db(&match_mode_raw),
+        created_at: row.get(7)?,
     })
+}
+
+fn match_mode_to_db(mode: &MatchMode) -> &'static str {
+    match mode {
+        MatchMode::Phrase => "phrase",
+        MatchMode::Prefix => "prefix",
+    }
+}
+
+fn match_mode_from_db(raw: &str) -> MatchMode {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "prefix" => MatchMode::Prefix,
+        _ => MatchMode::Phrase,
+    }
 }
 
 #[cfg(test)]
@@ -256,16 +331,27 @@ mod tests {
     }
 
     #[test]
-    fn init_db_does_not_seed_commands() {
+    fn init_db_seeds_builtin_open_prefix_command_once() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("j.db");
         init_db(&path).unwrap();
         let conn = Connection::open(&path).unwrap();
-        assert!(get_all_commands(&conn).unwrap().is_empty());
+        let commands = get_all_commands(&conn).unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].name, BUILTIN_OPEN_COMMAND_NAME);
+        assert_eq!(commands[0].trigger_phrases, vec!["open".to_string()]);
+        assert_eq!(commands[0].match_mode, MatchMode::Prefix);
+        assert_eq!(
+            commands[0].actions,
+            vec![Action::OpenTarget {
+                target: "{{remainder}}".into(),
+                placement: None,
+            }]
+        );
 
         init_db(&path).unwrap();
         let conn2 = Connection::open(&path).unwrap();
-        assert!(get_all_commands(&conn2).unwrap().is_empty());
+        assert_eq!(get_all_commands(&conn2).unwrap().len(), 1);
     }
 
     #[test]
@@ -302,9 +388,14 @@ mod tests {
 
         init_db(&path).unwrap();
         let after = Connection::open(&path).unwrap();
+        let commands = get_all_commands(&after).unwrap();
         assert!(
-            get_all_commands(&after).unwrap().is_empty(),
+            !commands.iter().any(|c| c.name == "Shipped sample"),
             "legacy shipped sample row should be purged"
+        );
+        assert!(
+            commands.iter().any(|c| c.name == BUILTIN_OPEN_COMMAND_NAME),
+            "builtin open prefix command should be seeded"
         );
     }
 
@@ -321,6 +412,7 @@ mod tests {
                 }],
                 enabled: false,
                 fuzzy_threshold_pct: 80,
+                match_mode: MatchMode::Phrase,
             },
         )
         .unwrap();
@@ -350,6 +442,7 @@ mod tests {
                 }],
                 enabled: true,
                 fuzzy_threshold_pct: 80,
+                match_mode: MatchMode::Phrase,
             },
         )
         .unwrap();
@@ -368,6 +461,7 @@ mod tests {
                 ],
                 enabled: false,
                 fuzzy_threshold_pct: 90,
+                match_mode: MatchMode::Prefix,
             },
         )
         .unwrap();
@@ -378,6 +472,7 @@ mod tests {
         assert_eq!(one.trigger_phrases, vec!["do better thing".to_string()]);
         assert!(!one.enabled);
         assert_eq!(one.fuzzy_threshold_pct, 90);
+        assert_eq!(one.match_mode, MatchMode::Prefix);
         assert_eq!(
             one.actions,
             vec![
@@ -411,6 +506,7 @@ mod tests {
                     == vec![Action::OpenApp {
                         name: "notepad".into(),
                         path: "notepad.exe".into(),
+                        placement: None,
                     }]
         }));
     }
@@ -443,6 +539,7 @@ mod update {
                 }],
                 enabled: true,
                 fuzzy_threshold_pct: 80,
+                match_mode: MatchMode::Phrase,
             },
         )
         .expect("insert");
@@ -461,6 +558,7 @@ mod update {
                 ],
                 enabled: false,
                 fuzzy_threshold_pct: 90,
+                match_mode: MatchMode::Prefix,
             },
         )
         .expect("update");
@@ -471,6 +569,7 @@ mod update {
         assert_eq!(one.trigger_phrases, vec!["do better thing".to_string()]);
         assert!(!one.enabled);
         assert_eq!(one.fuzzy_threshold_pct, 90);
+        assert_eq!(one.match_mode, MatchMode::Prefix);
         assert_eq!(
             one.actions,
             vec![
@@ -507,6 +606,7 @@ mod reorder {
                 actions: vec![Action::Wait { ms: 10 }],
                 enabled: true,
                 fuzzy_threshold_pct: 80,
+                match_mode: MatchMode::Phrase,
             },
         )
         .expect("insert")

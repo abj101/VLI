@@ -3,6 +3,8 @@
 #[cfg(windows)]
 mod scanner_windows;
 
+pub mod resolve_target;
+
 use rapidfuzz::fuzz;
 use std::collections::HashMap;
 use std::path::Path;

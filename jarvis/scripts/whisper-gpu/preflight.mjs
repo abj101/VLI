@@ -201,12 +201,149 @@ export function isLikelyFirstCudaWhisperBuild(jarvisRoot, profile = "debug") {
 }
 
 /**
+ * @param {string} cacheText
+ * @returns {string | null}
+ */
+function readCachedCmakeGenerator(cacheText) {
+  const internal = cacheText.match(/^CMAKE_GENERATOR:INTERNAL=(.+)$/m);
+  if (internal?.[1]?.trim()) return internal[1].trim();
+  const plain = cacheText.match(/^CMAKE_GENERATOR:STRING=(.+)$/m);
+  if (plain?.[1]?.trim()) return plain[1].trim();
+  if (/CMAKE_CUDA_COMPILER:/m.test(cacheText)) return "NMake Makefiles";
+  if (/CMAKE_GENERATOR:INTERNAL=Ninja/m.test(cacheText)) return "Ninja";
+  return null;
+}
+
+/**
+ * Remove stale whisper-rs-sys CMake trees when generator changes (VS ↔ NMake hangs or errors).
+ * @param {string} jarvisRoot
+ * @param {string} intendedGenerator e.g. "NMake Makefiles" or "Visual Studio 17 2022"
+ * @param {"debug"|"release"} [profile]
+ * @returns {{ cleared: string[] }}
+ */
+export function clearWhisperRsSysBuildCacheOnGeneratorMismatch(
+  jarvisRoot,
+  intendedGenerator,
+  profile = "debug",
+) {
+  /** @type {string[]} */
+  const cleared = [];
+  if (!intendedGenerator?.trim()) return { cleared };
+
+  const buildRoot = path.join(jarvisRoot, "src-tauri", "target", profile, "build");
+  if (!fs.existsSync(buildRoot)) return { cleared };
+
+  let entries;
+  try {
+    entries = fs.readdirSync(buildRoot, { withFileTypes: true });
+  } catch {
+    return { cleared };
+  }
+
+  for (const ent of entries) {
+    if (!ent.isDirectory() || !ent.name.startsWith("whisper-rs-sys-")) continue;
+    const outBuild = path.join(buildRoot, ent.name, "out", "build");
+    const cachePath = path.join(outBuild, "CMakeCache.txt");
+    if (!fs.existsSync(cachePath)) continue;
+
+    let text;
+    try {
+      text = fs.readFileSync(cachePath, "utf8");
+    } catch {
+      continue;
+    }
+    const cached = readCachedCmakeGenerator(text);
+    if (!cached || cached === intendedGenerator) continue;
+
+    try {
+      fs.rmSync(outBuild, { recursive: true, force: true });
+      cleared.push(path.relative(jarvisRoot, outBuild));
+    } catch (err) {
+      console.warn(
+        `whisper-gpu: could not clear mismatched CMake cache at ${path.relative(jarvisRoot, outBuild)}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  if (cleared.length > 0) {
+    console.warn(
+      `whisper-gpu: cleared whisper-rs-sys CMake cache (${cleared.length} dir(s)) — was wrong generator for "${intendedGenerator}".`,
+    );
+  }
+  return { cleared };
+}
+
+/**
+ * @param {string} jarvisRoot
+ * @param {"debug"|"release"} [profile]
+ * @returns {{ artifactCount: number, newestAgeSec: number | null }}
+ */
+export function summarizeWhisperRsSysBuildActivity(jarvisRoot, profile = "debug") {
+  const buildRoot = path.join(jarvisRoot, "src-tauri", "target", profile, "build");
+  if (!fs.existsSync(buildRoot)) {
+    return { artifactCount: 0, newestAgeSec: null };
+  }
+
+  let artifactCount = 0;
+  let newestMtime = 0;
+
+  /** @param {string} dir @param {number} depth */
+  const walk = (dir, depth) => {
+    if (depth > 8) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        walk(p, depth + 1);
+        continue;
+      }
+      if (!/\.(obj|o|lib|a|dll|exe|pdb)$/i.test(ent.name)) continue;
+      artifactCount += 1;
+      try {
+        const mtime = fs.statSync(p).mtimeMs;
+        if (mtime > newestMtime) newestMtime = mtime;
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  let entries;
+  try {
+    entries = fs.readdirSync(buildRoot, { withFileTypes: true });
+  } catch {
+    return { artifactCount: 0, newestAgeSec: null };
+  }
+
+  for (const ent of entries) {
+    if (!ent.isDirectory() || !ent.name.startsWith("whisper-rs-sys-")) continue;
+    walk(path.join(buildRoot, ent.name, "out", "build"), 0);
+  }
+
+  const newestAgeSec =
+    newestMtime > 0 ? Math.max(0, Math.floor((Date.now() - newestMtime) / 1000)) : null;
+  return { artifactCount, newestAgeSec };
+}
+
+/**
  * Warn when a prior whisper-rs-sys CMake cache used a different generator (VS vs NMake).
  * @param {string} jarvisRoot
  * @param {string} intendedGenerator e.g. "NMake Makefiles" or "Visual Studio 17 2022"
  */
 export function warnIfCmakeGeneratorMismatch(jarvisRoot, intendedGenerator) {
+  const { cleared } = clearWhisperRsSysBuildCacheOnGeneratorMismatch(
+    jarvisRoot,
+    intendedGenerator,
+  );
+  if (cleared.length > 0) return;
   if (!intendedGenerator?.trim()) return;
+
   const buildRoot = path.join(jarvisRoot, "src-tauri", "target", "debug", "build");
   if (!fs.existsSync(buildRoot)) return;
 
@@ -227,9 +364,7 @@ export function warnIfCmakeGeneratorMismatch(jarvisRoot, intendedGenerator) {
     } catch {
       continue;
     }
-    const match = text.match(/^CMAKE_GENERATOR:INTERNAL=(.+)$/m);
-    if (!match) continue;
-    const cached = match[1].trim();
+    const cached = readCachedCmakeGenerator(text);
     if (cached && cached !== intendedGenerator) {
       console.warn(
         `whisper-gpu: prior whisper-rs-sys CMake cache used generator "${cached}"; this run uses "${intendedGenerator}" — expect a full whisper-rs-sys rebuild.`,
