@@ -86,6 +86,7 @@ pub(crate) fn spawn_wake_thread(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn wake_thread_main(
     app: AppHandle,
     mut detector: Box<dyn super::WakeDetector>,

@@ -106,11 +106,6 @@ export function NodeList() {
   };
 
   const onDelete = (id: number) => {
-    const node = useEditorStore.getState().nodes.find((entry) => entry.id === id);
-    if (!node) return;
-
-    if (!window.confirm(`Delete "${getPrimaryTriggerPhrase(node)}"?`)) return;
-
     void invoke<boolean>("delete_command", { id })
       .then((deleted) => {
         if (deleted) {

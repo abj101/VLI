@@ -14,8 +14,10 @@ import {
   resolveWindowsVulkanSdkRoot,
 } from "./detect.mjs";
 import {
+  buildWindowsIsExecutableRunningScript,
   buildWindowsTerminateByExecutablePathScript,
   prependWindowsPathEntries,
+  resolveJarvisDebugExecutablePath,
   shouldReleaseWindowsJarvisExeLockForSubcommand,
 } from "./launch.mjs";
 import {
@@ -119,14 +121,36 @@ function buildChildEnv(withGpuSelection, selected) {
   return childEnv;
 }
 
+function isJarvisDebugProcessRunning(jarvisRoot) {
+  const exePath = resolveJarvisDebugExecutablePath(jarvisRoot);
+  if (!fs.existsSync(exePath)) {
+    return false;
+  }
+  if (process.platform === "win32") {
+    const script = buildWindowsIsExecutableRunningScript(exePath);
+    const r = spawnSync(
+      "powershell",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+      { cwd: jarvisRoot, encoding: "utf8" },
+    );
+    return r.status === 0;
+  }
+  const r = spawnSync("pgrep", ["-f", exePath], { encoding: "utf8" });
+  return r.status === 0;
+}
+
 /**
  * @param {string} spawnExecutable
  * @param {string[]} spawnArgv
  * @param {NodeJS.ProcessEnv} childEnv
- * @param {boolean} cudaFirstBuild
+ * @param {{ cudaFirstBuild: boolean, subcommand: string }} opts
  * @returns {Promise<number>}
  */
-function spawnTauriWithHeartbeat(spawnExecutable, spawnArgv, childEnv, cudaFirstBuild) {
+function spawnTauriWithHeartbeat(spawnExecutable, spawnArgv, childEnv, opts) {
+  const { cudaFirstBuild, subcommand } = opts;
+  const stopHeartbeatOnDevApp =
+    subcommand === "dev" ? () => isJarvisDebugProcessRunning(JARVIS_ROOT) : null;
+
   return new Promise((resolve, reject) => {
     const child = spawn(spawnExecutable, spawnArgv, {
       stdio: "inherit",
@@ -136,7 +160,25 @@ function spawnTauriWithHeartbeat(spawnExecutable, spawnArgv, childEnv, cudaFirst
     });
 
     const started = Date.now();
-    const heartbeat = setInterval(() => {
+    let heartbeat = null;
+    let devReadyPoll = null;
+
+    const clearBuildTimers = () => {
+      if (heartbeat) {
+        clearInterval(heartbeat);
+        heartbeat = null;
+      }
+      if (devReadyPoll) {
+        clearInterval(devReadyPoll);
+        devReadyPoll = null;
+      }
+    };
+
+    heartbeat = setInterval(() => {
+      if (stopHeartbeatOnDevApp?.()) {
+        clearBuildTimers();
+        return;
+      }
       const mins = Math.floor((Date.now() - started) / 60_000);
       if (mins < 1) return;
       const hint = cudaFirstBuild
@@ -145,13 +187,21 @@ function spawnTauriWithHeartbeat(spawnExecutable, spawnArgv, childEnv, cudaFirst
       console.warn(`whisper-gpu: still building… ${mins} min elapsed${hint}`);
     }, 60_000);
 
+    if (stopHeartbeatOnDevApp) {
+      devReadyPoll = setInterval(() => {
+        if (stopHeartbeatOnDevApp()) {
+          clearBuildTimers();
+        }
+      }, 15_000);
+    }
+
     child.on("error", (err) => {
-      clearInterval(heartbeat);
+      clearBuildTimers();
       reject(err);
     });
 
     child.on("close", (code, signal) => {
-      clearInterval(heartbeat);
+      clearBuildTimers();
       if (signal) {
         resolve(128);
         return;
@@ -242,12 +292,10 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
 
   let status;
   try {
-    status = await spawnTauriWithHeartbeat(
-      spawnExecutable,
-      spawnArgv,
-      childEnv,
+    status = await spawnTauriWithHeartbeat(spawnExecutable, spawnArgv, childEnv, {
       cudaFirstBuild,
-    );
+      subcommand,
+    });
   } catch (err) {
     console.error(
       "whisper-gpu: failed to spawn Tauri CLI:",

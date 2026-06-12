@@ -138,7 +138,7 @@ export function NodeForm() {
                 }}
                 placeholder="type phrase, press enter"
               />
-              <button type="button" onClick={commitTriggerInput}>
+              <button type="button" className="editor-btn" onClick={commitTriggerInput}>
                 Add
               </button>
             </div>
@@ -186,10 +186,10 @@ export function NodeForm() {
       </div>
 
       <footer className="editor-form-actions">
-        <button type="button" onClick={onCancel}>
+        <button type="button" className="editor-btn" onClick={onCancel}>
           Cancel
         </button>
-        <button type="button" onClick={onSave} disabled={!canSave}>
+        <button type="button" className="editor-btn editor-btn--primary" onClick={onSave} disabled={!canSave}>
           {saving ? "Saving..." : "Save"}
         </button>
       </footer>

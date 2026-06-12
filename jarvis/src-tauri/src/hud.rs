@@ -78,7 +78,14 @@ impl<'de> Deserialize<'de> for HudPhase {
 
 /// `true` → window ignores mouse (clicks pass through to desktop).
 pub fn ignore_cursor_for_phase(phase: HudPhase) -> bool {
-    matches!(phase, HudPhase::Idle | HudPhase::Done | HudPhase::Stopped)
+    matches!(
+        phase,
+        HudPhase::Idle
+            | HudPhase::Matched
+            | HudPhase::Executing
+            | HudPhase::Done
+            | HudPhase::Stopped
+    )
 }
 
 pub fn sync_hud_window(app: &AppHandle, phase: HudPhase) -> Result<(), String> {
@@ -106,17 +113,17 @@ mod tests {
     use super::{ignore_cursor_for_phase, HudPhase};
 
     #[test]
-    fn click_through_when_idle_done_stopped() {
+    fn click_through_when_passive_phases() {
         assert!(ignore_cursor_for_phase(HudPhase::Idle));
+        assert!(ignore_cursor_for_phase(HudPhase::Matched));
+        assert!(ignore_cursor_for_phase(HudPhase::Executing));
         assert!(ignore_cursor_for_phase(HudPhase::Done));
         assert!(ignore_cursor_for_phase(HudPhase::Stopped));
     }
 
     #[test]
-    fn interactive_when_listening_executing_matched_awaiting_input() {
+    fn interactive_when_listening_or_awaiting_follow_up() {
         assert!(!ignore_cursor_for_phase(HudPhase::Listening));
-        assert!(!ignore_cursor_for_phase(HudPhase::Executing));
-        assert!(!ignore_cursor_for_phase(HudPhase::Matched));
         assert!(!ignore_cursor_for_phase(HudPhase::AwaitingInput));
     }
 

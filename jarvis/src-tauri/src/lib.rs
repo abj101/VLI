@@ -22,9 +22,6 @@ use tauri_plugin_global_shortcut::{
     Builder as ShortcutBuilder, GlobalShortcutExt, Shortcut, ShortcutState,
 };
 
-/// Brief hold after `Done` (and after speech-silence gate) before hiding the HUD — tuned so simple
-/// actions (e.g. OpenApp) dismiss quickly while the frontend shell is already unmounted.
-const AUTO_DISMISS_AFTER: Duration = Duration::from_millis(380);
 /// Listening session: dismiss if STT never emitted a non-empty transcript.
 const NO_WORDS_DISMISS_AFTER: Duration = Duration::from_secs(3);
 /// After STT has produced words but no command matched, dismiss this long after the last non-empty transcript.
@@ -34,22 +31,18 @@ const AFTER_WORDS_NO_MATCH_DISMISS_AFTER: Duration = Duration::from_secs(3);
 const HUD_WINDOW_HIDE_AFTER_FADE_MS: u64 = 520;
 const EDITOR_WINDOW_LABEL: &str = "editor";
 const DEFAULT_HOTKEY: &str = "ctrl+shift+j";
-const DEFAULT_DISMISS_HOTKEY: &str = "escape";
 const SETTING_KEY_HOTKEY: &str = "hotkey";
-const SETTING_KEY_DISMISS_HOTKEY: &str = "dismiss_hotkey";
-const DISMISS_HOTKEY_CHANGED_EVENT: &str = "dismiss-hotkey-changed";
 const SETTING_KEY_DEFAULT_THRESHOLD: &str = "default_fuzzy_threshold_pct";
 const DEFAULT_THRESHOLD_PCT: u16 = 80;
 const EDITOR_COMMANDS_CHANGED_EVENT: &str = "editor-commands-changed";
 const APP_INDEX_READY_EVENT: &str = "app-index-ready";
 pub(crate) const OPEN_SETTINGS_EVENT: &str = "open-settings";
-/// After the last speech-related activity, wait this long before treating speech as finished for
-/// auto-dismiss scheduling (then `AUTO_DISMISS_AFTER` runs before the window hides).
-const SILENCE_BEFORE_AUTO_DISMISS: Duration = Duration::from_millis(180);
 /// Debounce partial STT updates so commands do not fire mid-sentence.
 const SILENCE_BEFORE_MATCH: Duration = Duration::from_millis(550);
 /// Amplitude above this (0..1) counts as speech for activity / silence detection.
 const SPEECH_AMPLITUDE_THRESHOLD: f64 = 0.02;
+/// Block wake reopens briefly after dismiss so mic handoff / tail audio does not immediately re-show the HUD.
+const WAKE_COOLDOWN_AFTER_DISMISS: Duration = Duration::from_secs(2);
 const FOLLOW_UP_TIMEOUT: Duration = Duration::from_secs(8);
 const FOLLOW_UP_TIMEOUT_MSG: &str = "Follow-up input timed out";
 const ACTION_RUN_CANCELLED_MSG: &str = "Action run cancelled";
@@ -200,6 +193,32 @@ struct ReorderCommandsPayload {
     ordered_ids: Vec<i64>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ToolDefinitionPayload {
+    name: String,
+    display_name: String,
+    description: String,
+    parameters: Vec<db::ToolParameter>,
+    actions: Vec<ActionPayload>,
+    enabled: bool,
+    #[serde(default)]
+    builtin: bool,
+}
+
+impl ToolDefinitionPayload {
+    fn try_into_new_tool_definition(&self) -> Result<db::NewToolDefinition, String> {
+        Ok(db::NewToolDefinition {
+            name: self.name.trim().to_string(),
+            display_name: self.display_name.trim().to_string(),
+            description: self.description.trim().to_string(),
+            parameters: self.parameters.clone(),
+            actions: self.actions.clone(),
+            enabled: self.enabled,
+            builtin: self.builtin,
+        })
+    }
+}
+
 impl CommandNodePayload {
     fn try_into_new_command_node(&self) -> Result<db::NewCommandNode, String> {
         validate_command_node_payload(self)?;
@@ -258,18 +277,6 @@ fn normalize_hotkey_input(hotkey: &str) -> Result<String, String> {
         return Err("hotkey is required".to_string());
     }
     Ok(normalized.to_string())
-}
-
-fn hotkeys_collide(a: &str, b: &str) -> bool {
-    let a = a.trim();
-    let b = b.trim();
-    if a.eq_ignore_ascii_case(b) {
-        return true;
-    }
-    match (Shortcut::from_str(a), Shortcut::from_str(b)) {
-        (Ok(x), Ok(y)) => x.id() == y.id(),
-        _ => false,
-    }
 }
 
 fn is_hotkey_already_registered_error(message: &str) -> bool {
@@ -332,6 +339,8 @@ struct HudRuntime {
     pending_follow_up_candidate: Option<String>,
     /// Last update timestamp for candidate debounce.
     pending_follow_up_candidate_at: Option<Instant>,
+    /// Set on dismiss/close; suppresses wake reopens until [`WAKE_COOLDOWN_AFTER_DISMISS`].
+    dismissed_at: Option<Instant>,
 }
 
 impl Default for HudRuntime {
@@ -351,6 +360,7 @@ impl Default for HudRuntime {
             pending_follow_up_response: None,
             pending_follow_up_candidate: None,
             pending_follow_up_candidate_at: None,
+            dismissed_at: None,
         }
     }
 }
@@ -371,10 +381,8 @@ struct HotkeyBindingState {
     current: Mutex<String>,
 }
 
-#[derive(Debug)]
-struct DismissHotkeyBindingState {
-    current: Mutex<String>,
-}
+/// While the settings UI is capturing a new shortcut, ignore global hotkey presses.
+struct HotkeyRecordingSuppressed(Arc<AtomicBool>);
 
 fn preview_chars(s: &str, max: usize) -> String {
     let n = s.chars().count();
@@ -439,18 +447,61 @@ fn try_start_listening_audio(app: &AppHandle, slot: &SharedAudioPipeline, hud_se
     }
 }
 
-fn emit_hud_phase(app: &AppHandle, phase: HudPhase) {
-    let session_id = app
-        .try_state::<SharedHud>()
-        .and_then(|h| h.lock().ok().map(|s| s.session_id))
-        .unwrap_or(0);
+/// Emit `hud-phase` from the current [`HudRuntime`] snapshot (phase + session_id under one lock).
+fn emit_hud_phase(app: &AppHandle) {
+    let Some(hud) = app.try_state::<SharedHud>() else {
+        return;
+    };
+    let Ok(s) = hud.lock() else {
+        return;
+    };
+    let phase = s.phase.as_str();
+    let session_id = s.session_id;
+    drop(s);
     let _ = app.emit(
         "hud-phase",
         serde_json::json!({
-            "phase": phase.as_str(),
+            "phase": phase,
             "session_id": session_id,
         }),
     );
+}
+
+fn sync_hud_window_from_state(app: &AppHandle, rt: &SharedHud) -> Result<(), String> {
+    let phase = rt
+        .lock()
+        .map_err(|_| "hud state poisoned".to_string())?
+        .phase;
+    sync_hud_window(app, phase)
+}
+
+fn mark_hud_dismissed(s: &mut HudRuntime) {
+    s.dismissed_at = Some(Instant::now());
+}
+
+fn wake_reopen_suppressed(s: &HudRuntime) -> bool {
+    matches!(
+        s.dismissed_at,
+        Some(t) if t.elapsed() < WAKE_COOLDOWN_AFTER_DISMISS
+    )
+}
+
+fn phase_transition_allowed(current: HudPhase, next: HudPhase) -> bool {
+    if current == HudPhase::Stopped && next != HudPhase::Stopped {
+        return false;
+    }
+    match next {
+        HudPhase::Matched => current == HudPhase::Listening,
+        HudPhase::Executing => {
+            matches!(
+                current,
+                HudPhase::Matched | HudPhase::Executing | HudPhase::AwaitingInput
+            )
+        }
+        HudPhase::AwaitingInput => current == HudPhase::Executing,
+        HudPhase::Done => matches!(current, HudPhase::Executing | HudPhase::AwaitingInput),
+        _ => true,
+    }
 }
 
 fn load_all_commands(app: &AppHandle) -> Result<Vec<db::CommandNode>, String> {
@@ -574,6 +625,7 @@ fn cancel_active_run_in_state(s: &mut HudRuntime) {
 
 fn prepare_hud_listening_session(s: &mut HudRuntime) -> u64 {
     let now = Instant::now();
+    s.dismissed_at = None;
     s.visible = true;
     s.phase = HudPhase::Listening;
     s.session_id = s.session_id.wrapping_add(1);
@@ -591,6 +643,7 @@ fn prepare_hud_listening_session(s: &mut HudRuntime) -> u64 {
 }
 
 fn prepare_hud_close_session(s: &mut HudRuntime) {
+    mark_hud_dismissed(s);
     s.phase = HudPhase::Stopped;
     s.visible = false;
     s.session_id = s.session_id.wrapping_add(1);
@@ -709,10 +762,6 @@ fn no_match_idle_should_dismiss(s: &HudRuntime) -> bool {
     }
 }
 
-fn should_fire_auto_dismiss(rt: &HudRuntime, expected_session_id: u64) -> bool {
-    rt.visible && rt.phase == HudPhase::Done && rt.session_id == expected_session_id
-}
-
 fn touch_speech_activity(rt: &SharedHud) {
     if let Ok(mut s) = rt.lock() {
         if s.visible && s.phase == HudPhase::Listening {
@@ -744,6 +793,22 @@ fn touch_speech_on_amplitude(rt: &SharedHud, amplitude: f64) {
 /// After `emit_hud_phase(Stopped)`, wait for the HUD webview exit animation, then `hide()`.
 /// Skips hide if the user reopened during the wait (`visible` or phase changed).
 /// Re-syncs webview background immediately before `hide()`.
+fn hide_hud_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(HUD_WINDOW_LABEL) {
+        if let Err(e) = w.hide() {
+            warn!("hud hide: {e}");
+        }
+    }
+}
+
+/// Command finished (no follow-up reopen): dismiss session and stop mic — do not linger on `Done`.
+fn finalize_command_run(app: &AppHandle, rt: &SharedHud, audio: &SharedAudioPipeline) {
+    if let Err(e) = dismiss_hud(app, rt) {
+        warn!("finalize_command_run dismiss: {e}");
+    }
+    audio::stop_shared_pipeline(app, audio);
+}
+
 fn schedule_hud_window_hide_when_still_dismissed(app: AppHandle, rt: SharedHud) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(HUD_WINDOW_HIDE_AFTER_FADE_MS));
@@ -806,41 +871,6 @@ fn spawn_no_match_watchdog(
     });
 }
 
-/// After `Done`, wait until **silence** after last speech activity, then `AUTO_DISMISS_AFTER` before dismissing.
-fn schedule_auto_dismiss(
-    app: AppHandle,
-    rt: SharedHud,
-    audio: SharedAudioPipeline,
-    expected_session_id: u64,
-) {
-    const TICK: Duration = Duration::from_millis(50);
-    std::thread::spawn(move || {
-        if let Some(last) = rt.lock().ok().and_then(|s| s.last_speech_activity) {
-            let silence_end = last + SILENCE_BEFORE_AUTO_DISMISS;
-            while Instant::now() < silence_end {
-                std::thread::sleep(TICK);
-                if !rt
-                    .lock()
-                    .map(|s| should_fire_auto_dismiss(&s, expected_session_id))
-                    .unwrap_or(false)
-                {
-                    return;
-                }
-            }
-        }
-        std::thread::sleep(AUTO_DISMISS_AFTER);
-        let should_dismiss = rt
-            .lock()
-            .map(|s| should_fire_auto_dismiss(&s, expected_session_id))
-            .unwrap_or(false);
-        if !should_dismiss {
-            return;
-        }
-        let _ = dismiss_hud(&app, &rt);
-        audio::stop_shared_pipeline(&app,&audio);
-    });
-}
-
 fn spawn_deferred_partial_match(
     app: AppHandle,
     rt: SharedHud,
@@ -887,12 +917,19 @@ fn await_follow_up_input(
             return Err(ACTION_RUN_CANCELLED_MSG.to_string());
         }
         s.phase = HudPhase::AwaitingInput;
+        s.visible = true;
         s.pending_follow_up_response = None;
         s.pending_follow_up_candidate = None;
         s.pending_follow_up_candidate_at = None;
     }
+    let window = app
+        .get_webview_window(HUD_WINDOW_LABEL)
+        .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
+    window.center().map_err(|e| e.to_string())?;
+    window.show().map_err(|e| e.to_string())?;
+    sync_hud_webview_background(app);
     sync_hud_window(app, HudPhase::AwaitingInput)?;
-    emit_hud_phase(app, HudPhase::AwaitingInput);
+    emit_hud_phase(app);
     let _ = app.emit("action-status", serde_json::json!({ "text": "follow up" }));
     try_start_listening_audio(app, audio, expected_session_id);
 
@@ -917,11 +954,11 @@ fn await_follow_up_input(
         match state {
             None => {}
             Some(FollowUpAbortReason::Cancelled) => {
-                audio::stop_shared_pipeline(&app,audio);
+                audio::stop_shared_pipeline(app, audio);
                 return Err(ACTION_RUN_CANCELLED_MSG.to_string());
             }
             Some(FollowUpAbortReason::TimedOut) => {
-                audio::stop_shared_pipeline(&app,audio);
+                audio::stop_shared_pipeline(app, audio);
                 {
                     let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
                     if s.session_id == expected_session_id {
@@ -932,16 +969,7 @@ fn await_follow_up_input(
                         s.pending_follow_up_candidate_at = None;
                     }
                 }
-                // Same as successful run: `Done` fades UI to empty — must schedule dismiss or HUD
-                // window stays visible (click-through) until manual Escape.
-                if let Ok(done_session_id) = set_phase(app, rt, HudPhase::Done) {
-                    schedule_auto_dismiss(
-                        app.clone(),
-                        Arc::clone(rt),
-                        audio.clone(),
-                        done_session_id,
-                    );
-                }
+                finalize_command_run(app, rt, audio);
                 return Err(FOLLOW_UP_TIMEOUT_MSG.to_string());
             }
         }
@@ -950,16 +978,28 @@ fn await_follow_up_input(
 
 fn set_phase(app: &AppHandle, rt: &SharedHud, phase: HudPhase) -> Result<u64, String> {
     debug!("flow: set_phase -> {}", phase.as_str());
-    let session_id = {
+    let (applied, session_id) = {
         let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
-        s.phase = phase;
-        s.session_id
+        let applied = if !phase_transition_allowed(s.phase, phase) {
+            debug!(
+                "flow: skip set_phase {:?} from {:?}",
+                phase, s.phase
+            );
+            false
+        } else {
+            s.phase = phase;
+            true
+        };
+        (applied, s.session_id)
     };
+    if !applied {
+        return Ok(session_id);
+    }
     if phase != HudPhase::Stopped {
         sync_hud_webview_background(app);
     }
-    sync_hud_window(app, phase)?;
-    emit_hud_phase(app, phase);
+    sync_hud_window_from_state(app, rt)?;
+    emit_hud_phase(app);
     Ok(session_id)
 }
 
@@ -1004,9 +1044,10 @@ fn try_match_and_execute(
     let _ = set_phase(app, rt, HudPhase::Matched)?;
 
     debug!("flow: stopping mic pipeline");
-    audio::stop_shared_pipeline(&app,audio);
+    audio::stop_shared_pipeline(app, audio);
     debug!("flow: mic stopped; phase executing");
     let executing_session_id = set_phase(app, rt, HudPhase::Executing)?;
+    hide_hud_window(app);
     if let Some(node) = nodes.iter().find(|n| n.id.to_string() == matched.node_id) {
         let node = node.clone();
         let app_h = app.clone();
@@ -1076,10 +1117,8 @@ fn try_match_and_execute(
             if !should_finalize {
                 return;
             }
-            if let Ok(done_session_id) = set_phase(&app_h, &rt_h, HudPhase::Done) {
-                debug!("flow: scheduled auto-dismiss session_id={done_session_id}");
-                schedule_auto_dismiss(app_h.clone(), Arc::clone(&rt_h), audio_h, done_session_id);
-            }
+            debug!("flow: command run complete; dismissing hud");
+            finalize_command_run(&app_h, &rt_h, &audio_h);
         });
     } else {
         warn!(
@@ -1087,6 +1126,7 @@ fn try_match_and_execute(
             matched.node_id,
             nodes.len()
         );
+        finalize_command_run(app, rt, audio);
     }
     Ok(())
 }
@@ -1097,9 +1137,9 @@ fn try_match_and_execute(
 ///    (`is_final: false`). After capture stops, may emit one final (`is_final: true`).
 /// 2. **Orchestrator** (this function): if HUD is `listening` and text is non-empty, run substring
 ///    match against SQLite command nodes (`commands::matcher`).
-/// 3. On match: emit `match-result` to the HUD → phases **matched** → **executing** →
-///    [`audio::stop_shared_pipeline`] (releases mutex before drop) → spawn [`commands::execute_command`]
-///    (`OpenApp` / `OpenUrl`) → phase **done** → [`schedule_auto_dismiss`].
+/// 3. On match: emit `match-result` → **matched** → **executing** (HUD hides; shell unmounts).
+///    → spawn [`commands::execute_command`] → [`finalize_command_run`] (`Stopped`, no `Done` linger).
+///    Follow-ups reopen the window + shell on **awaiting_input** only.
 /// 4. **React** (`subscribeHudIpc`): applies events to Zustand; transcript + span highlight from
 ///    `match-result`; status line from `action-status`.
 fn process_transcript_update(
@@ -1204,8 +1244,8 @@ fn show_hud_from_hotkey(
         sync_hud_webview_background(app);
     }
 
-    sync_hud_window(app, phase)?;
-    emit_hud_phase(app, phase);
+    sync_hud_window_from_state(app, rt)?;
+    emit_hud_phase(app);
 
     if defer_hud_window_hide && phase == HudPhase::Stopped {
         schedule_hud_window_hide_when_still_dismissed(app.clone(), Arc::clone(rt));
@@ -1217,7 +1257,7 @@ fn show_hud_from_hotkey(
             spawn_no_match_watchdog(app.clone(), Arc::clone(rt), audio.clone(), sid);
         }
     } else {
-        audio::stop_shared_pipeline(&app,audio);
+        audio::stop_shared_pipeline(app, audio);
     }
 
     Ok(())
@@ -1232,6 +1272,9 @@ fn wake_request_hud(
     is_paused: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+    if wake_reopen_suppressed(&s) {
+        return Ok(());
+    }
     if s.visible && !reopen_listening_when_visible(s.phase) {
         return Ok(());
     }
@@ -1248,7 +1291,7 @@ fn wake_request_hud(
     sync_hud_webview_background(app);
 
     sync_hud_window(app, HudPhase::Listening)?;
-    emit_hud_phase(app, HudPhase::Listening);
+    emit_hud_phase(app);
 
     if tray::mic_start_allowed(is_paused, HudPhase::Listening) {
         try_start_listening_audio(app, audio, session_id);
@@ -1354,6 +1397,7 @@ fn settings_patch_triggers_wake_reload(
 
 fn dismiss_hud(app: &AppHandle, rt: &SharedHud) -> Result<(), String> {
     let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+    mark_hud_dismissed(&mut s);
     s.phase = HudPhase::Stopped;
     s.visible = false;
     s.session_id = s.session_id.wrapping_add(1);
@@ -1364,20 +1408,12 @@ fn dismiss_hud(app: &AppHandle, rt: &SharedHud) -> Result<(), String> {
     s.pending_follow_up_candidate_at = None;
     cancel_active_run_in_state(&mut s);
 
-    let phase = s.phase;
     drop(s);
 
-    sync_hud_window(app, phase)?;
-    emit_hud_phase(app, phase);
+    sync_hud_window_from_state(app, rt)?;
+    emit_hud_phase(app);
     schedule_hud_window_hide_when_still_dismissed(app.clone(), Arc::clone(rt));
     Ok(())
-}
-
-fn run_dismiss_from_shortcut(app: &AppHandle, hud: &SharedHud, audio: &SharedAudioPipeline) {
-    if let Err(e) = dismiss_hud(app, hud) {
-        warn!("dismiss shortcut: {e}");
-    }
-    audio::stop_shared_pipeline(&app,audio);
 }
 
 #[tauri::command]
@@ -1398,6 +1434,7 @@ fn hud_set_phase(
         match phase {
             HudPhase::Listening => {
                 let now = Instant::now();
+                s.dismissed_at = None;
                 s.visible = true;
                 s.session_id = s.session_id.wrapping_add(1);
                 s.last_speech_activity = Some(now);
@@ -1412,6 +1449,7 @@ fn hud_set_phase(
                 cancel_active_run_in_state(&mut s);
             }
             HudPhase::Stopped => {
+                mark_hud_dismissed(&mut s);
                 s.visible = false;
                 s.session_id = s.session_id.wrapping_add(1);
                 s.pending_transcript.clear();
@@ -1427,8 +1465,8 @@ fn hud_set_phase(
     if phase != HudPhase::Stopped {
         sync_hud_webview_background(&app);
     }
-    sync_hud_window(&app, phase)?;
-    emit_hud_phase(&app, phase);
+    sync_hud_window_from_state(&app, &state)?;
+    emit_hud_phase(&app);
     Ok(())
 }
 
@@ -1527,6 +1565,48 @@ fn reorder_commands(
 }
 
 #[tauri::command]
+fn list_tools(app: AppHandle) -> Result<Vec<db::ToolDefinition>, String> {
+    let conn = open_db_connection(&app)?;
+    db::get_all_tools(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_tool(
+    app: AppHandle,
+    tool: ToolDefinitionPayload,
+) -> Result<db::ToolDefinition, String> {
+    let conn = open_db_connection(&app)?;
+    let row = tool.try_into_new_tool_definition()?;
+    let id = db::insert_tool(&conn, &row).map_err(|e| e.to_string())?;
+    db::get_tool_by_id(&conn, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("created tool {id} was not found"))
+}
+
+#[tauri::command]
+fn update_tool(
+    app: AppHandle,
+    id: i64,
+    tool: ToolDefinitionPayload,
+) -> Result<db::ToolDefinition, String> {
+    let conn = open_db_connection(&app)?;
+    let row = tool.try_into_new_tool_definition()?;
+    let changed = db::update_tool(&conn, id, &row).map_err(|e| e.to_string())?;
+    if !changed {
+        return Err(format!("tool with id {id} was not found"));
+    }
+    db::get_tool_by_id(&conn, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("updated tool {id} was not found"))
+}
+
+#[tauri::command]
+fn delete_tool(app: AppHandle, id: i64) -> Result<bool, String> {
+    let conn = open_db_connection(&app)?;
+    db::delete_tool(&conn, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_setting(app: AppHandle, key: String) -> Result<Option<String>, String> {
     let normalized_key = validate_setting_key(&key)?;
     let conn = open_db_connection(&app)?;
@@ -1545,6 +1625,27 @@ fn set_setting(app: AppHandle, key: String, value: String) -> Result<(), String>
             serde_json::json!({ "preference": trimmed }),
         );
     }
+    if normalized_key == "hud_transparency" {
+        let _ = app.emit(
+            "hud-transparency-changed",
+            serde_json::json!({ "transparency": trimmed }),
+        );
+    }
+    if normalized_key == "editor_transparency" {
+        let _ = app.emit(
+            "editor-transparency-changed",
+            serde_json::json!({ "transparency": trimmed }),
+        );
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_hotkey_recording(
+    recording: bool,
+    suppressed: State<'_, HotkeyRecordingSuppressed>,
+) -> Result<(), String> {
+    suppressed.0.store(recording, Ordering::Relaxed);
     Ok(())
 }
 
@@ -1553,21 +1654,9 @@ fn set_hotkey(
     app: AppHandle,
     hotkey: String,
     hotkey_state: State<'_, HotkeyBindingState>,
-    dismiss_hotkey_state: State<'_, DismissHotkeyBindingState>,
 ) -> Result<String, String> {
     let next_hotkey = normalize_hotkey_input(&hotkey)?;
     Shortcut::from_str(&next_hotkey).map_err(|e| format!("Invalid shortcut: {e}"))?;
-    let dismiss_guard = dismiss_hotkey_state
-        .current
-        .lock()
-        .map_err(|_| "dismiss hotkey state poisoned".to_string())?;
-    if hotkeys_collide(&next_hotkey, dismiss_guard.as_str()) {
-        return Err(
-            "That shortcut is already used for Dismiss voice overlay. Pick a different combo."
-                .to_string(),
-        );
-    }
-    drop(dismiss_guard);
     let conn = open_db_connection(&app)?;
     let mut current_hotkey = hotkey_state
         .current
@@ -1598,65 +1687,6 @@ fn set_hotkey(
 
     *current_hotkey = next_hotkey.clone();
     Ok(next_hotkey)
-}
-
-#[tauri::command]
-fn set_dismiss_hotkey(
-    app: AppHandle,
-    hotkey: String,
-    dismiss_hotkey_state: State<'_, DismissHotkeyBindingState>,
-    hotkey_state: State<'_, HotkeyBindingState>,
-) -> Result<String, String> {
-    let next = normalize_hotkey_input(&hotkey)?;
-    Shortcut::from_str(&next).map_err(|e| format!("Invalid shortcut: {e}"))?;
-    let toggle_guard = hotkey_state
-        .current
-        .lock()
-        .map_err(|_| "hotkey state poisoned".to_string())?;
-    if hotkeys_collide(&next, toggle_guard.as_str()) {
-        return Err(
-            "That shortcut is already used for Show / toggle HUD. Pick a different combo."
-                .to_string(),
-        );
-    }
-    drop(toggle_guard);
-
-    let conn = open_db_connection(&app)?;
-    let mut current = dismiss_hotkey_state
-        .current
-        .lock()
-        .map_err(|_| "dismiss hotkey state poisoned".to_string())?;
-    let existing = current.clone();
-    if existing == next {
-        db::set_setting(&conn, SETTING_KEY_DISMISS_HOTKEY, &next).map_err(|e| e.to_string())?;
-        return Ok(next);
-    }
-
-    app.global_shortcut()
-        .unregister(existing.as_str())
-        .map_err(|e| format!("failed to unregister dismiss shortcut `{existing}`: {e}"))?;
-
-    if let Err(register_error) = app.global_shortcut().register(next.as_str()) {
-        let _ = app.global_shortcut().register(existing.as_str());
-        return Err(format!(
-            "failed to register dismiss shortcut `{next}`: {register_error}"
-        ));
-    }
-
-    if let Err(persist_error) = db::set_setting(&conn, SETTING_KEY_DISMISS_HOTKEY, &next) {
-        let _ = app.global_shortcut().unregister(next.as_str());
-        let _ = app.global_shortcut().register(existing.as_str());
-        return Err(format!(
-            "failed to persist dismiss shortcut: {persist_error}"
-        ));
-    }
-
-    *current = next.clone();
-    let _ = app.emit(
-        DISMISS_HOTKEY_CHANGED_EVENT,
-        serde_json::json!({ "hotkey": next }),
-    );
-    Ok(next)
 }
 
 #[tauri::command]
@@ -2000,6 +2030,7 @@ pub fn run() {
     #[allow(clippy::arc_with_non_send_sync)]
     let audio_pipeline = SharedAudioPipeline(Arc::new(Mutex::new(None)));
     let is_paused = Arc::new(AtomicBool::new(false));
+    let hotkey_recording_suppressed = Arc::new(AtomicBool::new(false));
     let wake_mic_suppressed = audio::WakeMicSuppressed(Arc::new(AtomicBool::new(false)));
     let whisper_model_cache = WhisperModelCache(Mutex::new(None));
     let command_cache: CommandCache = Arc::new(RwLock::new(Vec::new()));
@@ -2010,6 +2041,7 @@ pub fn run() {
         .manage(Arc::clone(&hud_state))
         .manage(audio_pipeline.clone())
         .manage(Arc::clone(&is_paused))
+        .manage(HotkeyRecordingSuppressed(Arc::clone(&hotkey_recording_suppressed)))
         .manage(wake_mic_suppressed)
         .manage(whisper_model_cache)
         .manage(command_cache.clone())
@@ -2019,9 +2051,6 @@ pub fn run() {
         .manage(HotkeyBindingState {
             current: Mutex::new(DEFAULT_HOTKEY.to_string()),
         })
-        .manage(DismissHotkeyBindingState {
-            current: Mutex::new(DEFAULT_DISMISS_HOTKEY.to_string()),
-        })
         .manage(WakeSupervisorState::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
@@ -2029,6 +2058,8 @@ pub fn run() {
             let hud_state = Arc::clone(&hud_state);
             let audio_for_shortcut = audio_pipeline.clone();
             let is_paused_for_shortcut = Arc::clone(&is_paused);
+            let hotkey_recording_suppressed_for_shortcut =
+                Arc::clone(&hotkey_recording_suppressed);
             let command_cache_for_setup = command_cache.clone();
             let app_index_for_setup = app_index_store.clone();
             move |app| {
@@ -2079,43 +2110,6 @@ pub fn run() {
                         .map_err(|_| "hotkey state poisoned".to_string())?;
                     *current = configured_hotkey.clone();
                 }
-                let mut configured_dismiss =
-                    match db::get_setting(&conn, SETTING_KEY_DISMISS_HOTKEY)
-                        .map_err(|e| e.to_string())?
-                    {
-                        Some(value) if !value.trim().is_empty() => value.trim().to_string(),
-                        _ => {
-                            db::set_setting(&conn, SETTING_KEY_DISMISS_HOTKEY, DEFAULT_DISMISS_HOTKEY)
-                                .map_err(|e| e.to_string())?;
-                            DEFAULT_DISMISS_HOTKEY.to_string()
-                        }
-                    };
-                if Shortcut::from_str(&configured_dismiss).is_err() {
-                    warn!(
-                        "invalid dismiss_hotkey `{configured_dismiss}`; reverting to {}",
-                        DEFAULT_DISMISS_HOTKEY
-                    );
-                    db::set_setting(&conn, SETTING_KEY_DISMISS_HOTKEY, DEFAULT_DISMISS_HOTKEY)
-                        .map_err(|e| e.to_string())?;
-                    configured_dismiss = DEFAULT_DISMISS_HOTKEY.to_string();
-                }
-                if hotkeys_collide(&configured_dismiss, &configured_hotkey) {
-                    warn!(
-                        "dismiss_hotkey collided with hotkey; reverting dismiss to {}",
-                        DEFAULT_DISMISS_HOTKEY
-                    );
-                    db::set_setting(&conn, SETTING_KEY_DISMISS_HOTKEY, DEFAULT_DISMISS_HOTKEY)
-                        .map_err(|e| e.to_string())?;
-                    configured_dismiss = DEFAULT_DISMISS_HOTKEY.to_string();
-                }
-                {
-                    let dismiss_state = app.state::<DismissHotkeyBindingState>();
-                    let mut current = dismiss_state
-                        .current
-                        .lock()
-                        .map_err(|_| "dismiss hotkey state poisoned".to_string())?;
-                    *current = configured_dismiss.clone();
-                }
 
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 {
@@ -2157,49 +2151,29 @@ pub fn run() {
                     });
 
                     let shortcut_plugin = ShortcutBuilder::new()
-                        .with_shortcuts([
-                            configured_hotkey.as_str(),
-                            configured_dismiss.as_str(),
-                        ])
+                        .with_shortcuts([configured_hotkey.as_str()])
                         .map_err(|e| e.to_string())?
                         .with_handler({
                             let hud_state = Arc::clone(&hud_state);
                             let audio_for_shortcut = audio_for_shortcut.clone();
                             let is_paused_for_shortcut = Arc::clone(&is_paused_for_shortcut);
-                            move |app, shortcut, event| {
+                            let hotkey_recording_suppressed_for_shortcut =
+                                Arc::clone(&hotkey_recording_suppressed_for_shortcut);
+                            move |app, _shortcut, event| {
                                 if event.state != ShortcutState::Pressed {
                                     return;
                                 }
-                                let triggered_id = shortcut.id();
-                                let toggle_s = app
-                                    .state::<HotkeyBindingState>()
-                                    .current
-                                    .lock()
-                                    .map(|g| g.clone())
-                                    .unwrap_or_else(|_| DEFAULT_HOTKEY.to_string());
-                                let dismiss_s = app
-                                    .state::<DismissHotkeyBindingState>()
-                                    .current
-                                    .lock()
-                                    .map(|g| g.clone())
-                                    .unwrap_or_else(|_| DEFAULT_DISMISS_HOTKEY.to_string());
-                                let toggle_id = Shortcut::from_str(&toggle_s).ok().map(|h| h.id());
-                                let dismiss_id =
-                                    Shortcut::from_str(&dismiss_s).ok().map(|h| h.id());
-                                if dismiss_id == Some(triggered_id) {
-                                    run_dismiss_from_shortcut(
-                                        app,
-                                        app.state::<SharedHud>().inner(),
-                                        app.state::<SharedAudioPipeline>().inner(),
-                                    );
-                                } else if toggle_id == Some(triggered_id) {
-                                    let _ = show_hud_from_hotkey(
-                                        app,
-                                        &hud_state,
-                                        &audio_for_shortcut,
-                                        &is_paused_for_shortcut,
-                                    );
+                                if hotkey_recording_suppressed_for_shortcut
+                                    .load(Ordering::Relaxed)
+                                {
+                                    return;
                                 }
+                                let _ = show_hud_from_hotkey(
+                                    app,
+                                    &hud_state,
+                                    &audio_for_shortcut,
+                                    &is_paused_for_shortcut,
+                                );
                             }
                         })
                         .build();
@@ -2217,7 +2191,7 @@ pub fn run() {
                 }
 
                 sync_hud_window(app.handle(), HudPhase::Idle).map_err(|e| e.to_string())?;
-                emit_hud_phase(app.handle(), HudPhase::Idle);
+                emit_hud_phase(app.handle());
                 sync_hud_webview_background(app.handle());
                 #[cfg(windows)]
                 sync_native_window_rounding(app.handle());
@@ -2235,10 +2209,14 @@ pub fn run() {
             update_command,
             delete_command,
             reorder_commands,
+            list_tools,
+            create_tool,
+            update_tool,
+            delete_tool,
             get_setting,
             set_setting,
             set_hotkey,
-            set_dismiss_hotkey,
+            set_hotkey_recording,
             get_settings,
             search_app_index,
             get_app_index_status,
@@ -2288,7 +2266,7 @@ mod tests {
     fn sample_settings(wake_engine: &str) -> db::AppSettings {
         db::AppSettings {
             wake_engine: wake_engine.into(),
-            oww_threshold: 0.5,
+            oww_threshold: db::settings::DEFAULT_OWW_THRESHOLD,
             stt_provider: "local".into(),
             remote_stt_url: String::new(),
             remote_stt_model: None,
@@ -2369,6 +2347,28 @@ mod tests {
         rt.phase = HudPhase::Listening;
         rt.visible = false;
         assert!(!should_attempt_command_match(&rt));
+    }
+
+    #[test]
+    fn phase_transition_blocks_done_after_stopped() {
+        assert!(!phase_transition_allowed(
+            HudPhase::Stopped,
+            HudPhase::Done
+        ));
+        assert!(phase_transition_allowed(
+            HudPhase::Executing,
+            HudPhase::Done
+        ));
+    }
+
+    #[test]
+    fn wake_reopen_suppressed_immediately_after_dismiss_mark() {
+        let mut rt = HudRuntime::default();
+        mark_hud_dismissed(&mut rt);
+        assert!(wake_reopen_suppressed(&rt));
+        rt.dismissed_at =
+            Some(Instant::now() - WAKE_COOLDOWN_AFTER_DISMISS - Duration::from_millis(1));
+        assert!(!wake_reopen_suppressed(&rt));
     }
 
     #[test]
@@ -2618,6 +2618,65 @@ mod tests {
     fn default_threshold_applies_when_node_threshold_is_zero() {
         assert_eq!(resolve_fuzzy_threshold_pct(0, 77), 77);
         assert_eq!(resolve_fuzzy_threshold_pct(88, 77), 88);
+    }
+
+    #[test]
+    fn tool_payload_round_trips_through_db_crud() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("tools-ipc.db");
+        db::init_db(&path).expect("init db");
+        let conn = Connection::open(&path).expect("open db");
+
+        let payload = ToolDefinitionPayload {
+            name: "  speak_line  ".into(),
+            display_name: " Speak ".into(),
+            description: "Says a line".into(),
+            parameters: vec![db::ToolParameter {
+                name: "text".into(),
+                param_type: "string".into(),
+                description: None,
+                required: true,
+                enum_values: vec![],
+            }],
+            actions: vec![ActionPayload::Speak {
+                text: "{{text}}".into(),
+            }],
+            enabled: true,
+            builtin: false,
+        };
+        let row = payload
+            .try_into_new_tool_definition()
+            .expect("valid tool payload");
+        assert_eq!(row.name, "speak_line");
+        let id = db::insert_tool(&conn, &row).expect("insert tool");
+        let saved = db::get_tool_by_id(&conn, id)
+            .expect("get")
+            .expect("row");
+        assert_eq!(saved.display_name, "Speak");
+        assert_eq!(saved.actions[0], Action::Speak {
+            text: "{{text}}".into()
+        });
+
+        let updated_payload = ToolDefinitionPayload {
+            name: "speak_line".into(),
+            display_name: "Speak Updated".into(),
+            description: "Says goodbye".into(),
+            parameters: vec![],
+            actions: vec![ActionPayload::Speak {
+                text: "bye".into(),
+            }],
+            enabled: false,
+            builtin: false,
+        };
+        let updated_row = updated_payload
+            .try_into_new_tool_definition()
+            .expect("valid update");
+        assert!(db::update_tool(&conn, id, &updated_row).expect("update"));
+        let after = db::get_tool_by_id(&conn, id).expect("get").expect("row");
+        assert!(!after.enabled);
+        assert_eq!(after.display_name, "Speak Updated");
+        assert!(db::delete_tool(&conn, id).expect("delete"));
+        assert!(db::get_tool_by_id(&conn, id).expect("get").is_none());
     }
 
     #[test]

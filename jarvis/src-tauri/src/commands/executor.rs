@@ -5,6 +5,7 @@ use crate::{
 };
 use log::debug;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,6 +18,21 @@ use tauri_plugin_opener::OpenerExt;
 pub const ACTION_STATUS_EVENT: &str = "action-status";
 pub const ACTION_ERROR_EVENT: &str = "action-error";
 const ACTION_CANCELLED_MSG: &str = "Action run cancelled";
+
+/// Optional tool-call argument map for `{{param_name}}` template substitution.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ToolCallContext {
+    pub args: HashMap<String, String>,
+}
+
+impl ToolCallContext {
+    #[allow(dead_code)]
+    pub fn from_args(args: &HashMap<String, String>) -> Self {
+        Self {
+            args: args.clone(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ActionStatus {
@@ -204,14 +220,24 @@ pub fn execute_command(
         node.name,
         node.actions.len()
     );
-    execute_actions(&node.actions, runtime, app_index);
+    execute_actions(&node.actions, runtime, app_index, None);
     debug!("executor: execute_command finished node_id={}", node.id);
+}
+
+#[allow(dead_code)]
+pub fn execute_resolved_actions(
+    actions: &[Action],
+    runtime: &impl ActionRuntime,
+    app_index: Option<&[AppEntry]>,
+) {
+    execute_actions(actions, runtime, app_index, None);
 }
 
 fn execute_actions(
     actions: &[Action],
     runtime: &impl ActionRuntime,
     app_index: Option<&[AppEntry]>,
+    tool_context: Option<&ToolCallContext>,
 ) {
     let mut follow_up_responses: Vec<String> = Vec::new();
     for action in actions {
@@ -219,7 +245,7 @@ fn execute_actions(
             runtime.emit_status(ACTION_CANCELLED_MSG);
             return;
         }
-        let resolved = resolve_action_templates(action, &follow_up_responses);
+        let resolved = resolve_action_templates(action, &follow_up_responses, tool_context);
         match execute_one_action(&resolved, runtime, app_index) {
             Ok(text) => runtime.emit_status(&text),
             Err(err) => {
@@ -319,13 +345,18 @@ fn execute_one_action(
     }
 }
 
-fn resolve_action_templates(action: &Action, follow_up_responses: &[String]) -> Action {
+pub fn resolve_action_templates(
+    action: &Action,
+    follow_up_responses: &[String],
+    tool_context: Option<&ToolCallContext>,
+) -> Action {
     let render = |input: &str| {
         let legacy = follow_up_responses
             .last()
             .map(|response| input.replace("{{follow_up}}", response))
             .unwrap_or_else(|| input.to_string());
-        replace_numbered_variables(&legacy, follow_up_responses)
+        let numbered = replace_numbered_variables(&legacy, follow_up_responses);
+        apply_tool_arg_templates(&numbered, tool_context)
     };
     match action {
         Action::OpenApp { name, path } => Action::OpenApp {
@@ -344,6 +375,18 @@ fn resolve_action_templates(action: &Action, follow_up_responses: &[String]) -> 
             prompt: render(prompt),
         },
     }
+}
+
+fn apply_tool_arg_templates(input: &str, tool_context: Option<&ToolCallContext>) -> String {
+    let Some(ctx) = tool_context else {
+        return input.to_string();
+    };
+    let mut out = input.to_string();
+    for (key, value) in &ctx.args {
+        let placeholder = format!("{{{{{key}}}}}");
+        out = out.replace(&placeholder, value);
+    }
+    out
 }
 
 fn replace_numbered_variables(input: &str, follow_up_responses: &[String]) -> String {
@@ -1065,6 +1108,29 @@ mod tests {
         assert!(s.statuses.iter().any(|status| status == "follow up"));
         assert!(s.statuses.iter().any(|status| status == "docs"));
         assert!(s.errors.is_empty());
+    }
+
+    #[test]
+    fn tool_arg_templates_substitute_param_placeholders() {
+        let ctx = ToolCallContext::from_args(&[(
+            "url".to_string(),
+            "https://example.com".to_string(),
+        )]
+        .into_iter()
+        .collect());
+        let resolved = resolve_action_templates(
+            &Action::OpenUrl {
+                url: "{{url}}".into(),
+            },
+            &[],
+            Some(&ctx),
+        );
+        assert_eq!(
+            resolved,
+            Action::OpenUrl {
+                url: "https://example.com".into()
+            }
+        );
     }
 
     #[test]

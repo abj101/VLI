@@ -1,10 +1,13 @@
+import path from "path";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildWindowsIsExecutableRunningScript,
   buildWindowsTerminateByExecutablePathScript,
   buildWingetInstallArgs,
   isWingetInstallSuccessStatus,
   prependWindowsPathEntries,
+  resolveJarvisDebugExecutablePath,
   shouldReleaseWindowsJarvisExeLockForSubcommand,
 } from "./whisper-gpu/launch.mjs";
 
@@ -42,6 +45,25 @@ describe("buildWindowsTerminateByExecutablePathScript", () => {
     expect(script).toContain("Get-CimInstance Win32_Process");
     expect(script).toContain("Stop-Process -Id $_.ProcessId -Force");
     expect(script).toContain("jarvis''s.exe");
+  });
+});
+
+describe("buildWindowsIsExecutableRunningScript", () => {
+  it("exits 0 when a matching jarvis.exe process exists", () => {
+    const script = buildWindowsIsExecutableRunningScript(
+      "C:\\repo\\jarvis\\src-tauri\\target\\debug\\jarvis.exe",
+    );
+    expect(script).toContain("Select-Object -First 1");
+    expect(script).toContain("if ($hit) { exit 0 } else { exit 1 }");
+    expect(script).toContain("jarvis.exe");
+  });
+});
+
+describe("resolveJarvisDebugExecutablePath", () => {
+  it("points at target/debug/jarvis(.exe)", () => {
+    const name = process.platform === "win32" ? "jarvis.exe" : "jarvis";
+    const p = resolveJarvisDebugExecutablePath("C:\\repo\\jarvis");
+    expect(p).toBe(path.join("C:\\repo\\jarvis", "src-tauri", "target", "debug", name));
   });
 });
 

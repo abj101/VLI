@@ -228,7 +228,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let s = crate::db::AppSettings {
             wake_engine: "hotkey".into(),
-            oww_threshold: 0.5,
+            oww_threshold: crate::db::settings::DEFAULT_OWW_THRESHOLD,
             stt_provider: "local".into(),
             remote_stt_url: String::new(),
             remote_stt_model: None,

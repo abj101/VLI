@@ -1,21 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { invoke } from "@tauri-apps/api/core";
 import {
   applyEditorThemeToDocument,
-  hotkeyChordMatchesKeyboardEvent,
+  applyHudTransparencyToDocument,
+  HUD_TRANSPARENCY_DEFAULT,
   normalizeThemePreference,
+  parseHudTransparencySettingValue,
 } from "./components/editor/SettingsPanel.logic";
 import { HudPanel } from "./components/hud/HudPanel";
 import { subscribeHudIpc } from "./store/hudIpc";
 import "./App.css";
 
 export default function App() {
-  const [dismissHotkeyChord, setDismissHotkeyChord] = useState("escape");
-  const dismissChordRef = useRef("escape");
-  dismissChordRef.current = dismissHotkeyChord;
-
   /** WebView2 on Win: alpha≠0 in host `backgroundColor` → opaque backing → ghost when DOM fades. */
   useEffect(() => {
     void getCurrentWebview()
@@ -25,14 +23,20 @@ export default function App() {
 
   useEffect(() => {
     let mounted = true;
-    void invoke<string | null>("get_setting", { key: "theme" })
-      .then((savedTheme) => {
+    void Promise.all([
+      invoke<string | null>("get_setting", { key: "theme" }),
+      invoke<string | null>("get_setting", { key: "hud_transparency" }),
+    ])
+      .then(([savedTheme, savedTransparency]) => {
         if (!mounted) return;
-        applyEditorThemeToDocument(normalizeThemePreference(savedTheme));
+        const pref = normalizeThemePreference(savedTheme);
+        applyEditorThemeToDocument(pref);
+        applyHudTransparencyToDocument(parseHudTransparencySettingValue(savedTransparency), pref);
       })
       .catch(() => {
         if (!mounted) return;
         applyEditorThemeToDocument("system");
+        applyHudTransparencyToDocument(HUD_TRANSPARENCY_DEFAULT, "system");
       });
     return () => {
       mounted = false;
@@ -53,15 +57,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let unlistenTheme: (() => void) | undefined;
+    let unlistenTransparency: (() => void) | undefined;
     void listen<{ preference?: string }>("theme-preference-changed", (e) => {
-      const raw = e.payload.preference;
-      applyEditorThemeToDocument(normalizeThemePreference(raw ?? null));
+      const pref = normalizeThemePreference(e.payload.preference ?? null);
+      applyEditorThemeToDocument(pref);
+      void invoke<string | null>("get_setting", { key: "hud_transparency" }).then((raw) => {
+        applyHudTransparencyToDocument(parseHudTransparencySettingValue(raw), pref);
+      });
     }).then((u) => {
-      unlisten = u;
+      unlistenTheme = u;
+    });
+    void listen<{ transparency?: string }>("hud-transparency-changed", (e) => {
+      applyHudTransparencyToDocument(parseHudTransparencySettingValue(e.payload.transparency ?? null));
+    }).then((u) => {
+      unlistenTransparency = u;
     });
     return () => {
-      unlisten?.();
+      unlistenTheme?.();
+      unlistenTransparency?.();
     };
   }, []);
 
@@ -75,41 +89,5 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    let mounted = true;
-    void invoke<string | null>("get_setting", { key: "dismiss_hotkey" })
-      .then((raw) => {
-        if (!mounted || !raw?.trim()) return;
-        setDismissHotkeyChord(raw.trim());
-      })
-      .catch(() => {});
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void listen<{ hotkey?: string }>("dismiss-hotkey-changed", (e) => {
-      const raw = e.payload.hotkey;
-      if (raw?.trim()) setDismissHotkeyChord(raw.trim());
-    }).then((u) => {
-      unlisten = u;
-    });
-    return () => {
-      unlisten?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!hotkeyChordMatchesKeyboardEvent(dismissChordRef.current, e)) return;
-      e.preventDefault();
-      void invoke("hud_dismiss").catch(() => {});
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  return <HudPanel dismissHotkeyChord={dismissHotkeyChord} />;
+  return <HudPanel />;
 }

@@ -5,8 +5,9 @@ import { formatUserError } from "../../utils/userErrors";
 import { useEditorStore } from "../../store/editorStore";
 import type { CommandNodePayload } from "../../types";
 import { CommandDraftRow, CommandFormulaRow } from "./CommandFormulaRow";
+import { EditorPlusIcon } from "./EditorPlusIcon";
 import { commandNodeSearchHaystack } from "./formulaRow.logic";
-import { getPrimaryTriggerPhrase, withEnabledValue } from "./NodeList.logic";
+import { withEnabledValue } from "./NodeList.logic";
 
 export function CommandsTab() {
   const nodes = useEditorStore((s) => s.nodes);
@@ -83,9 +84,6 @@ export function CommandsTab() {
   };
 
   const onDelete = (id: number) => {
-    const node = useEditorStore.getState().nodes.find((e) => e.id === id);
-    if (!node) return;
-    if (!window.confirm(`Delete "${getPrimaryTriggerPhrase(node)}"?`)) return;
     void invoke<boolean>("delete_command", { id })
       .then((deleted) => {
         if (deleted) {
@@ -127,16 +125,39 @@ export function CommandsTab() {
       )}
 
       {nodes.length === 0 && !showDraft ? (
-        <div className="editor-empty-state editor-commands-empty">
-          <p>No commands yet.</p>
-          <button
-            type="button"
-            className="editor-empty-add"
-            onClick={() => setShowDraft(true)}
-            aria-label="Add command"
-          >
-            +
-          </button>
+        <div className="editor-commands-empty" role="status">
+          <div className="editor-commands-empty-panel">
+            <div className="editor-commands-empty-stack">
+              <div className="editor-commands-empty-copy">
+                <h2 className="editor-commands-empty-title">No commands yet</h2>
+                <p className="editor-commands-empty-lead">
+                  Link a trigger phrase to actions you can run by voice.
+                </p>
+                <button
+                  type="button"
+                  className="editor-formula-plus editor-formula-plus--labeled"
+                  onClick={() => setShowDraft(true)}
+                >
+                  <span className="editor-formula-plus-icon" aria-hidden>
+                    <EditorPlusIcon className="editor-formula-plus-icon-svg" />
+                  </span>
+                  Add Command
+                </button>
+              </div>
+              <div className="editor-commands-empty-sample" aria-hidden>
+                <p className="editor-commands-empty-sample-label">Example</p>
+                <div className="editor-commands-empty-formula">
+                  <span className="editor-commands-empty-chip editor-commands-empty-chip--phrase">
+                    open browser
+                  </span>
+                  <span className="editor-formula-eq">=</span>
+                  <span className="editor-commands-empty-chip editor-commands-empty-chip--action">
+                    Open URL
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       ) : (
         <>

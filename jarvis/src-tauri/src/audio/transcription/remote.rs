@@ -165,7 +165,7 @@ fn remote_stt_loop(
                 // Never log bearer token or raw HTTP bodies.
                 debug!("remote STT inference error (session {hud_session_id}): {e}");
                 consecutive_errors = consecutive_errors.saturating_add(1);
-                if consecutive_errors == 1 || consecutive_errors % 5 == 0 {
+                if consecutive_errors == 1 || consecutive_errors.is_multiple_of(5) {
                     let _ = app.emit("audio-error", serde_json::json!({ "message": e }));
                 }
                 if consecutive_errors >= 3 {

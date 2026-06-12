@@ -3,6 +3,8 @@
  * Winget helpers remain for tests; SDK install is manual (see jarvis/README.md).
  */
 
+import path from "path";
+
 export function buildWingetInstallArgs(packageId, opts = {}) {
   const { disableInteractivity = false } = opts;
   const a = [
@@ -58,5 +60,22 @@ export function buildWindowsTerminateByExecutablePathScript(exePath) {
     "  Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -ieq $target) } |",
     "  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $killed += 1 }",
     "Write-Output $killed",
+  ].join("; ");
+}
+
+/** Debug `jarvis` / `jarvis.exe` produced by `tauri dev`. */
+export function resolveJarvisDebugExecutablePath(jarvisRoot) {
+  const name = process.platform === "win32" ? "jarvis.exe" : "jarvis";
+  return path.join(jarvisRoot, "src-tauri", "target", "debug", name);
+}
+
+export function buildWindowsIsExecutableRunningScript(exePath) {
+  const target = String(exePath).replace(/'/g, "''");
+  return [
+    `$target = '${target}'`,
+    "$hit = Get-CimInstance Win32_Process -Filter \"Name = 'jarvis.exe'\" |",
+    "  Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -ieq $target) } |",
+    "  Select-Object -First 1",
+    "if ($hit) { exit 0 } else { exit 1 }",
   ].join("; ");
 }

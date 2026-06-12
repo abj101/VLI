@@ -9,7 +9,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useState } from "react";
 import {
   applyEditorThemeToDocument,
+  applyEditorTransparencyToDocument,
+  EDITOR_TRANSPARENCY_DEFAULT,
   normalizeThemePreference,
+  parseEditorTransparencySettingValue,
 } from "./components/editor/SettingsPanel.logic";
 import { useSettingsStore } from "./store/settingsStore";
 
@@ -114,18 +117,48 @@ export default function EditorRoot() {
 
   useEffect(() => {
     let mounted = true;
-    void invoke<string | null>("get_setting", { key: "theme" })
-      .then((savedTheme) => {
+    void Promise.all([
+      invoke<string | null>("get_setting", { key: "theme" }),
+      invoke<string | null>("get_setting", { key: "editor_transparency" }),
+    ])
+      .then(([savedTheme, savedTransparency]) => {
         if (!mounted) return;
         const pref = normalizeThemePreference(savedTheme);
         applyEditorThemeToDocument(pref);
+        applyEditorTransparencyToDocument(parseEditorTransparencySettingValue(savedTransparency), pref);
       })
       .catch(() => {
         if (!mounted) return;
         applyEditorThemeToDocument("system");
+        applyEditorTransparencyToDocument(EDITOR_TRANSPARENCY_DEFAULT, "system");
       });
     return () => {
       mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlistenTheme: (() => void) | undefined;
+    let unlistenTransparency: (() => void) | undefined;
+    void listen<{ preference?: string }>("theme-preference-changed", (e) => {
+      const pref = normalizeThemePreference(e.payload.preference ?? null);
+      applyEditorThemeToDocument(pref);
+      void invoke<string | null>("get_setting", { key: "editor_transparency" }).then((raw) => {
+        applyEditorTransparencyToDocument(parseEditorTransparencySettingValue(raw), pref);
+      });
+    }).then((u) => {
+      unlistenTheme = u;
+    });
+    void listen<{ transparency?: string }>("editor-transparency-changed", (e) => {
+      applyEditorTransparencyToDocument(
+        parseEditorTransparencySettingValue(e.payload.transparency ?? null),
+      );
+    }).then((u) => {
+      unlistenTransparency = u;
+    });
+    return () => {
+      unlistenTheme?.();
+      unlistenTransparency?.();
     };
   }, []);
 
@@ -157,7 +190,7 @@ export default function EditorRoot() {
 
   return (
     <main className="editor-app">
-      <div className="editor-app-shell editor-glass-panel">
+      <div className="editor-app-shell">
         <header className="editor-window-chrome" aria-label="Window">
           <div className="editor-window-chrome-title" data-tauri-drag-region>
             <span className="editor-window-title">VLI</span>

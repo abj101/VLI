@@ -122,7 +122,7 @@ function CenterContent({
   }
 }
 
-function HudShell({ dismissHotkeyChord }: { dismissHotkeyChord: string }) {
+function HudShell() {
   const reduceMotion = useReducedMotion();
   const shellRef = useRef<HTMLDivElement>(null);
   const centerInput = useHudCenterInput();
@@ -150,8 +150,8 @@ function HudShell({ dismissHotkeyChord }: { dismissHotkeyChord: string }) {
 
   /**
    * Backdrop-filter / inset shadows can outlast opacity on WebView2. Strip those layers as soon as
-   * the session leaves *any* overlay phase — `done` dismissals never hit `stopped` on the HUD
-   * window until later (auto-dismiss), so gating on `stopped` alone left a rim fading on its own.
+   * the session leaves overlay phases — `executing` / `done` dismiss before `stopped`, so gating on
+   * `stopped` alone left a rim fading on its own.
    */
   useLayoutEffect(() => {
     if (isHudOverlayShellActive(phase)) return;
@@ -182,7 +182,6 @@ function HudShell({ dismissHotkeyChord }: { dismissHotkeyChord: string }) {
       ref={shellRef}
       className="hud-root"
       role="region"
-      aria-keyshortcuts={dismissHotkeyChord.trim() || "escape"}
       {...(phaseLabel
         ? { "aria-labelledby": "hud-phase-label" }
         : { "aria-label": "Voice session" })}
@@ -220,22 +219,22 @@ function HudShell({ dismissHotkeyChord }: { dismissHotkeyChord: string }) {
 }
 
 /** Fade / pulse wrapper: only mount animated shell while HUD session is active. */
-function HudBody({ dismissHotkeyChord }: { dismissHotkeyChord: string }) {
+function HudBody() {
   const phase = useHudStore((s) => s.phase);
   const active = isHudOverlayShellActive(phase);
 
   // `schedule_hud_window_hide_when_still_dismissed` in Rust delays native hide until exit finishes.
   return (
     <AnimatePresence>
-      {active ? <HudShell key="shell" dismissHotkeyChord={dismissHotkeyChord} /> : null}
+      {active ? <HudShell key="shell" /> : null}
     </AnimatePresence>
   );
 }
 
-export function HudPanel({ dismissHotkeyChord = "escape" }: { dismissHotkeyChord?: string }) {
+export function HudPanel() {
   return (
     <div className="hud-panel-fill">
-      <HudBody dismissHotkeyChord={dismissHotkeyChord} />
+      <HudBody />
     </div>
   );
 }

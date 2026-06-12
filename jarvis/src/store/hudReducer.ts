@@ -76,6 +76,9 @@ export function reduceHudState(
   switch (topic) {
     case "hud-phase": {
       const { phase, session_id: sessionId } = payload as HudPhasePayload;
+      if (sessionId != null && sessionId < state.sessionId) {
+        return state;
+      }
       const next: HudState = {
         ...state,
         phase,
@@ -95,6 +98,18 @@ export function reduceHudState(
         next.match = null;
         next.transcript = "";
         next.transcriptFinal = false;
+      }
+      if (
+        phase === "executing" ||
+        phase === "done" ||
+        phase === "stopped"
+      ) {
+        next.match = null;
+        next.actionText = null;
+        next.actionError = null;
+        next.transcript = "";
+        next.transcriptFinal = false;
+        next.amplitude = 0;
       }
       return next;
     }

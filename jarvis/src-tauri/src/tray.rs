@@ -15,12 +15,10 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter};
 
-pub(crate) const OPEN_EDITOR_MENU_ID: &str = "open-editor";
 pub(crate) const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
 pub(crate) const PAUSE_TOGGLE_MENU_ID: &str = "pause-toggle";
 pub(crate) const QUIT_MENU_ID: &str = "quit";
-pub(crate) const TRAY_MENU_ITEM_ORDER: [&str; 4] = [
-    OPEN_EDITOR_MENU_ID,
+pub(crate) const TRAY_MENU_ITEM_ORDER: [&str; 3] = [
     OPEN_SETTINGS_MENU_ID,
     PAUSE_TOGGLE_MENU_ID,
     QUIT_MENU_ID,
@@ -37,22 +35,12 @@ pub fn setup_tray(
     is_paused: Arc<AtomicBool>,
     audio: SharedAudioPipeline,
 ) -> tauri::Result<()> {
-    let [open_editor_id, open_settings_id, pause_toggle_id, quit_id] = TRAY_MENU_ITEM_ORDER;
-    let open_editor_item =
-        MenuItem::with_id(app, open_editor_id, "Open Editor", true, None::<&str>)?;
+    let [open_settings_id, pause_toggle_id, quit_id] = TRAY_MENU_ITEM_ORDER;
     let open_settings_item =
         MenuItem::with_id(app, open_settings_id, "Settings", true, None::<&str>)?;
     let pause_item = MenuItem::with_id(app, pause_toggle_id, "Pause", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, quit_id, "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(
-        app,
-        &[
-            &open_editor_item,
-            &open_settings_item,
-            &pause_item,
-            &quit_item,
-        ],
-    )?;
+    let menu = Menu::with_items(app, &[&open_settings_item, &pause_item, &quit_item])?;
 
     let pause_item_for_menu = pause_item.clone();
     let is_paused_for_menu = Arc::clone(&is_paused);
@@ -67,11 +55,6 @@ pub fn setup_tray(
         .icon(icon)
         .menu(&menu)
         .on_menu_event(move |app, event| match event.id.as_ref() {
-            OPEN_EDITOR_MENU_ID => {
-                if let Err(err) = open_or_create_editor_window(app) {
-                    warn!("tray open editor failed: {err}");
-                }
-            }
             OPEN_SETTINGS_MENU_ID => {
                 if let Err(err) = open_or_create_editor_window(app) {
                     warn!("tray open settings failed: {err}");
@@ -106,10 +89,10 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     #[test]
-    fn tray_menu_puts_open_editor_settings_pause_quit() {
+    fn tray_menu_puts_settings_pause_quit() {
         assert_eq!(
             TRAY_MENU_ITEM_ORDER,
-            ["open-editor", "open-settings", "pause-toggle", "quit"]
+            ["open-settings", "pause-toggle", "quit"]
         );
     }
 

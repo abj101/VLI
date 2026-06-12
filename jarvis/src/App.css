@@ -34,7 +34,7 @@ body,
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  --hud-window-bg: oklch(0.1 0 0);
+  --hud-window-bg: oklch(0.2 0.009 72);
   --hud-material-alpha: var(--material-hud-alpha);
   --hud-material-blur: var(--material-hud-blur);
   --hud-material-saturate: var(--material-hud-saturate);
@@ -102,8 +102,14 @@ body,
   --hud-match-text: var(--glass-text-muted);
 }
 
+html[data-theme="dark"] {
+  --app-scrollbar-thumb: color-mix(in oklch, var(--color-text-secondary) 44%, transparent);
+  --app-scrollbar-thumb-hover: color-mix(in oklch, var(--color-text-secondary) 58%, transparent);
+  --app-scrollbar-thumb-active: color-mix(in oklch, var(--color-text-secondary) 70%, transparent);
+}
+
 html[data-theme="light"] {
-  --hud-window-bg: oklch(0.99 0 0);
+  --hud-window-bg: oklch(0.988 0.01 82);
 }
 
 html[data-theme="light"] .hud-panel-fill {

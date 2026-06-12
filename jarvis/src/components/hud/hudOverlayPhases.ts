@@ -3,14 +3,12 @@ import type { HudPhase } from "../../types";
 /**
  * Phases that mount the glass HUD shell (`HudShell`).
  *
- * `done` is excluded: the backend still uses it for click-through + auto-dismiss,
- * but the React shell unmounts immediately so an empty frosted panel does not linger
- * until the window hides.
+ * `matched` / `executing` are excluded: the overlay dismisses as soon as a command runs.
+ * `done` is excluded: click-through + auto-dismiss hide the native window afterward.
+ * `awaiting_input` stays so follow-up prompts can show the shell again.
  */
 export const HUD_OVERLAY_SHELL_PHASES: readonly HudPhase[] = [
   "listening",
-  "matched",
-  "executing",
   "awaiting_input",
 ] as const;
 

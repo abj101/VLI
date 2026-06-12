@@ -41,7 +41,7 @@ use winreg::RegKey;
 // ---------------------------------------------------------------------------
 // Source priority: lower number wins when merging display names.
 // ---------------------------------------------------------------------------
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum SourcePriority {
     Uninstall = 0, // richest human-readable name
     StartMenu = 1,
@@ -123,6 +123,8 @@ pub fn scan() -> Result<Vec<AppEntry>, String> {
     stats.push(("start_menu", map.len().saturating_sub(before)));
 
     log_scan_stats(&stats, map.len());
+
+    dedupe_by_display_name(&mut map);
 
     Ok(map.into_values().map(|e| e.inner).collect())
 }
@@ -264,6 +266,64 @@ fn reg_subkey_default(sub: &RegKey) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Uninstall registry — noise filters (mirrors "Programs and Features" hiding)
+// ---------------------------------------------------------------------------
+
+/// `true` when a DisplayName looks like a runtime/patch/component, not a user app.
+fn uninstall_display_name_denied(display_name: &str) -> bool {
+    let dn = display_name.to_lowercase();
+    const DENY: &[&str] = &[
+        "microsoft visual c++",
+        "redistributable",
+        "windows sdk",
+        "update for",
+        "security update",
+        "hotfix for",
+        "service pack",
+        "microsoft .net",
+        "microsoft edge webview",
+        "windows desktop runtime",
+        "windows driver package",
+        "nvidia graphics driver",
+        "intel(r) graphics",
+        "amd software",
+    ];
+    if DENY.iter().any(|p| dn.contains(p)) {
+        return true;
+    }
+    if dn.contains("(kb") {
+        return true;
+    }
+    false
+}
+
+fn uninstall_release_type_denied(release_type: &str) -> bool {
+    matches!(
+        release_type.trim().to_lowercase().as_str(),
+        "update" | "hotfix" | "security update" | "service pack" | "rollup"
+    )
+}
+
+/// Filesystem `.exe` paths must pass [`install_dir_skipped_stem`]; launch URIs pass through.
+fn exe_stem_indexable(path: &str) -> bool {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if is_non_filesystem_lnk_target(trimmed) {
+        return true;
+    }
+    let p = Path::new(trimmed);
+    if !p.is_file() {
+        return false;
+    }
+    match p.file_stem().and_then(|s| s.to_str()) {
+        Some(stem) => !install_dir_skipped_stem(stem),
+        None => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Uninstall registry scan
 // ---------------------------------------------------------------------------
 fn scan_uninstall_registry(map: &mut HashMap<String, MapEntry>) {
@@ -303,6 +363,10 @@ fn scan_uninstall_registry(map: &mut HashMap<String, MapEntry>) {
                 Err(_) => continue,
             };
 
+            if uninstall_display_name_denied(&display_name) {
+                continue;
+            }
+
             // Skip purely system components and patches
             if let Ok(sys) = sub.get_value::<String, _>("SystemComponent") {
                 if sys.trim() == "1" {
@@ -314,6 +378,21 @@ fn scan_uninstall_registry(map: &mut HashMap<String, MapEntry>) {
                     continue;
                 }
             }
+            if let Ok(nd) = sub.get_value::<u32, _>("NoDisplay") {
+                if nd == 1 {
+                    continue;
+                }
+            }
+            if let Ok(nd) = sub.get_value::<String, _>("NoDisplay") {
+                if nd.trim() == "1" {
+                    continue;
+                }
+            }
+            if let Ok(rt) = sub.get_value::<String, _>("ReleaseType") {
+                if uninstall_release_type_denied(&rt) {
+                    continue;
+                }
+            }
 
             let install_loc: Option<String> = sub
                 .get_value::<String, _>("InstallLocation")
@@ -321,7 +400,7 @@ fn scan_uninstall_registry(map: &mut HashMap<String, MapEntry>) {
                 .map(|s| clean_path_str(&s))
                 .filter(|s| !s.is_empty());
 
-            // Resolve exe via: DisplayIcon → guessed name.exe → install_dir_primary_exe
+            // Resolve exe via: DisplayIcon → guessed name.exe → find_game_exe_in_tree
             let exe = sub
                 .get_value::<String, _>("DisplayIcon")
                 .ok()
@@ -332,14 +411,17 @@ fn scan_uninstall_registry(map: &mut HashMap<String, MapEntry>) {
                         .and_then(|loc| install_location_guess(&display_name, loc))
                 })
                 .or_else(|| {
-                    install_loc
-                        .as_deref()
-                        .and_then(|loc| install_dir_primary_exe(loc, &display_name))
+                    install_loc.as_deref().and_then(|loc| {
+                        find_game_exe_in_tree(Path::new(loc), &display_name, 3)
+                    })
                 });
 
             let Some(exe_path) = exe else { continue };
             let exe_path = exe_path.trim().to_string();
             if exe_path.is_empty() || !Path::new(&exe_path).exists() {
+                continue;
+            }
+            if !exe_stem_indexable(&exe_path) {
                 continue;
             }
             insert_entry(
@@ -404,6 +486,13 @@ fn scan_app_paths_registry(map: &mut HashMap<String, MapEntry>) {
                 continue;
             }
             if !path.exists() {
+                continue;
+            }
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if install_dir_skipped_stem(stem) {
                 continue;
             }
             let exe_norm = std::fs::canonicalize(path)
@@ -609,6 +698,7 @@ fn is_skippable_subdir(name_lower: &str) -> bool {
 /// BUG FIX #2: Previously dropped every exe whose stem wasn't in the display
 /// name, then only fell back to single-exe case. Now we keep a secondary
 /// "any non-skipped exe" bucket so multi-exe dirs still resolve.
+#[allow(dead_code)]
 fn install_dir_primary_exe(install_loc: &str, display_name: &str) -> Option<String> {
     let dir = Path::new(install_loc.trim());
     if !dir.is_dir() {
@@ -2053,6 +2143,91 @@ fn scan_program_files_recursive(map: &mut HashMap<String, MapEntry>) {
     }
 }
 
+/// `true` when a higher-priority source already indexed an exe under this install tree.
+fn install_dir_already_indexed(map: &HashMap<String, MapEntry>, app_dir: &Path) -> bool {
+    let dir = app_dir
+        .canonicalize()
+        .unwrap_or_else(|_| app_dir.to_path_buf());
+    map.values().any(|e| {
+        if e.priority >= SourcePriority::ExeScan {
+            return false;
+        }
+        if is_non_filesystem_lnk_target(&e.inner.exe_path) {
+            return false;
+        }
+        let exe_path = Path::new(&e.inner.exe_path);
+        let parent = match exe_path
+            .canonicalize()
+            .unwrap_or_else(|_| exe_path.to_path_buf())
+            .parent()
+        {
+            Some(p) => p.to_path_buf(),
+            None => return false,
+        };
+        parent.starts_with(&dir) || dir.starts_with(&parent)
+    })
+}
+
+fn normalize_display_name_for_dedupe(name: &str) -> String {
+    let mut s = name.to_lowercase();
+    for marker in ["(tm)", "(r)", "™", "®"] {
+        s = s.replace(marker, "");
+    }
+    let s = s.trim().to_string();
+    if let Some(idx) = s.rfind(' ') {
+        let tail = &s[idx + 1..];
+        let looks_like_version = !tail.is_empty()
+            && tail.chars().any(|c| c.is_ascii_digit())
+            && tail
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '.' || c == '-');
+        if looks_like_version {
+            return s[..idx].trim().to_string();
+        }
+    }
+    s
+}
+
+fn path_dedupe_score(path: &str) -> i64 {
+    let lower = path.to_lowercase();
+    if lower.contains("program files") || lower.contains("localappdata") {
+        100
+    } else if lower.contains("system32") || lower.contains("\\windows\\") {
+        0
+    } else {
+        50
+    }
+}
+
+/// Collapse multiple exe paths that share a normalized display name; keep best source.
+fn dedupe_by_display_name(map: &mut HashMap<String, MapEntry>) {
+    let entries: Vec<(String, MapEntry)> = map.drain().collect();
+    let mut groups: HashMap<String, Vec<(String, MapEntry)>> = HashMap::new();
+    for (key, entry) in entries {
+        let norm = normalize_display_name_for_dedupe(&entry.inner.display_name);
+        if norm.is_empty() {
+            groups
+                .entry(format!("__empty__:{key}"))
+                .or_default()
+                .push((key, entry));
+            continue;
+        }
+        groups.entry(norm).or_default().push((key, entry));
+    }
+    for group in groups.into_values() {
+        let best = group.into_iter().min_by(|(_, a), (_, b)| {
+            match a.priority.cmp(&b.priority) {
+                std::cmp::Ordering::Equal => path_dedupe_score(&b.inner.exe_path)
+                    .cmp(&path_dedupe_score(&a.inner.exe_path)),
+                other => other,
+            }
+        });
+        if let Some((key, entry)) = best {
+            map.insert(key, entry);
+        }
+    }
+}
+
 fn scan_install_dirs_shallow(root: &Path, map: &mut HashMap<String, MapEntry>) {
     if !root.is_dir() {
         return;
@@ -2123,6 +2298,9 @@ fn try_insert_best_exe(
     max_depth: usize,
     map: &mut HashMap<String, MapEntry>,
 ) {
+    if install_dir_already_indexed(map, app_dir) {
+        return;
+    }
     let Some(exe) = find_game_exe_in_tree(app_dir, display_name, max_depth) else {
         return;
     };
@@ -2939,6 +3117,123 @@ foreach ($a in Get-StartApps) {
         assert!(
             hit,
             "expected at least one exe under LocalAppData\\Programs in index"
+        );
+    }
+
+    #[test]
+    fn uninstall_display_name_denied_blocks_redists_and_patches() {
+        assert!(uninstall_display_name_denied(
+            "Microsoft Visual C++ 2015-2022 Redistributable (x64)"
+        ));
+        assert!(uninstall_display_name_denied(
+            "Security Update for Windows (KB5034123)"
+        ));
+        assert!(!uninstall_display_name_denied("Discord"));
+        assert!(!uninstall_display_name_denied("UpdateManager"));
+    }
+
+    #[test]
+    fn uninstall_release_type_denied_blocks_updates() {
+        assert!(uninstall_release_type_denied("Update"));
+        assert!(uninstall_release_type_denied("Security Update"));
+        assert!(!uninstall_release_type_denied("Version"));
+    }
+
+    #[test]
+    fn exe_stem_indexable_blocks_helpers_allows_apps() {
+        let dir = tempfile::tempdir().unwrap();
+        let node = dir.path().join("node.exe");
+        touch_file(&node);
+        assert!(!exe_stem_indexable(node.to_str().unwrap()));
+
+        let firefox = dir.path().join("firefox.exe");
+        touch_file(&firefox);
+        assert!(exe_stem_indexable(firefox.to_str().unwrap()));
+    }
+
+    #[test]
+    fn uninstall_style_install_dir_picks_primary_exe() {
+        let root = tempfile::tempdir().unwrap();
+        touch_file(&root.path().join("MyApp.exe"));
+        touch_file(&root.path().join("CrashHandler.exe"));
+        touch_file(&root.path().join("Update.exe"));
+        let hit = find_game_exe_in_tree(root.path(), "MyApp", 3).unwrap();
+        assert!(
+            hit.to_lowercase().ends_with("myapp.exe"),
+            "got {hit}"
+        );
+    }
+
+    #[test]
+    fn app_paths_stem_filter_blocks_helpers() {
+        assert!(install_dir_skipped_stem("node"));
+        assert!(install_dir_skipped_stem("ffmpeg"));
+        assert!(!install_dir_skipped_stem("firefox"));
+    }
+
+    #[test]
+    fn exe_scan_gap_fill_only_skips_already_indexed_dir() {
+        let root = tempfile::tempdir().unwrap();
+        let discord = root.path().join("Discord");
+        let app_exe = discord.join("Discord.exe");
+        touch_file(&app_exe);
+        touch_file(&discord.join("Update.exe"));
+
+        let exe_str = app_exe.to_string_lossy().to_string();
+        let mut map: HashMap<String, MapEntry> = HashMap::new();
+        insert_entry(
+            &mut map,
+            exe_str,
+            "Discord".into(),
+            None,
+            SourcePriority::Uninstall,
+        );
+
+        try_insert_best_exe(&discord, "Discord", 1, &mut map);
+        assert_eq!(map.len(), 1);
+        assert_eq!(
+            map.values().next().unwrap().priority,
+            SourcePriority::Uninstall
+        );
+    }
+
+    #[test]
+    fn dedupe_by_display_name_keeps_best_source() {
+        let mut map: HashMap<String, MapEntry> = HashMap::new();
+        insert_entry(
+            &mut map,
+            r"C:\Apps\chrome1.exe".into(),
+            "Google Chrome".into(),
+            None,
+            SourcePriority::ExeScan,
+        );
+        insert_entry(
+            &mut map,
+            r"C:\Apps\chrome2.exe".into(),
+            "Google Chrome".into(),
+            None,
+            SourcePriority::Uninstall,
+        );
+        insert_entry(
+            &mut map,
+            r"C:\Apps\chrome3.exe".into(),
+            "Google Chrome".into(),
+            None,
+            SourcePriority::AppPaths,
+        );
+        dedupe_by_display_name(&mut map);
+        assert_eq!(map.len(), 1);
+        assert_eq!(
+            map.values().next().unwrap().priority,
+            SourcePriority::Uninstall
+        );
+    }
+
+    #[test]
+    fn normalize_display_name_for_dedupe_strips_version_suffix() {
+        assert_eq!(
+            normalize_display_name_for_dedupe("Google Chrome 120.0.6099.130"),
+            "google chrome"
         );
     }
 

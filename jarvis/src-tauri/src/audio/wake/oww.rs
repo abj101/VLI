@@ -27,7 +27,7 @@ fn ort_map(e: ort::Error) -> WakeError {
     WakeError::Process(format!("{e}"))
 }
 
-/// ONNX + streaming preprocessor for OpenWakeWord (hey_jarvis). Threshold matches upstream `predict` (default 0.5 in settings).
+/// ONNX + streaming preprocessor for OpenWakeWord (hey_jarvis). Threshold matches upstream `predict` (default 0.7 in settings).
 pub struct OpenWakeWordBackend {
     melspec: Session,
     embedding: Session,
@@ -259,7 +259,7 @@ fn embedding_predict(
 }
 
 impl OpenWakeWordBackend {
-    /// Loads ONNX models from `resource_dir/oww/`. `threshold` is compared to the classifier score (settings default 0.5).
+    /// Loads ONNX models from `resource_dir/oww/`. `threshold` is compared to the classifier score (settings default 0.7).
     pub fn try_new(resource_dir: &Path, threshold: f32) -> Result<Self, WakeError> {
         let dir = resource_dir.join("oww");
         let melspec_path = dir.join(MELSPEC_ONNX);

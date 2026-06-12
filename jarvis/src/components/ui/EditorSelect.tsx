@@ -23,6 +23,8 @@ export type EditorSelectProps = {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  /** Id of external label element (do not wrap trigger in `<label htmlFor>`). */
+  labelledBy?: string;
 };
 
 type MenuPos = { top: number; left: number; width: number; maxHeight: number };
@@ -35,6 +37,7 @@ export function EditorSelect({
   placeholder = "Select…",
   disabled,
   className,
+  labelledBy,
 }: EditorSelectProps) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<MenuPos | null>(null);
@@ -57,7 +60,9 @@ export function EditorSelect({
     const gap = 4;
     const top = r.bottom + gap;
     const maxHeight = Math.max(120, Math.min(320, window.innerHeight - top - margin));
-    const width = Math.min(r.width, window.innerWidth - margin * 2);
+    const rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    const minWidth = rootPx * 11; /* sync with --editor-dropdown-min-width */
+    const width = Math.min(Math.max(r.width, minWidth), window.innerWidth - margin * 2);
     const left = Math.min(Math.max(margin, r.left), window.innerWidth - margin - width);
     setPos({ top, left, width, maxHeight });
   }, []);
@@ -159,8 +164,8 @@ export function EditorSelect({
     setOpen((o) => !o);
   };
 
-  const displayText = selectedLabel ?? placeholder;
-  const showPlaceholder = !selectedLabel;
+  const showPlaceholder = !selectedLabel && !open;
+  const displayText = selectedLabel ?? (open ? "" : placeholder);
 
   return (
     <div className={`editor-select-wrap${className ? ` ${className}` : ""}`}>
@@ -173,6 +178,7 @@ export function EditorSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={`${id}-listbox`}
+        aria-labelledby={labelledBy}
         onClick={toggle}
         onKeyDown={(e: ReactKeyEvent) => {
           if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {

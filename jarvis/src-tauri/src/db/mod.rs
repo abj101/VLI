@@ -2,10 +2,16 @@
 
 mod app_index;
 mod models;
-mod settings;
+pub mod settings;
+mod tools;
 
 pub use app_index::{load_app_index, replace_app_index};
-pub use models::{Action, CommandNode, NewCommandNode};
+pub use models::{
+    Action, CommandNode, NewCommandNode, NewToolDefinition, ToolDefinition, ToolParameter,
+};
+pub use tools::{
+    delete_tool, get_all_tools, get_tool_by_id, get_tool_by_name, insert_tool, update_tool,
+};
 pub use settings::{
     apply_settings_patch, get_app_settings, get_setting, set_key_stored_flag, set_setting,
     AppSettings, SettingsPatch,
@@ -49,6 +55,7 @@ pub fn init_db(path: &Path) -> Result<(), DbError> {
     ensure_fuzzy_threshold_column(&conn)?;
     ensure_sort_order_column(&conn)?;
     app_index::ensure_app_index_schema(&conn)?;
+    tools::ensure_tools_schema(&conn)?;
     drop_legacy_ai_command_columns(&conn)?;
     purge_legacy_shipped_sample_commands(&conn)?;
     settings::prune_legacy_settings(&conn)?;

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub const SETTING_WAKE_ENGINE: &str = "wake_engine";
 pub const SETTING_OWW_THRESHOLD: &str = "oww_threshold";
+pub const DEFAULT_OWW_THRESHOLD: f32 = 0.7;
 pub const SETTING_STT_PROVIDER: &str = "stt_provider";
 pub const SETTING_REMOTE_STT_URL: &str = "remote_stt_url";
 pub const SETTING_REMOTE_STT_MODEL: &str = "remote_stt_model";
@@ -65,7 +66,7 @@ fn parse_wake_engine(raw: Option<String>) -> String {
 fn parse_oww_threshold(raw: Option<String>) -> f32 {
     raw.and_then(|s| s.trim().parse::<f32>().ok())
         .filter(|t| t.is_finite() && *t > 0.0 && *t <= 1.0)
-        .unwrap_or(0.5)
+        .unwrap_or(DEFAULT_OWW_THRESHOLD)
 }
 
 fn parse_stt_provider_str(raw: Option<String>) -> String {
@@ -276,7 +277,7 @@ mod tests {
         let (_dir, conn) = open_temp();
         let s = get_app_settings(&conn).expect("get_app_settings");
         assert_eq!(s.wake_engine, "oww");
-        assert!((s.oww_threshold - 0.5).abs() < f32::EPSILON);
+        assert!((s.oww_threshold - DEFAULT_OWW_THRESHOLD).abs() < f32::EPSILON);
         assert_eq!(s.stt_provider, "local");
         assert_eq!(s.remote_stt_url, "");
         assert_eq!(s.remote_stt_model, None);

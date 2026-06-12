@@ -135,7 +135,7 @@ The **React command editor** is a second window (not the HUD). Open it from the 
 
 ### Keyboard and shortcuts
 
-- **HUD (overlay):** global shortcut (default **Ctrl+Shift+J**, configurable in Settings → Hotkeys) shows or toggles the HUD; **Dismiss voice overlay** (default **escape**, also under Hotkeys) stops the session and hides the HUD. The two shortcuts must use different combos.
+- **HUD (overlay):** global shortcut (default **Ctrl+Shift+J**, configurable in Settings → Hotkeys) opens and closes the HUD.
 - **Editor window:** standard **Tab** / **Shift+Tab** focus order; form fields and buttons have no separate global chord beyond OS defaults. After changing the hotkey in Settings, the new combo applies immediately after a successful save.
 
 ### Migrations

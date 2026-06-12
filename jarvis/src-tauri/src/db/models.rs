@@ -22,6 +22,45 @@ pub struct NewCommandNode {
     pub fuzzy_threshold_pct: u16,
 }
 
+/// JSON-schema-style slot declared on a user- or builtin-defined tool.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ToolParameter {
+    pub name: String,
+    pub param_type: String,
+    pub description: Option<String>,
+    pub required: bool,
+    #[serde(default)]
+    pub enum_values: Vec<String>,
+}
+
+/// Persisted tool definition loaded from SQLite (`tools` table).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    pub id: i64,
+    /// Machine id used by `execute_tool` (e.g. `open_url`).
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    pub parameters: Vec<ToolParameter>,
+    pub actions: Vec<Action>,
+    pub enabled: bool,
+    pub builtin: bool,
+    pub created_at: String,
+}
+
+/// Insert / update payload (DB assigns `id` and `created_at` on create).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NewToolDefinition {
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    pub parameters: Vec<ToolParameter>,
+    pub actions: Vec<Action>,
+    pub enabled: bool,
+    pub builtin: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {

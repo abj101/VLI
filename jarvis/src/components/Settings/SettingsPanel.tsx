@@ -1,28 +1,44 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from "react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   applyEditorThemeToDocument,
+  applyEditorTransparencyToDocument,
+  applyHudTransparencyToDocument,
   normalizeSttProvider,
   normalizeThemePreference,
+  parseEditorTransparencySettingValue,
+  parseHudTransparencySettingValue,
   parseRemoteSttTimeoutSecs,
+  EDITOR_TRANSPARENCY_DEFAULT,
+  HUD_TRANSPARENCY_DEFAULT,
   parseThresholdSettingValue,
   shouldWarmupWhisperGpu,
   validateHotkeyInput,
+  scheduleSettingsNoticeAutoDismiss,
+  scheduleSettingsNoticeFadeOut,
+  SETTINGS_NOTICE_FADE_MS,
+  type SettingsNoticePhase,
+  createHotkeyRecordingState,
+  processHotkeyRecordingKeyDown,
+  processHotkeyRecordingKeyUp,
+  type HotkeyRecordingState,
   type EditorThemePreference,
   type SttProvider,
 } from "../editor/SettingsPanel.logic";
-import { useSettingsStore } from "../../store/settingsStore";
 import { formatUserError } from "../../utils/userErrors";
 import { EDITOR_SETTINGS_NAV, type EditorSettingsNavId } from "./settingsNav";
+import { AppIndexPane } from "./AppIndexPane";
+import { HotkeyChordDisplay } from "./HotkeyChordDisplay";
+import { SettingsLabelWithInfo } from "./SettingsInfoTip";
 import { EditorSelect } from "../ui/EditorSelect";
 
 const HOTKEY_KEY = "hotkey";
-const DISMISS_HOTKEY_KEY = "dismiss_hotkey";
 const THEME_KEY = "theme";
+const HUD_TRANSPARENCY_KEY = "hud_transparency";
+const EDITOR_TRANSPARENCY_KEY = "editor_transparency";
 const DEFAULT_THRESHOLD_KEY = "default_fuzzy_threshold_pct";
-
 export type { EditorSettingsNavId } from "./settingsNav";
 export { EDITOR_SETTINGS_NAV } from "./settingsNav";
 
@@ -72,23 +88,19 @@ export function SettingsPanel({
   embedded = false,
   activeNav,
 }: SettingsPanelProps) {
-  const appIndexCount = useSettingsStore((s) => s.appIndexCount);
-  const appIndexScanning = useSettingsStore((s) => s.appIndexScanning);
-  const [rescanning, setRescanning] = useState(false);
-
   const [loading, setLoading] = useState(true);
   const [hotkey, setHotkey] = useState("ctrl+shift+j");
   const [threshold, setThreshold] = useState(0.8);
   const [theme, setTheme] = useState<EditorThemePreference>("system");
+  const [hudTransparency, setHudTransparency] = useState(HUD_TRANSPARENCY_DEFAULT);
+  const [editorTransparency, setEditorTransparency] = useState(EDITOR_TRANSPARENCY_DEFAULT);
   const [hotkeyError, setHotkeyError] = useState<string | null>(null);
-  const [dismissHotkey, setDismissHotkey] = useState("escape");
-  const [dismissHotkeyError, setDismissHotkeyError] = useState<string | null>(null);
-  const [toastText, setToastText] = useState<string | null>(null);
   const [savingHotkey, setSavingHotkey] = useState(false);
-  const [savingDismissHotkey, setSavingDismissHotkey] = useState(false);
+  const [hotkeyRecording, setHotkeyRecording] = useState(false);
+  const [hotkeyCapturedThisSession, setHotkeyCapturedThisSession] = useState(false);
 
   const [wakeEngine, setWakeEngine] = useState("oww");
-  const [owwThreshold, setOwwThreshold] = useState(0.5);
+  const [owwThreshold, setOwwThreshold] = useState(0.7);
 
   const [sttProvider, setSttProvider] = useState<SttProvider>("local");
   const [remoteSttUrl, setRemoteSttUrl] = useState("");
@@ -107,10 +119,68 @@ export function SettingsPanel({
   });
 
   const panelRef = useRef<HTMLElement | null>(null);
-  const hotkeyInputRef = useRef<HTMLInputElement>(null);
+  const hotkeyRecordingStateRef = useRef<HotkeyRecordingState>(createHotkeyRecordingState());
+  const hotkeyBeforeRecordingRef = useRef<string | null>(null);
   const hotkeysNavRef = useRef<HTMLButtonElement>(null);
   const [internalNav, setInternalNav] = useState<EditorSettingsNavId>("hotkeys");
   const pane = embedded && activeNav != null ? activeNav : internalNav;
+
+  const [noticeText, setNoticeText] = useState<string | null>(null);
+  const [noticePhase, setNoticePhase] = useState<SettingsNoticePhase>("hidden");
+  const noticeFadeCancelRef = useRef<(() => void) | null>(null);
+  const noticeTextRef = useRef<string | null>(null);
+  const paneRef = useRef(pane);
+
+  const clearNoticeFadeTimer = useCallback(() => {
+    noticeFadeCancelRef.current?.();
+    noticeFadeCancelRef.current = null;
+  }, []);
+
+  const finishNoticeHide = useCallback(() => {
+    clearNoticeFadeTimer();
+    setNoticePhase("hidden");
+    setNoticeText(null);
+    noticeTextRef.current = null;
+  }, [clearNoticeFadeTimer]);
+
+  const dismissNotice = useCallback(() => {
+    if (!noticeTextRef.current) return;
+    clearNoticeFadeTimer();
+    setNoticePhase("hiding");
+    noticeFadeCancelRef.current = scheduleSettingsNoticeFadeOut(() => {
+      noticeFadeCancelRef.current = null;
+      finishNoticeHide();
+    }, SETTINGS_NOTICE_FADE_MS);
+  }, [clearNoticeFadeTimer, finishNoticeHide]);
+
+  const showSettingsNotice = useCallback((text: string) => {
+    clearNoticeFadeTimer();
+    noticeTextRef.current = text;
+    setNoticeText(text);
+    setNoticePhase("hidden");
+    requestAnimationFrame(() => {
+      setNoticePhase("visible");
+    });
+  }, [clearNoticeFadeTimer]);
+
+  useEffect(() => {
+    if (noticePhase !== "visible" || !noticeText) return;
+    return scheduleSettingsNoticeAutoDismiss(() => {
+      dismissNotice();
+    });
+  }, [noticePhase, noticeText, dismissNotice]);
+
+  useEffect(() => {
+    return () => clearNoticeFadeTimer();
+  }, [clearNoticeFadeTimer]);
+
+  useEffect(() => {
+    if (paneRef.current === pane) return;
+    paneRef.current = pane;
+    if (noticeTextRef.current) {
+      dismissNotice();
+    }
+  }, [pane, dismissNotice]);
 
   useEffect(() => {
     if (embedded && activeNav) {
@@ -119,20 +189,18 @@ export function SettingsPanel({
   }, [embedded, activeNav]);
 
   const refreshFromBackend = async () => {
-    const [savedHotkey, savedDismissHotkey, savedThreshold, savedTheme, app, gpuStatus] =
+    const [savedHotkey, savedThreshold, savedTheme, savedHudTransparency, savedEditorTransparency, app, gpuStatus] =
       await Promise.all([
         invoke<string | null>("get_setting", { key: HOTKEY_KEY }),
-        invoke<string | null>("get_setting", { key: DISMISS_HOTKEY_KEY }),
         invoke<string | null>("get_setting", { key: DEFAULT_THRESHOLD_KEY }),
         invoke<string | null>("get_setting", { key: THEME_KEY }),
+        invoke<string | null>("get_setting", { key: HUD_TRANSPARENCY_KEY }),
+        invoke<string | null>("get_setting", { key: EDITOR_TRANSPARENCY_KEY }),
         invoke<AppSettingsPayload>("get_settings"),
         invoke<WhisperGpuStatusPayload>("whisper_gpu_status"),
       ]);
     if (savedHotkey && savedHotkey.trim().length > 0) {
       setHotkey(savedHotkey.trim());
-    }
-    if (savedDismissHotkey && savedDismissHotkey.trim().length > 0) {
-      setDismissHotkey(savedDismissHotkey.trim());
     }
     const parsedThreshold = parseThresholdSettingValue(savedThreshold);
     if (parsedThreshold !== null) {
@@ -141,6 +209,12 @@ export function SettingsPanel({
     const normalizedTheme = normalizeThemePreference(savedTheme);
     setTheme(normalizedTheme);
     applyEditorThemeToDocument(normalizedTheme);
+    const parsedHudTransparency = parseHudTransparencySettingValue(savedHudTransparency);
+    setHudTransparency(parsedHudTransparency);
+    applyHudTransparencyToDocument(parsedHudTransparency, normalizedTheme);
+    const parsedEditorTransparency = parseEditorTransparencySettingValue(savedEditorTransparency);
+    setEditorTransparency(parsedEditorTransparency);
+    applyEditorTransparencyToDocument(parsedEditorTransparency, normalizedTheme);
     setWakeEngine(app.wakeEngine);
     setOwwThreshold(app.owwThreshold);
     setSttProvider(normalizeSttProvider(app.sttProvider));
@@ -162,7 +236,7 @@ export function SettingsPanel({
         await refreshFromBackend();
       } catch (err) {
         if (!mounted) return;
-        setToastText(formatUserError(err, "Could not load settings. Try again."));
+        showSettingsNotice(formatUserError(err, "Could not load settings. Try again."));
       } finally {
         if (mounted) {
           setLoading(false);
@@ -184,6 +258,7 @@ export function SettingsPanel({
     if (!onClose || embedded) return;
     const onKey = (ev: Event) => {
       const e = ev as KeyboardEvent;
+      if (hotkeyRecording) return;
       if (e.key === "Escape") {
         e.preventDefault();
         onClose();
@@ -191,7 +266,67 @@ export function SettingsPanel({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, embedded]);
+  }, [onClose, embedded, hotkeyRecording]);
+
+  useEffect(() => {
+    void invoke("set_hotkey_recording", { recording: hotkeyRecording });
+    return () => {
+      void invoke("set_hotkey_recording", { recording: false });
+    };
+  }, [hotkeyRecording]);
+
+  const cancelHotkeyRecording = useCallback(() => {
+    if (hotkeyBeforeRecordingRef.current != null) {
+      setHotkey(hotkeyBeforeRecordingRef.current);
+    }
+    hotkeyBeforeRecordingRef.current = null;
+    setHotkeyCapturedThisSession(false);
+    setHotkeyRecording(false);
+  }, []);
+
+  useEffect(() => {
+    if (!hotkeyRecording) return;
+
+    hotkeyRecordingStateRef.current = createHotkeyRecordingState();
+
+    const onKeyDown = (ev: Event) => {
+      const e = ev as KeyboardEvent;
+      const { next, action } = processHotkeyRecordingKeyDown(e, hotkeyRecordingStateRef.current);
+      hotkeyRecordingStateRef.current = next;
+
+      if (action.type === "ignore") return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (action.type === "cancel") {
+        cancelHotkeyRecording();
+        return;
+      }
+      if (action.type === "clear") {
+        setHotkey("");
+        setHotkeyCapturedThisSession(true);
+        return;
+      }
+      setHotkey(action.chord);
+      setHotkeyCapturedThisSession(true);
+    };
+
+    const onKeyUp = (ev: Event) => {
+      const e = ev as KeyboardEvent;
+      hotkeyRecordingStateRef.current = processHotkeyRecordingKeyUp(
+        e,
+        hotkeyRecordingStateRef.current,
+      );
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+    };
+  }, [hotkeyRecording, cancelHotkeyRecording]);
 
   useEffect(() => {
     const focusTarget = returnFocusRef?.current ?? null;
@@ -216,35 +351,70 @@ export function SettingsPanel({
   };
 
   const saveThreshold = async (nextThreshold: number) => {
-    const pct = Math.round(nextThreshold * 100);
+    const clamped = Math.max(0.5, Math.min(1, nextThreshold));
+    if (clamped !== threshold) {
+      setThreshold(clamped);
+    }
+    const pct = Math.round(clamped * 100);
     try {
       await invoke("set_setting", {
         key: DEFAULT_THRESHOLD_KEY,
         value: String(pct),
       });
     } catch (err) {
-      setToastText(formatUserError(err, "Could not save the default match threshold."));
+      showSettingsNotice(formatUserError(err, "Could not save the default match threshold."));
     }
   };
 
   const saveTheme = async (nextTheme: EditorThemePreference) => {
     applyEditorThemeToDocument(nextTheme);
+    applyHudTransparencyToDocument(hudTransparency, nextTheme);
+    applyEditorTransparencyToDocument(editorTransparency, nextTheme);
     setTheme(nextTheme);
     try {
       await invoke("set_setting", { key: THEME_KEY, value: nextTheme });
     } catch (err) {
-      setToastText(formatUserError(err, "Could not save the color scheme."));
+      showSettingsNotice(formatUserError(err, "Could not save the color scheme."));
+    }
+  };
+
+  const saveHudTransparency = async (nextTransparency: number) => {
+    const clamped = parseHudTransparencySettingValue(String(nextTransparency));
+    setHudTransparency(clamped);
+    applyHudTransparencyToDocument(clamped, theme);
+    try {
+      await invoke("set_setting", {
+        key: HUD_TRANSPARENCY_KEY,
+        value: String(clamped),
+      });
+    } catch (err) {
+      showSettingsNotice(formatUserError(err, "Could not save HUD transparency."));
+    }
+  };
+
+  const saveEditorTransparency = async (nextTransparency: number) => {
+    const clamped = parseEditorTransparencySettingValue(String(nextTransparency));
+    setEditorTransparency(clamped);
+    applyEditorTransparencyToDocument(clamped, theme);
+    try {
+      await invoke("set_setting", {
+        key: EDITOR_TRANSPARENCY_KEY,
+        value: String(clamped),
+      });
+    } catch (err) {
+      showSettingsNotice(formatUserError(err, "Could not save editor transparency."));
     }
   };
 
   const commitOwwThreshold = async (next: number) => {
-    setOwwThreshold(next);
+    const clamped = Math.max(0.01, Math.min(1, next));
+    setOwwThreshold(clamped);
     try {
       await invoke<AppSettingsPayload>("update_settings", {
-        patch: { owwThreshold: next },
+        patch: { owwThreshold: clamped },
       });
     } catch (err) {
-      setToastText(formatUserError(err, "Could not save OpenWakeWord sensitivity."));
+      showSettingsNotice(formatUserError(err, "Could not save OpenWakeWord sensitivity."));
     }
   };
 
@@ -259,7 +429,7 @@ export function SettingsPanel({
     try {
       const savedHotkey = await invoke<string>("set_hotkey", { hotkey });
       setHotkey(savedHotkey);
-      setToastText("Hotkey updated");
+      showSettingsNotice("Hotkey updated");
     } catch (err) {
       setHotkeyError(formatUserError(err, "Could not save the hotkey. Try a different shortcut."));
     } finally {
@@ -267,25 +437,18 @@ export function SettingsPanel({
     }
   };
 
-  const saveDismissHotkey = async () => {
-    const maybeError = validateHotkeyInput(dismissHotkey);
-    if (maybeError) {
-      setDismissHotkeyError(maybeError);
+  const toggleHotkeyRecording = () => {
+    if (hotkeyRecording) {
+      setHotkeyRecording(false);
+      if (hotkeyCapturedThisSession) {
+        void saveHotkey();
+      }
       return;
     }
-    setDismissHotkeyError(null);
-    setSavingDismissHotkey(true);
-    try {
-      const saved = await invoke<string>("set_dismiss_hotkey", { hotkey: dismissHotkey });
-      setDismissHotkey(saved);
-      setToastText("Dismiss shortcut updated");
-    } catch (err) {
-      setDismissHotkeyError(
-        formatUserError(err, "Could not save the dismiss shortcut. Try a different combo."),
-      );
-    } finally {
-      setSavingDismissHotkey(false);
-    }
+    setHotkeyError(null);
+    setHotkeyCapturedThisSession(false);
+    hotkeyBeforeRecordingRef.current = hotkey;
+    setHotkeyRecording(true);
   };
 
   const persistWakeEngine = async (next: string) => {
@@ -296,7 +459,7 @@ export function SettingsPanel({
       });
       setOwwThreshold(s.owwThreshold);
     } catch (err) {
-      setToastText(formatUserError(err, "Could not save the wake engine."));
+      showSettingsNotice(formatUserError(err, "Could not save the wake engine."));
     }
   };
 
@@ -313,7 +476,7 @@ export function SettingsPanel({
       setRemoteSttKeyStored(s.remoteSttKeyStored);
       setLocalWhisperUseGpu(s.localWhisperUseGpu);
     } catch (err) {
-      setToastText(formatUserError(err, "Could not save the transcription provider."));
+      showSettingsNotice(formatUserError(err, "Could not save the transcription provider."));
     }
   };
 
@@ -342,23 +505,25 @@ export function SettingsPanel({
       if (shouldWarmup && s.localWhisperUseGpu) {
         const unlisten = await listen<WhisperGpuWarmupPayload>("whisper-gpu-warmup", (event) => {
           setWhisperGpuPrepMessage(event.payload.message);
-          setToastText(event.payload.message);
+          showSettingsNotice(event.payload.message);
           setWhisperGpuPreparing(false);
           void unlisten();
         });
         const warmup = await invoke<WhisperGpuWarmupPayload>("warmup_whisper_gpu");
         setWhisperGpuPrepMessage(warmup.message);
         if (warmup.ready) {
-          setToastText(warmup.message);
+          showSettingsNotice(warmup.message);
           setWhisperGpuPreparing(false);
           void unlisten();
         }
       } else {
-        setToastText(next ? "Whisper will use GPU on next listen." : "Whisper will use CPU on next listen.");
+        showSettingsNotice(
+          next ? "Whisper will use GPU on next listen." : "Whisper will use CPU on next listen.",
+        );
       }
     } catch (err) {
       setLocalWhisperUseGpu(prev);
-      setToastText(formatUserError(err, "Could not save the Whisper GPU option."));
+      showSettingsNotice(formatUserError(err, "Could not save the Whisper GPU option."));
       setWhisperGpuPrepMessage(null);
     } finally {
       if (shouldWarmup) {
@@ -371,7 +536,7 @@ export function SettingsPanel({
     if (sttProvider !== "remote") return;
     const timeout = parseRemoteSttTimeoutSecs(String(remoteSttTimeoutSecs));
     if (timeout === null) {
-      setToastText("Remote STT timeout must be between 1 and 300 seconds.");
+      showSettingsNotice("Remote STT timeout must be between 1 and 300 seconds.");
       return;
     }
     setSavingRemoteStt(true);
@@ -385,9 +550,9 @@ export function SettingsPanel({
         },
       });
       await refreshFromBackend();
-      setToastText("Remote STT settings saved");
+      showSettingsNotice("Remote STT settings saved");
     } catch (err) {
-      setToastText(formatUserError(err, "Could not save remote speech settings."));
+      showSettingsNotice(formatUserError(err, "Could not save remote speech settings."));
     } finally {
       setSavingRemoteStt(false);
     }
@@ -395,7 +560,7 @@ export function SettingsPanel({
 
   const saveRemoteSttKey = async () => {
     if (!remoteSttKeyInput.trim()) {
-      setToastText("Enter an API key before saving.");
+      showSettingsNotice("Enter an API key before saving.");
       return;
     }
     setSavingRemoteStt(true);
@@ -403,9 +568,9 @@ export function SettingsPanel({
       await invoke("save_api_key", { service: "remote_stt", key: remoteSttKeyInput });
       setRemoteSttKeyInput("");
       await refreshFromBackend();
-      setToastText("Remote STT API key saved to OS keychain");
+      showSettingsNotice("Remote STT API key saved to OS keychain");
     } catch (err) {
-      setToastText(formatUserError(err, "Could not save the remote speech API key."));
+      showSettingsNotice(formatUserError(err, "Could not save the remote speech API key."));
     } finally {
       setSavingRemoteStt(false);
     }
@@ -416,9 +581,9 @@ export function SettingsPanel({
     try {
       await invoke("delete_api_key", { service: "remote_stt" });
       await refreshFromBackend();
-      setToastText("Remote STT key cleared");
+      showSettingsNotice("Remote STT key cleared");
     } catch (err) {
-      setToastText(formatUserError(err, "Could not clear the remote speech API key."));
+      showSettingsNotice(formatUserError(err, "Could not clear the remote speech API key."));
     } finally {
       setSavingRemoteStt(false);
     }
@@ -438,7 +603,7 @@ export function SettingsPanel({
         <header className="editor-settings-header">
           <h2 id="settings-dialog-title">Settings</h2>
           {onClose && (
-            <button type="button" onClick={onClose} aria-label="Close settings">
+            <button type="button" className="editor-btn" onClick={onClose} aria-label="Close settings">
               Close
             </button>
           )}
@@ -470,58 +635,41 @@ export function SettingsPanel({
           <div className={`editor-settings-pane${embedded ? " editor-settings-pane--solo" : ""}`}>
             {pane === "hotkeys" && (
               <div
-                className="editor-settings-content"
+                className="editor-settings-content editor-settings-content--hotkeys"
                 aria-labelledby={`editor-settings-nav-${pane}`}
               >
                 <section className="editor-settings-section">
-                  <label htmlFor="editor-global-hotkey">
-                    Global shortcut
-                    <div className="editor-settings-inline">
-                      <input
-                        ref={hotkeyInputRef}
-                        id="editor-global-hotkey"
-                        className="editor-settings-hotkey-input"
-                        value={hotkey}
-                        onChange={(e) => setHotkey(e.target.value)}
-                        placeholder="ctrl+shift+j"
-                        autoComplete="off"
-                      />
-                      <button type="button" onClick={() => void saveHotkey()} disabled={savingHotkey}>
-                        {savingHotkey ? "Saving..." : "Save"}
-                      </button>
-                    </div>
-                  </label>
-                  {hotkeyError && <p className="editor-field-error">{hotkeyError}</p>}
-                </section>
+                  <p className="editor-settings-group-label">Voice overlay</p>
 
-                <section className="editor-settings-section">
-                  <label htmlFor="editor-dismiss-hotkey">
-                    Dismiss voice overlay
-                    <div className="editor-settings-inline">
-                      <input
-                        id="editor-dismiss-hotkey"
-                        className="editor-settings-hotkey-input"
-                        value={dismissHotkey}
-                        onChange={(e) => setDismissHotkey(e.target.value)}
-                        placeholder="escape"
-                        autoComplete="off"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void saveDismissHotkey()}
-                        disabled={savingDismissHotkey}
-                      >
-                        {savingDismissHotkey ? "Saving..." : "Save"}
-                      </button>
+                  <div
+                    className={`editor-hotkey-panel${hotkeyRecording ? " editor-hotkey-panel--recording" : ""}`}
+                  >
+                    <div className="editor-hotkey-panel-body">
+                      <span className="editor-hotkey-panel-label">
+                        <SettingsLabelWithInfo
+                          tipId="tip-global-hotkey"
+                          tip="Opens and closes the voice overlay from anywhere on your desktop."
+                        >
+                          Global shortcut
+                        </SettingsLabelWithInfo>
+                      </span>
+                      <HotkeyChordDisplay chord={hotkey} recording={hotkeyRecording} />
                     </div>
-                  </label>
-                  {dismissHotkeyError && (
-                    <p className="editor-field-error">{dismissHotkeyError}</p>
-                  )}
+                    <button
+                      type="button"
+                      className={`editor-btn editor-btn--primary editor-hotkey-record-btn${hotkeyRecording ? " editor-hotkey-record-btn--active" : ""}`}
+                      onClick={toggleHotkeyRecording}
+                      disabled={savingHotkey}
+                      aria-pressed={hotkeyRecording}
+                    >
+                      {savingHotkey ? "Saving…" : hotkeyRecording ? "Stop" : "Record"}
+                    </button>
+                  </div>
+
+                  {hotkeyError && <p className="editor-field-error">{hotkeyError}</p>}
                   <p className="editor-settings-help">
-                    Stops listening, cancels the session, and hides the HUD. Use the same accelerator
-                    style as the global shortcut (example: <code>escape</code>,{" "}
-                    <code>ctrl+shift+q</code>). Must differ from “Global shortcut”.
+                    Click Record, press the shortcut, then Stop. Escape cancels; Backspace clears
+                    while recording.
                   </p>
                 </section>
               </div>
@@ -529,77 +677,121 @@ export function SettingsPanel({
 
             {pane === "recognition" && (
               <div
-                className="editor-settings-content"
+                className="editor-settings-content editor-settings-content--recognition"
                 aria-labelledby={`editor-settings-nav-${pane}`}
               >
-                <section className="editor-settings-section">
-                  <h4>Default fuzzy threshold</h4>
-                  <label>
-                    {threshold.toFixed(2)}
-                    <input
-                      type="range"
-                      min={0.5}
-                      max={1}
-                      step={0.01}
-                      value={threshold}
-                      onChange={(e) => setThreshold(Number(e.target.value))}
-                      onPointerUp={(e) =>
-                        void saveThreshold(Number((e.target as HTMLInputElement).value))
-                      }
-                      onKeyUp={(e) => {
-                        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-                        void saveThreshold(Number((e.target as HTMLInputElement).value));
-                      }}
-                    />
-                  </label>
-                  <p className="editor-settings-help">
-                    Match strictness for new commands.
-                  </p>
-                </section>
-
-                <section className="editor-settings-section">
-                  <h4>Transcription</h4>
-                  <label htmlFor="editor-stt-provider">
-                    Provider
-                    <EditorSelect
-                      id="editor-stt-provider"
-                      value={sttProvider}
-                      onChange={(v) => void persistSttProvider(normalizeSttProvider(v))}
-                      options={[
-                        { value: "local", label: "Local on-device (Whisper)" },
-                        { value: "remote", label: "Remote HTTP API" },
-                      ]}
-                    />
-                  </label>
-                  <p className="editor-settings-help">
-                    Speech-to-text for command matching. Remote needs HTTPS and a keychain API key.
-                  </p>
-
-                  {sttProvider === "local" && (
-                    <>
-                      <label className="editor-settings-checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={localWhisperUseGpu}
-                          disabled={!whisperGpuCanEnable}
-                          onChange={(e) => void persistLocalWhisperUseGpu(e.target.checked)}
-                        />
-                        <span>Use GPU for Whisper (when available)</span>
-                      </label>
-                      <div className="editor-settings-gpu-status" role="status" aria-live="polite">
-                        {whisperGpuPreparing && (
-                          <span className="editor-settings-spinner" aria-hidden />
-                        )}
-                        <p className="editor-settings-help">
-                          {whisperGpuPreparing
-                            ? (whisperGpuPrepMessage ?? "Preparing Vulkan model...")
-                            : (whisperGpuPrepMessage ??
-                              whisperGpuStatus.message ??
-                              `Whisper GPU backend: ${whisperGpuStatus.compileBackend}`)}
-                        </p>
+                <div className="editor-settings-recognition-form">
+                  <section className="editor-settings-section editor-settings-section--compact">
+                    <p className="editor-settings-group-label">Command matching</p>
+                    <div className="editor-settings-row">
+                      <div className="editor-settings-row-label">
+                        <SettingsLabelWithInfo
+                          tipId="tip-default-threshold"
+                          tip="How closely speech must match command triggers. Higher is stricter. Used as the default for new commands."
+                        >
+                          Match Threshold
+                        </SettingsLabelWithInfo>
                       </div>
-                    </>
-                  )}
+                      <div className="editor-settings-row-control editor-settings-row-control--slider">
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          value={threshold}
+                          aria-valuenow={threshold}
+                          aria-valuemin={0}
+                          aria-valuemax={1}
+                          aria-valuetext={threshold.toFixed(2)}
+                          aria-describedby="tip-default-threshold"
+                          onChange={(e) => setThreshold(Number(e.target.value))}
+                          onPointerUp={(e) =>
+                            void saveThreshold(Number((e.target as HTMLInputElement).value))
+                          }
+                          onKeyUp={(e) => {
+                            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                            void saveThreshold(Number((e.target as HTMLInputElement).value));
+                          }}
+                        />
+                        <span className="editor-settings-slider-value" aria-hidden>
+                          {threshold.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="editor-settings-section editor-settings-section--compact">
+                    <p className="editor-settings-group-label">Transcription</p>
+                    <div className="editor-settings-row">
+                      <span className="editor-settings-row-label" id="editor-stt-provider-label">
+                        <SettingsLabelWithInfo
+                          tipId="tip-stt-provider"
+                          tip="Converts speech to text for command matching. Remote mode needs HTTPS and an API key stored in the OS keychain."
+                        >
+                          Provider
+                        </SettingsLabelWithInfo>
+                      </span>
+                      <span className="editor-settings-row-control">
+                        <EditorSelect
+                          id="editor-stt-provider"
+                          labelledBy="editor-stt-provider-label"
+                          value={sttProvider}
+                          onChange={(v) => void persistSttProvider(normalizeSttProvider(v))}
+                          options={[
+                            { value: "local", label: "On-device (Whisper)" },
+                            { value: "remote", label: "Remote HTTP API" },
+                          ]}
+                        />
+                      </span>
+                    </div>
+
+                    {sttProvider === "local" && (
+                      <div className="editor-settings-row editor-settings-row--switch">
+                        <div className="editor-settings-row-label editor-settings-row-label--stack">
+                          <SettingsLabelWithInfo
+                            id="editor-whisper-gpu-label"
+                            tipId="tip-whisper-gpu"
+                            tip="Runs Whisper on your GPU when this build supports it. Uses CPU if unavailable or turned off."
+                          >
+                            GPU acceleration
+                          </SettingsLabelWithInfo>
+                          {(whisperGpuPreparing ||
+                            whisperGpuPrepMessage ||
+                            !whisperGpuCanEnable) && (
+                            <span
+                              className="editor-settings-switch-meta"
+                              role="status"
+                              aria-live="polite"
+                            >
+                              {whisperGpuPreparing && (
+                                <span className="editor-settings-spinner" aria-hidden />
+                              )}
+                              {whisperGpuPreparing
+                                ? (whisperGpuPrepMessage ?? "Preparing model…")
+                                : (whisperGpuPrepMessage ??
+                                  whisperGpuStatus.message ??
+                                  (!whisperGpuCanEnable
+                                    ? "No GPU backend in this build"
+                                    : null))}
+                            </span>
+                          )}
+                        </div>
+                        <div className="editor-settings-row-control editor-settings-row-control--switch">
+                          <button
+                            type="button"
+                            id="editor-whisper-gpu"
+                            className={`editor-switch${localWhisperUseGpu ? " is-on" : ""}`}
+                            role="switch"
+                            aria-labelledby="editor-whisper-gpu-label"
+                            aria-checked={localWhisperUseGpu}
+                            disabled={!whisperGpuCanEnable}
+                            onClick={() => void persistLocalWhisperUseGpu(!localWhisperUseGpu)}
+                          >
+                            <span className="editor-switch-knob" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   {sttProvider === "remote" && (
                     <>
                       <label htmlFor="editor-remote-stt-url">
@@ -638,6 +830,7 @@ export function SettingsPanel({
                       <div className="editor-settings-inline">
                         <button
                           type="button"
+                          className="editor-btn editor-btn--primary"
                           onClick={() => void saveRemoteSttEndpoint()}
                           disabled={savingRemoteStt}
                         >
@@ -663,9 +856,10 @@ export function SettingsPanel({
                       <p id="remote-stt-key-help" className="editor-settings-help">
                         Saved to the OS keychain; not retained in this form after save.
                       </p>
-                      <div className="editor-settings-inline">
+                      <div className="editor-settings-inline--actions">
                         <button
                           type="button"
+                          className="editor-btn editor-btn--primary"
                           onClick={() => void saveRemoteSttKey()}
                           disabled={savingRemoteStt}
                         >
@@ -673,7 +867,7 @@ export function SettingsPanel({
                         </button>
                         <button
                           type="button"
-                          className="editor-settings-secondary-btn"
+                          className="editor-btn"
                           onClick={() => void clearRemoteSttKey()}
                           disabled={savingRemoteStt}
                         >
@@ -685,123 +879,228 @@ export function SettingsPanel({
                       </p>
                     </>
                   )}
-                </section>
-
-                <section className="editor-settings-section">
-                  <h4>Wake word</h4>
-                  <label htmlFor="editor-wake-engine">
-                    Engine
-                    <EditorSelect
-                      id="editor-wake-engine"
-                      value={wakeEngine}
-                      onChange={(v) => void persistWakeEngine(v)}
-                      options={[
-                        { value: "hotkey", label: "Hotkey only" },
-                        { value: "oww", label: "OpenWakeWord" },
-                      ]}
-                    />
-                  </label>
-                  <p className="editor-settings-help">Hotkey-only skips wake detection.</p>
-                </section>
-
-                {wakeEngine === "oww" && (
-                  <section className="editor-settings-section">
-                    <h4>OpenWakeWord sensitivity</h4>
-                    <label>
-                      {owwThreshold.toFixed(2)}
-                      <input
-                        type="range"
-                        min={0.01}
-                        max={1}
-                        step={0.01}
-                        value={owwThreshold}
-                        onChange={(e) => setOwwThreshold(Number(e.target.value))}
-                        onPointerUp={(e) =>
-                          void commitOwwThreshold(Number((e.target as HTMLInputElement).value))
-                        }
-                        onKeyUp={(e) => {
-                          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-                          void commitOwwThreshold(Number((e.target as HTMLInputElement).value));
-                        }}
-                      />
-                    </label>
-                    <p className="editor-settings-help">
-                      Higher values require a clearer wake phrase match before listening starts.
-                    </p>
                   </section>
-                )}
 
-                {wakeEngine === "hotkey" && (
-                  <p className="editor-settings-help">
-                    Wake word detection is off. Use the global hotkey to start listening.
-                  </p>
-                )}
+                  <section className="editor-settings-section editor-settings-section--compact">
+                    <p className="editor-settings-group-label">Wake word</p>
+                    <div className="editor-settings-row">
+                      <span className="editor-settings-row-label" id="editor-wake-engine-label">
+                        <SettingsLabelWithInfo
+                          tipId="tip-wake-engine"
+                          tip="OpenWakeWord listens for a wake phrase before commands. Hotkey only starts listening from your global shortcut."
+                        >
+                          Engine
+                        </SettingsLabelWithInfo>
+                      </span>
+                      <span className="editor-settings-row-control">
+                        <EditorSelect
+                          id="editor-wake-engine"
+                          labelledBy="editor-wake-engine-label"
+                          value={wakeEngine}
+                          onChange={(v) => void persistWakeEngine(v)}
+                          options={[
+                            { value: "hotkey", label: "Hotkey only" },
+                            { value: "oww", label: "OpenWakeWord" },
+                          ]}
+                        />
+                      </span>
+                    </div>
+
+                    {wakeEngine === "oww" && (
+                      <div className="editor-settings-row">
+                        <div className="editor-settings-row-label">
+                          <SettingsLabelWithInfo
+                            tipId="tip-oww-sensitivity"
+                            tip="How clearly you must say the wake phrase before listening starts. Higher values reduce false activations."
+                          >
+                            Sensitivity
+                          </SettingsLabelWithInfo>
+                        </div>
+                        <div className="editor-settings-row-control editor-settings-row-control--slider">
+                          <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            value={owwThreshold}
+                            aria-valuenow={owwThreshold}
+                            aria-valuemin={0}
+                            aria-valuemax={1}
+                            aria-valuetext={owwThreshold.toFixed(2)}
+                            aria-describedby="tip-oww-sensitivity"
+                            onChange={(e) => setOwwThreshold(Number(e.target.value))}
+                            onPointerUp={(e) =>
+                              void commitOwwThreshold(Number((e.target as HTMLInputElement).value))
+                            }
+                            onKeyUp={(e) => {
+                              if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                              void commitOwwThreshold(Number((e.target as HTMLInputElement).value));
+                            }}
+                          />
+                          <span className="editor-settings-slider-value" aria-hidden>
+                            {owwThreshold.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+                </div>
               </div>
             )}
 
             {pane === "appearance" && (
               <div
-                className="editor-settings-content"
+                className="editor-settings-content editor-settings-content--recognition"
                 aria-labelledby={`editor-settings-nav-${pane}`}
               >
-                <section className="editor-settings-section">
-                  <label htmlFor="editor-theme-select">
-                    Theme
-                    <EditorSelect
-                      id="editor-theme-select"
-                      value={theme}
-                      onChange={(v) => void saveTheme(normalizeThemePreference(v))}
-                      options={[
-                        { value: "system", label: "System" },
-                        { value: "dark", label: "Dark" },
-                        { value: "light", label: "Light" },
-                      ]}
-                    />
-                  </label>
-                </section>
+                <div className="editor-settings-recognition-form">
+                  <section className="editor-settings-section editor-settings-section--compact">
+                    <p className="editor-settings-group-label">Color scheme</p>
+                    <div className="editor-settings-row">
+                      <span className="editor-settings-row-label" id="editor-theme-select-label">
+                        <SettingsLabelWithInfo
+                          tipId="tip-theme-select"
+                          tip="Choose light, dark, or follow your system appearance. Applies to the editor and voice overlay."
+                        >
+                          Theme
+                        </SettingsLabelWithInfo>
+                      </span>
+                      <span className="editor-settings-row-control">
+                        <EditorSelect
+                          id="editor-theme-select"
+                          labelledBy="editor-theme-select-label"
+                          value={theme}
+                          onChange={(v) => void saveTheme(normalizeThemePreference(v))}
+                          options={[
+                            { value: "system", label: "System" },
+                            { value: "dark", label: "Dark" },
+                            { value: "light", label: "Light" },
+                          ]}
+                        />
+                      </span>
+                    </div>
+                  </section>
+
+                  <section className="editor-settings-section editor-settings-section--compact">
+                    <p className="editor-settings-group-label">Editor window</p>
+                    <div className="editor-settings-row">
+                      <div className="editor-settings-row-label">
+                        <SettingsLabelWithInfo
+                          tipId="tip-editor-transparency"
+                          tip="How much desktop shows through the editor glass. Higher values increase transparency. Body text stays readable at the minimum opacity."
+                        >
+                          Transparency
+                        </SettingsLabelWithInfo>
+                      </div>
+                      <div className="editor-settings-row-control editor-settings-row-control--slider">
+                        <input
+                          id="editor-window-transparency"
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={editorTransparency}
+                          aria-valuenow={editorTransparency}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuetext={`${editorTransparency}%`}
+                          aria-describedby="tip-editor-transparency"
+                          onChange={(e) => {
+                            const next = parseEditorTransparencySettingValue(e.target.value);
+                            setEditorTransparency(next);
+                            applyEditorTransparencyToDocument(next, theme);
+                          }}
+                          onPointerUp={(e) =>
+                            void saveEditorTransparency(
+                              parseEditorTransparencySettingValue(
+                                (e.target as HTMLInputElement).value,
+                              ),
+                            )
+                          }
+                          onKeyUp={(e) => {
+                            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                            void saveEditorTransparency(
+                              parseEditorTransparencySettingValue(
+                                (e.target as HTMLInputElement).value,
+                              ),
+                            );
+                          }}
+                        />
+                        <span className="editor-settings-slider-value" aria-hidden>
+                          {editorTransparency}%
+                        </span>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="editor-settings-section editor-settings-section--compact">
+                    <p className="editor-settings-group-label">Voice overlay</p>
+                    <div className="editor-settings-row">
+                      <div className="editor-settings-row-label">
+                        <SettingsLabelWithInfo
+                          tipId="tip-hud-transparency"
+                          tip="How much desktop shows through the HUD glass. Higher values increase transparency. Text stays readable at the minimum opacity."
+                        >
+                          Transparency
+                        </SettingsLabelWithInfo>
+                      </div>
+                      <div className="editor-settings-row-control editor-settings-row-control--slider">
+                        <input
+                          id="editor-hud-transparency"
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={hudTransparency}
+                          aria-valuenow={hudTransparency}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuetext={`${hudTransparency}%`}
+                          aria-describedby="tip-hud-transparency"
+                          onChange={(e) => {
+                            const next = parseHudTransparencySettingValue(e.target.value);
+                            setHudTransparency(next);
+                            applyHudTransparencyToDocument(next, theme);
+                          }}
+                          onPointerUp={(e) =>
+                            void saveHudTransparency(
+                              parseHudTransparencySettingValue(
+                                (e.target as HTMLInputElement).value,
+                              ),
+                            )
+                          }
+                          onKeyUp={(e) => {
+                            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                            void saveHudTransparency(
+                              parseHudTransparencySettingValue(
+                                (e.target as HTMLInputElement).value,
+                              ),
+                            );
+                          }}
+                        />
+                        <span className="editor-settings-slider-value" aria-hidden>
+                          {hudTransparency}%
+                        </span>
+                      </div>
+                    </div>
+                  </section>
+                </div>
               </div>
             )}
 
-            {pane === "about" && (
-              <div
-                className="editor-settings-content"
-                aria-labelledby={`editor-settings-nav-${pane}`}
-              >
-                <section className="editor-settings-section">
-                  <h4>App index</h4>
-                  <p className="editor-settings-help" role="status">
-                    Indexed apps:{" "}
-                    {appIndexCount === null
-                      ? "…"
-                      : appIndexCount.toLocaleString()}
-                    {appIndexScanning ? " (scanning…)" : ""}
-                  </p>
-                  <button
-                    type="button"
-                    className="editor-settings-secondary-btn"
-                    disabled={rescanning || appIndexScanning}
-                    onClick={() => {
-                      setRescanning(true);
-                      void invoke("rescan_app_index")
-                        .catch((err: unknown) => {
-                          setToastText(formatUserError(err, "Rescan failed."));
-                        })
-                        .finally(() => setRescanning(false));
-                    }}
-                  >
-                    {rescanning || appIndexScanning ? "Rescanning…" : "Rescan now"}
-                  </button>
-                </section>
-              </div>
-            )}
+            {pane === "app-index" && <AppIndexPane onNotice={showSettingsNotice} />}
           </div>
         </div>
       )}
 
-      {toastText && (
-        <div className="editor-inline-toast editor-settings-toast" role="status">
-          {toastText}
-        </div>
+      {noticeText && (
+        <p
+          className={`editor-settings-notice editor-settings-notice--${noticePhase}`}
+          role="status"
+          aria-live="polite"
+        >
+          {noticeText}
+        </p>
       )}
     </aside>
   );

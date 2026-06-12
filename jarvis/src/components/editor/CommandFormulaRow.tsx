@@ -37,7 +37,10 @@ import {
   type FormModel,
 } from "./NodeForm.logic";
 import { searchAppIndexInvokeArgs } from "./appIndexInvoke";
+import { CommandDeleteConfirm } from "./CommandDeleteConfirm";
+import { EditorCheckIcon } from "./EditorCheckIcon";
 import { EditorCloseXIcon } from "./EditorCloseXIcon";
+import { EditorPlusIcon } from "./EditorPlusIcon";
 
 export type AppIndexEntry = {
   display_name: string;
@@ -72,7 +75,9 @@ function FormulaSuggestPortal({
     const gap = 4;
     const top = r.bottom + gap;
     const maxHeight = Math.max(96, Math.min(280, window.innerHeight - top - margin));
-    const width = Math.min(r.width, window.innerWidth - margin * 2);
+    const rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    const minWidth = rootPx * 11; /* sync with --editor-dropdown-min-width */
+    const width = Math.min(Math.max(r.width, minWidth), window.innerWidth - margin * 2);
     const left = Math.min(Math.max(margin, r.left), window.innerWidth - margin - width);
     setPos({ top, left, width, maxHeight });
   }, [anchorRef]);
@@ -119,8 +124,10 @@ export function CommandFormulaRow({
   const setNodes = useEditorStore((s) => s.setNodes);
   const [model, setModel] = useState<FormModel>(() => modelFromNode(node));
   const [toastText, setToastText] = useState<string | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
   const dirtyRef = useRef(false);
   const toastTimer = useRef<number | null>(null);
+  const deleteCancelRef = useRef<HTMLButtonElement | null>(null);
 
   const serverPrint = useMemo(() => fingerprintCommandNode(node), [node]);
 
@@ -213,8 +220,27 @@ export function CommandFormulaRow({
 
   const errors = validateFormModel(model);
 
+  useEffect(() => {
+    if (!deletePending) return;
+    deleteCancelRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDeletePending(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [deletePending]);
+
   return (
-    <li className="editor-command-item">
+    <li
+      className={
+        deletePending
+          ? "editor-command-item editor-command-item--delete-pending"
+          : "editor-command-item"
+      }
+    >
       <div className="editor-command-card">
         {toastText && (
           <div className="editor-inline-toast editor-command-row-toast" role="status">
@@ -274,7 +300,9 @@ export function CommandFormulaRow({
               onClick={addActionSegment}
               aria-label="Add action"
             >
-              +
+              <span className="editor-formula-plus-icon" aria-hidden>
+                <EditorPlusIcon className="editor-formula-plus-icon-svg" />
+              </span>
             </button>
           </div>
 
@@ -288,14 +316,17 @@ export function CommandFormulaRow({
             >
               <span className="editor-switch-knob" />
             </button>
-            <button
-              type="button"
-              className="editor-command-delete"
-              onClick={onDelete}
-              aria-label={`Delete ${primaryPhrase.trim() || "command"}`}
-            >
-              <EditorCloseXIcon className="editor-command-delete-x" />
-            </button>
+            <CommandDeleteConfirm
+              deletePending={deletePending}
+              phraseLabel={primaryPhrase}
+              onRequestDelete={() => setDeletePending(true)}
+              onCancel={() => setDeletePending(false)}
+              onConfirm={() => {
+                setDeletePending(false);
+                onDelete();
+              }}
+              cancelRef={deleteCancelRef}
+            />
           </div>
         </div>
 
@@ -315,20 +346,6 @@ type DraftRowProps = {
   onDiscard: () => void;
   onCreated: () => void;
 };
-
-function DraftCheckIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden className="editor-command-draft-icon-svg">
-      <path
-        d="M6 12.5L10.2 16.5L18 7.5"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
 function DraftBusyIcon() {
   return (
@@ -414,7 +431,7 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
             className="editor-formula-input editor-formula-input--phrase"
             value={primaryPhrase}
             onChange={(e) => setPrimaryPhrase(e.target.value)}
-            placeholder="New trigger phrase"
+            placeholder="Phrase"
             aria-label="Trigger phrase"
           />
           <span className="editor-formula-eq" aria-hidden>
@@ -445,7 +462,9 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
               </div>
             ))}
             <button type="button" className="editor-formula-plus" onClick={addActionSegment} aria-label="Add action">
-              +
+              <span className="editor-formula-plus-icon" aria-hidden>
+                <EditorPlusIcon className="editor-formula-plus-icon-svg" />
+              </span>
             </button>
           </div>
           <div className="editor-command-draft-actions">
@@ -461,13 +480,13 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
             </button>
             <button
               type="button"
-              className="editor-command-draft-icon-btn editor-command-draft-icon-btn--accent"
+              className="editor-command-draft-icon-btn"
               onClick={() => void onSave()}
               disabled={saving}
               aria-label={saving ? "Saving…" : "Save"}
             >
               <span className="editor-command-draft-icon" aria-hidden>
-                {saving ? <DraftBusyIcon /> : <DraftCheckIcon />}
+                {saving ? <DraftBusyIcon /> : <EditorCheckIcon className="editor-command-draft-icon-svg" />}
               </span>
             </button>
           </div>
@@ -559,6 +578,7 @@ function ActionSegmentEditor({
 }: SegmentProps) {
   const kindAnchorRef = useRef<HTMLDivElement>(null);
   const appAnchorRef = useRef<HTMLDivElement>(null);
+  const appInputRef = useRef<HTMLInputElement>(null);
   const variableAnchorRef = useRef<HTMLDivElement>(null);
   const variableTargetRef = useRef<{
     value: string;
@@ -594,6 +614,15 @@ function ActionSegmentEditor({
   /** Latest `action` for async blur handlers (avoid stale closures). */
   const latestActionRef = useRef(action);
   latestActionRef.current = action;
+  const collapseAppEditor = useCallback(() => {
+    setAppOpen(false);
+    setAppHasSearched(false);
+    const a = latestActionRef.current;
+    if ("open_app" in a && a.open_app.path.trim().length > 0) {
+      setAppQuery(a.open_app.name);
+      setAppEditing(false);
+    }
+  }, []);
   const argSlotDomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -760,6 +789,36 @@ function ActionSegmentEditor({
           selectedPath: action.open_app.path,
         })
       : "edit";
+
+  useEffect(() => {
+    if (!appEditing) return;
+    const a = latestActionRef.current;
+    if (!("open_app" in a) || a.open_app.path.trim().length === 0) return;
+    const el = appInputRef.current;
+    if (!el) return;
+    const id = requestAnimationFrame(() => {
+      el.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [appEditing]);
+
+  useEffect(() => {
+    if (!appEditing) return;
+    const a = latestActionRef.current;
+    if (!("open_app" in a) || a.open_app.path.trim().length === 0) return;
+
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target;
+      if (!(target instanceof Node)) return;
+      if (appAnchorRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest(".editor-formula-suggest")) return;
+      collapseAppEditor();
+    };
+
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [appEditing, collapseAppEditor, action]);
+
   const variableHits = useMemo(() => {
     if (!availableVariableLabels.length) return [];
     const q = variableQuery.trim().toLowerCase();
@@ -831,29 +890,14 @@ function ActionSegmentEditor({
       return null;
     }
     if ("open_app" in action) {
-      if (appDisplayMode === "confirmed") {
-        return (
-          <button
-            type="button"
-            className={`${formulaArgInputClass()} editor-formula-confirmed-chip`}
-            title={action.open_app.name || "App"}
-            onClick={() => {
-              setAppEditing(true);
-              setAppOpen(false);
-              setAppHasSearched(false);
-            }}
-            aria-label={`Selected app ${action.open_app.name}. Click to change app.`}
-          >
-            <AppIconImg
-              key={selectedAppIcon ?? `fallback:${action.open_app.path}`}
-              iconUrl={selectedAppIcon}
-              label={action.open_app.name || "App"}
-              className="editor-formula-suggest-icon"
-            />
-          </button>
-        );
-      }
       const showAppLeadingIcon = action.open_app.path.trim().length > 0;
+      const appConfirmed = appDisplayMode === "confirmed";
+      const appInputClass = [
+        formulaArgInputClass(),
+        appConfirmed ? "editor-formula-input--app-confirmed" : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
       return (
         <div
           className={
@@ -874,9 +918,12 @@ function ActionSegmentEditor({
             </span>
           ) : null}
           <input
+            ref={appInputRef}
             type="text"
-            className={formulaArgInputClass()}
+            className={appInputClass}
             value={appQuery}
+            readOnly={appConfirmed}
+            title={appConfirmed ? action.open_app.name || "App" : undefined}
             onChange={(e) => {
               const v = e.target.value;
               setAppQuery(v);
@@ -886,19 +933,16 @@ function ActionSegmentEditor({
               });
             }}
             onFocus={() => {
+              setAppEditing(true);
               setAppOpen(true);
             }}
-            onBlur={() =>
-              window.setTimeout(() => {
-                setAppOpen(false);
-                const a = latestActionRef.current;
-                if ("open_app" in a && a.open_app.path.trim().length > 0) {
-                  setAppEditing(false);
-                }
-              }, 120)
-            }
+            onBlur={() => window.setTimeout(() => collapseAppEditor(), 120)}
             placeholder="Search app…"
-            aria-label={`App name for step ${index + 1}`}
+            aria-label={
+              appConfirmed
+                ? `Selected app ${action.open_app.name}. Click to change app.`
+                : `App name for step ${index + 1}`
+            }
           />
           {appOpen ? (
             <FormulaSuggestPortal anchorRef={appAnchorRef}>

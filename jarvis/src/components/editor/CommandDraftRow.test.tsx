@@ -14,7 +14,7 @@ describe("CommandDraftRow", () => {
     expect(html).toContain('aria-label="Cancel"');
     expect(html).toContain('aria-label="Save"');
     expect(html).toContain("editor-command-draft-icon-btn");
-    expect(html).toContain("editor-command-draft-icon-btn--accent");
+    expect(html).not.toContain("editor-command-draft-icon-btn--accent");
     expect(html).not.toContain("Create command");
   });
 });

@@ -67,6 +67,37 @@ export interface CommandNodePayload {
   created_at: string;
 }
 
+export interface ToolParameter {
+  name: string;
+  param_type: string;
+  description?: string;
+  required: boolean;
+  enum_values?: string[];
+}
+
+export interface ToolDefinitionPayload {
+  id: number;
+  name: string;
+  display_name: string;
+  description: string;
+  parameters: ToolParameter[];
+  actions: ActionPayload[];
+  enabled: boolean;
+  builtin: boolean;
+  created_at: string;
+}
+
+/** Editor / IPC create-update body (DB assigns `id` and `created_at`). */
+export interface NewToolDefinitionPayload {
+  name: string;
+  display_name: string;
+  description: string;
+  parameters: ToolParameter[];
+  actions: ActionPayload[];
+  enabled: boolean;
+  builtin?: boolean;
+}
+
 /** Mic level 0..1 from `amplitude-update` (Task 4a). */
 export interface AmplitudeUpdate {
   amplitude: number;

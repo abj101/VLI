@@ -14,6 +14,19 @@ describe("reduceHudState", () => {
     expect(next.phase).toBe("listening");
   });
 
+  it("ignores hud-phase from an older session_id", () => {
+    const stopped = {
+      ...initialHudState,
+      phase: "stopped" as const,
+      sessionId: 8,
+    };
+    const next = reduceHudState(stopped, "hud-phase", {
+      phase: "listening",
+      session_id: 7,
+    });
+    expect(next).toBe(stopped);
+  });
+
   it("on listening, clears prior transcript, match, action, errors, amplitude", () => {
     const dirty = {
       ...initialHudState,
@@ -39,6 +52,25 @@ describe("reduceHudState", () => {
     expect(next.actionError).toBeNull();
     expect(next.amplitude).toBe(0);
     expect(next.audioError).toBeNull();
+  });
+
+  it("on executing, clears match and action so done/stopped never resurrects UI", () => {
+    const dirty = {
+      ...initialHudState,
+      phase: "listening" as const,
+      match: {
+        node_id: "n1",
+        matched_phrase: "open notepad",
+        span_start: 0,
+        span_end: 12,
+      },
+      actionText: "Opening…",
+      transcript: "open notepad",
+    };
+    const next = reduceHudState(dirty, "hud-phase", { phase: "executing" });
+    expect(next.match).toBeNull();
+    expect(next.actionText).toBeNull();
+    expect(next.transcript).toBe("");
   });
 
   it("on awaiting_input, clears stale match and transcript", () => {
