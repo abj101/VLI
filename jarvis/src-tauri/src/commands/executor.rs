@@ -4,8 +4,8 @@ use crate::{
     commands::open_target::execute_open_target_with_aliases,
     db::{Action, CommandNode, TargetAlias},
     window::{
-        place_window_after_app_launch, snap_foreground_window, snapshot_top_level_windows,
-        DEFAULT_MONITOR,
+        focus_existing_app_window, place_window_after_app_launch, snap_foreground_window,
+        snapshot_top_level_windows, DEFAULT_MONITOR,
     },
 };
 use log::debug;
@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use rusqlite::Connection;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_opener::OpenerExt;
 
@@ -61,6 +62,10 @@ pub trait ActionRuntime {
     fn is_cancelled(&self) -> bool;
     fn emit_status(&self, text: &str);
     fn emit_error(&self, message: &str);
+    fn persist_target_alias(&self, alias: &TargetAlias) -> Result<(), String> {
+        let _ = alias;
+        Ok(())
+    }
 }
 
 pub struct TauriActionRuntime<'a> {
@@ -218,6 +223,11 @@ impl ActionRuntime for TauriActionRuntime<'_> {
             serde_json::json!({ "message": message }),
         );
     }
+
+    fn persist_target_alias(&self, alias: &TargetAlias) -> Result<(), String> {
+        let conn = crate::open_db_connection(self.app)?;
+        crate::db::upsert_target_alias(&conn, alias).map_err(|e| e.to_string())
+    }
 }
 
 pub fn execute_command_with_context(
@@ -239,6 +249,7 @@ pub fn execute_command_with_context(
         app_index,
         tool_context.as_ref(),
         target_aliases,
+        None,
     );
     debug!("executor: execute_command finished node_id={}", node.id);
 }
@@ -248,8 +259,9 @@ pub fn execute_resolved_actions(
     actions: &[Action],
     runtime: &impl ActionRuntime,
     app_index: Option<&[AppEntry]>,
+    script_conn: Option<&Connection>,
 ) {
-    execute_actions(actions, runtime, app_index, None, None);
+    execute_actions(actions, runtime, app_index, None, None, script_conn);
 }
 
 fn execute_actions(
@@ -258,6 +270,7 @@ fn execute_actions(
     app_index: Option<&[AppEntry]>,
     tool_context: Option<&ToolCallContext>,
     target_aliases: Option<&[TargetAlias]>,
+    script_conn: Option<&Connection>,
 ) {
     let mut follow_up_responses: Vec<String> = Vec::new();
     for action in actions {
@@ -266,7 +279,7 @@ fn execute_actions(
             return;
         }
         let resolved = resolve_action_templates(action, &follow_up_responses, tool_context);
-        match execute_one_action(&resolved, runtime, app_index, target_aliases) {
+        match execute_one_action(&resolved, runtime, app_index, target_aliases, script_conn) {
             Ok(text) => runtime.emit_status(&text),
             Err(err) => {
                 if err == ACTION_CANCELLED_MSG {
@@ -310,6 +323,7 @@ fn execute_one_action(
     runtime: &impl ActionRuntime,
     app_index: Option<&[AppEntry]>,
     target_aliases: Option<&[TargetAlias]>,
+    script_conn: Option<&Connection>,
 ) -> Result<String, String> {
     match action {
         Action::OpenTarget { target, placement } => {
@@ -339,7 +353,6 @@ fn execute_one_action(
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
-            let snapshot = placement_ref.map(|_| snapshot_top_level_windows());
             let (launch_path, display) = if trimmed.is_empty() {
                 let n = name.trim();
                 if n.is_empty() {
@@ -361,12 +374,23 @@ fn execute_one_action(
                 validate_open_app_path(trimmed)?;
                 (trimmed.to_string(), name.clone())
             };
+            if focus_existing_app_window(
+                &launch_path,
+                &display,
+                placement_ref,
+                DEFAULT_MONITOR,
+            )? {
+                return Ok(match placement_ref {
+                    Some(zone) => format!("Focused {display} ({zone})..."),
+                    None => format!("Focused {display}..."),
+                });
+            }
+            let snapshot = placement_ref.map(|_| snapshot_top_level_windows());
             runtime.open_app(&launch_path)?;
             if let (Some(zone), Some(before)) = (placement_ref, snapshot) {
                 place_window_after_app_launch(&launch_path, zone, DEFAULT_MONITOR, &before)
-                    .map_err(|err| {
-                        runtime.emit_error(&err);
-                        err
+                    .inspect_err(|err| {
+                        runtime.emit_error(err);
                     })?;
                 return Ok(format!("Opening {display} ({zone})..."));
             }
@@ -382,9 +406,8 @@ fn execute_one_action(
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .unwrap_or(DEFAULT_MONITOR);
-            snap_foreground_window(zone, monitor).map_err(|err| {
-                runtime.emit_error(&err);
-                err
+            snap_foreground_window(zone, monitor).inspect_err(|err| {
+                runtime.emit_error(err);
             })?;
             Ok(format!("Snapped window to {zone}"))
         }
@@ -397,6 +420,14 @@ fn execute_one_action(
             validate_run_script(script, args)?;
             runtime.run_script(script, args)?;
             Ok(format!("Ran script {script}"))
+        }
+        Action::RunRegisteredScript { script_id, args } => {
+            let conn = script_conn.ok_or_else(|| {
+                "RunRegisteredScript requires a database connection (tool router path only)"
+                    .to_string()
+            })?;
+            crate::commands::tools::execute_registered_script(conn, script_id, args, runtime)?;
+            Ok(format!("Ran registered script {script_id}"))
         }
         Action::SendKeys { keys } => {
             validate_send_keys(keys)?;
@@ -454,6 +485,10 @@ pub fn resolve_action_templates(
         },
         Action::RunScript { script, args } => Action::RunScript {
             script: render(script),
+            args: args.iter().map(|arg| render(arg)).collect(),
+        },
+        Action::RunRegisteredScript { script_id, args } => Action::RunRegisteredScript {
+            script_id: render(script_id),
             args: args.iter().map(|arg| render(arg)).collect(),
         },
         Action::SendKeys { keys } => Action::SendKeys { keys: render(keys) },
@@ -1240,7 +1275,7 @@ mod tests {
             placement: None,
         }]);
         let ctx = ToolCallContext::with_remainder("notepad");
-        execute_actions(&node.actions, &runtime, Some(&index), Some(&ctx), None);
+        execute_actions(&node.actions, &runtime, Some(&index), Some(&ctx), None, None);
         let s = runtime.snapshot();
         assert_eq!(s.app_calls, vec!["notepad.exe".to_string()]);
         assert!(s.errors.is_empty());

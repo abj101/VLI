@@ -100,6 +100,7 @@ export function reduceHudState(
         next.transcriptFinal = false;
       }
       if (
+        phase === "routing" ||
         phase === "executing" ||
         phase === "done" ||
         phase === "stopped"

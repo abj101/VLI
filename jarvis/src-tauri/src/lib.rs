@@ -11,9 +11,8 @@ mod window;
 mod window_frame_win;
 
 use audio::SharedAudioPipeline;
-use commands::TauriActionRuntime;
 use hud::{sync_hud_webview_background, sync_hud_window, HudPhase, HUD_WINDOW_LABEL};
-use log::{debug, info, warn};
+use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,12 +46,12 @@ const SPEECH_AMPLITUDE_THRESHOLD: f64 = 0.02;
 const WAKE_COOLDOWN_AFTER_DISMISS: Duration = Duration::from_secs(2);
 const FOLLOW_UP_TIMEOUT: Duration = Duration::from_secs(8);
 const FOLLOW_UP_TIMEOUT_MSG: &str = "Follow-up input timed out";
-const ACTION_RUN_CANCELLED_MSG: &str = "Action run cancelled";
+pub(crate) const ACTION_RUN_CANCELLED_MSG: &str = "Action run cancelled";
 
 type ActionPayload = db::Action;
-type CommandCache = Arc<RwLock<Vec<db::CommandNode>>>;
+pub(crate) type CommandCache = Arc<RwLock<Vec<db::CommandNode>>>;
 /// Cached installed-app entries for `OpenApp` resolution (path optional).
-type AppIndexStore = Arc<RwLock<Vec<apps::AppEntry>>>;
+pub(crate) type AppIndexStore = Arc<RwLock<Vec<apps::AppEntry>>>;
 /// In-memory icon cache shared between the scanner and the `get_app_icon` command.
 type AppIconCache = Arc<apps::IconCache>;
 static WHISPER_GPU_STATUS: OnceLock<WhisperGpuStatus> = OnceLock::new();
@@ -262,7 +261,7 @@ fn validate_command_node_payload(payload: &CommandNodePayload) -> Result<(), Str
     Ok(())
 }
 
-fn open_db_connection(app: &AppHandle) -> Result<rusqlite::Connection, String> {
+pub(crate) fn open_db_connection(app: &AppHandle) -> Result<rusqlite::Connection, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let db_path = dir.join("jarvis.db");
     rusqlite::Connection::open(db_path).map_err(|e| e.to_string())
@@ -292,14 +291,17 @@ fn is_hotkey_already_registered_error(message: &str) -> bool {
             && lower.contains("already registered"))
 }
 
-fn resolve_fuzzy_threshold_pct(node_threshold_pct: u16, default_threshold_pct: u16) -> u16 {
+pub(crate) fn resolve_fuzzy_threshold_pct(
+    node_threshold_pct: u16,
+    default_threshold_pct: u16,
+) -> u16 {
     if node_threshold_pct == 0 {
         return default_threshold_pct.clamp(50, 100);
     }
     node_threshold_pct.clamp(1, 100)
 }
 
-fn load_default_fuzzy_threshold_pct(app: &AppHandle) -> u16 {
+pub(crate) fn load_default_fuzzy_threshold_pct(app: &AppHandle) -> u16 {
     let Ok(conn) = open_db_connection(app) else {
         return DEFAULT_THRESHOLD_PCT;
     };
@@ -370,7 +372,7 @@ impl Default for HudRuntime {
     }
 }
 
-type SharedHud = Arc<Mutex<HudRuntime>>;
+pub(crate) type SharedHud = Arc<Mutex<HudRuntime>>;
 
 /// Holds the running wake worker so `update_settings` can restart it (live reload).
 pub struct WakeSupervisorState(pub Mutex<Option<audio::wake::thread::WakeSupervisor>>);
@@ -497,10 +499,14 @@ fn phase_transition_allowed(current: HudPhase, next: HudPhase) -> bool {
     }
     match next {
         HudPhase::Matched => current == HudPhase::Listening,
+        HudPhase::Routing => current == HudPhase::Listening,
         HudPhase::Executing => {
             matches!(
                 current,
-                HudPhase::Matched | HudPhase::Executing | HudPhase::AwaitingInput
+                HudPhase::Matched
+                    | HudPhase::Routing
+                    | HudPhase::Executing
+                    | HudPhase::AwaitingInput
             )
         }
         HudPhase::AwaitingInput => current == HudPhase::Executing,
@@ -514,7 +520,7 @@ fn load_all_commands(app: &AppHandle) -> Result<Vec<db::CommandNode>, String> {
     db::get_all_commands(&conn).map_err(|e| e.to_string())
 }
 
-fn read_command_cache(cache: &CommandCache) -> Result<Vec<db::CommandNode>, String> {
+pub(crate) fn read_command_cache(cache: &CommandCache) -> Result<Vec<db::CommandNode>, String> {
     cache
         .read()
         .map_err(|_| "command cache lock poisoned".to_string())
@@ -621,7 +627,7 @@ fn update_pending_transcript(rt: &SharedHud, text: &str) -> Option<(u64, u64)> {
     Some((s.session_id, s.transcript_revision))
 }
 
-fn cancel_active_run_in_state(s: &mut HudRuntime) {
+pub(crate) fn cancel_active_run_in_state(s: &mut HudRuntime) {
     if let Some(cancel) = s.active_run_cancel.take() {
         cancel.store(true, Ordering::Relaxed);
     }
@@ -739,7 +745,7 @@ fn capture_follow_up_from_update(rt: &SharedHud, update: &audio::stt::Transcript
     true
 }
 
-fn should_finalize_execution(
+pub(crate) fn should_finalize_execution(
     rt: &HudRuntime,
     expected_session_id: u64,
     is_cancelled: bool,
@@ -798,7 +804,7 @@ fn touch_speech_on_amplitude(rt: &SharedHud, amplitude: f64) {
 /// After `emit_hud_phase(Stopped)`, wait for the HUD webview exit animation, then `hide()`.
 /// Skips hide if the user reopened during the wait (`visible` or phase changed).
 /// Re-syncs webview background immediately before `hide()`.
-fn hide_hud_window(app: &AppHandle) {
+pub(crate) fn hide_hud_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(HUD_WINDOW_LABEL) {
         if let Err(e) = w.hide() {
             warn!("hud hide: {e}");
@@ -807,7 +813,11 @@ fn hide_hud_window(app: &AppHandle) {
 }
 
 /// Command finished (no follow-up reopen): dismiss session and stop mic — do not linger on `Done`.
-fn finalize_command_run(app: &AppHandle, rt: &SharedHud, audio: &SharedAudioPipeline) {
+pub(crate) fn finalize_command_run(
+    app: &AppHandle,
+    rt: &SharedHud,
+    audio: &SharedAudioPipeline,
+) {
     if let Err(e) = dismiss_hud(app, rt) {
         warn!("finalize_command_run dismiss: {e}");
     }
@@ -904,11 +914,11 @@ fn spawn_deferred_partial_match(
             }
             s.pending_transcript.clone()
         };
-        let _ = try_match_and_execute(&app, &rt, &audio, &text);
+        let _ = commands::try_route_and_execute(&app, &rt, &audio, &text);
     });
 }
 
-fn await_follow_up_input(
+pub(crate) fn await_follow_up_input(
     app: &AppHandle,
     rt: &SharedHud,
     audio: &SharedAudioPipeline,
@@ -981,7 +991,7 @@ fn await_follow_up_input(
     }
 }
 
-fn set_phase(app: &AppHandle, rt: &SharedHud, phase: HudPhase) -> Result<u64, String> {
+pub(crate) fn set_phase(app: &AppHandle, rt: &SharedHud, phase: HudPhase) -> Result<u64, String> {
     debug!("flow: set_phase -> {}", phase.as_str());
     let (applied, session_id) = {
         let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
@@ -1008,157 +1018,14 @@ fn set_phase(app: &AppHandle, rt: &SharedHud, phase: HudPhase) -> Result<u64, St
     Ok(session_id)
 }
 
-fn try_match_and_execute(
-    app: &AppHandle,
-    rt: &SharedHud,
-    audio: &SharedAudioPipeline,
-    text: &str,
-) -> Result<(), String> {
-    let command_cache = app.state::<CommandCache>();
-    let nodes = read_command_cache(&command_cache)?;
-    let default_threshold_pct = load_default_fuzzy_threshold_pct(app);
-    let matcher_nodes: Vec<db::CommandNode> = nodes
-        .iter()
-        .cloned()
-        .map(|mut node| {
-            node.fuzzy_threshold_pct =
-                resolve_fuzzy_threshold_pct(node.fuzzy_threshold_pct, default_threshold_pct);
-            node
-        })
-        .collect();
-    let matched = match commands::match_command(text, &matcher_nodes) {
-        Some(m) => m,
-        None => {
-            debug!("flow: no trigger phrase matched");
-            return Ok(());
-        }
-    };
-
-    {
-        let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
-        if s.phase != HudPhase::Listening || !s.visible {
-            debug!("flow: skip match (phase changed before commit)");
-            return Ok(());
-        }
-    }
-    info!(
-        "flow: MATCH node_id={} phrase={:?} span={}..{}",
-        matched.node_id, matched.matched_phrase, matched.span_start, matched.span_end
-    );
-    let _ = app.emit("match-result", &matched);
-    let _ = set_phase(app, rt, HudPhase::Matched)?;
-
-    debug!("flow: stopping mic pipeline");
-    audio::stop_shared_pipeline(app, audio);
-    debug!("flow: mic stopped; phase executing");
-    let executing_session_id = set_phase(app, rt, HudPhase::Executing)?;
-    hide_hud_window(app);
-    if let Some(node) = nodes.iter().find(|n| n.id.to_string() == matched.node_id) {
-        let node = node.clone();
-        let app_h = app.clone();
-        let rt_h = Arc::clone(rt);
-        let audio_h = audio.clone();
-        let cancel_flag = Arc::new(AtomicBool::new(false));
-        {
-            let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
-            if s.session_id != executing_session_id || s.phase != HudPhase::Executing {
-                debug!("flow: skip execute spawn (phase/session changed)");
-                return Ok(());
-            }
-            cancel_active_run_in_state(&mut s);
-            s.active_run_cancel = Some(cancel_flag.clone());
-            s.active_run_session_id = Some(executing_session_id);
-            s.pending_follow_up_response = None;
-            s.pending_follow_up_candidate = None;
-            s.pending_follow_up_candidate_at = None;
-        }
-        info!("flow: spawn execute_command for node_id={}", node.id);
-        let tool_context = if matched.remainder.is_empty() {
-            None
-        } else {
-            Some(commands::ToolCallContext::with_remainder(&matched.remainder))
-        };
-        let app_index_snapshot = {
-            let st = app.state::<AppIndexStore>();
-            let guard = st
-                .read()
-                .map_err(|_| "app index lock poisoned".to_string())?;
-            guard.clone()
-        };
-        let target_aliases_snapshot = open_db_connection(app)
-            .ok()
-            .and_then(|conn| db::get_all_target_aliases(&conn).ok())
-            .unwrap_or_default();
-        std::thread::spawn(move || {
-            let followup_cancel = cancel_flag.clone();
-            let app_for_followup = app_h.clone();
-            let rt_for_followup = Arc::clone(&rt_h);
-            let audio_for_followup = audio_h.clone();
-            let runtime = TauriActionRuntime::with_follow_up_handler(
-                &app_h,
-                cancel_flag.clone(),
-                Box::new(move |prompt| {
-                    let response = await_follow_up_input(
-                        &app_for_followup,
-                        &rt_for_followup,
-                        &audio_for_followup,
-                        executing_session_id,
-                        &followup_cancel,
-                        prompt,
-                    )?;
-                    audio::stop_shared_pipeline(&app_for_followup, &audio_for_followup);
-                    let _ = set_phase(&app_for_followup, &rt_for_followup, HudPhase::Executing)?;
-                    Ok(response)
-                }),
-            );
-            commands::execute_command_with_context(
-                &node,
-                &runtime,
-                Some(app_index_snapshot.as_slice()),
-                tool_context,
-                Some(target_aliases_snapshot.as_slice()),
-            );
-            let should_finalize = {
-                let mut s = match rt_h.lock() {
-                    Ok(g) => g,
-                    Err(_) => return,
-                };
-                let allowed = should_finalize_execution(
-                    &s,
-                    executing_session_id,
-                    cancel_flag.load(Ordering::Relaxed),
-                );
-                if allowed {
-                    s.active_run_cancel = None;
-                    s.active_run_session_id = None;
-                }
-                allowed
-            };
-            if !should_finalize {
-                return;
-            }
-            debug!("flow: command run complete; dismissing hud");
-            finalize_command_run(&app_h, &rt_h, &audio_h);
-        });
-    } else {
-        warn!(
-            "flow: matched node_id={} but no row in loaded nodes (count={})",
-            matched.node_id,
-            nodes.len()
-        );
-        finalize_command_run(app, rt, audio);
-    }
-    Ok(())
-}
-
 /// # Transcription → recognition → action
 ///
 /// 1. **STT** (`audio/stt.rs`): while the mic runs, emits `transcript-update` with partial text
 ///    (`is_final: false`). After capture stops, may emit one final (`is_final: true`).
-/// 2. **Orchestrator** (this function): if HUD is `listening` and text is non-empty, run substring
-///    match against SQLite command nodes (`commands::matcher`).
-/// 3. On match: emit `match-result` → **matched** → **executing** (HUD hides; shell unmounts).
-///    → spawn [`commands::execute_command_with_context`] → [`finalize_command_run`] (`Stopped`, no `Done` linger).
+/// 2. **Orchestrator** (this function): if HUD is `listening` and text is non-empty, run tiered
+///    routing via [`commands::try_route_and_execute`] (trigger match → LLM router → tool clarify).
+/// 3. On match/route: emit `match-result` or `router-result` → **matched**/**routing** → **executing**
+///    (HUD hides; shell unmounts) → spawn execution → [`finalize_command_run`] (`Stopped`, no `Done` linger).
 ///    Follow-ups reopen the window + shell on **awaiting_input** only.
 /// 4. **React** (`subscribeHudIpc`): applies events to Zustand; transcript + span highlight from
 ///    `match-result`; status line from `action-status`.
@@ -1223,7 +1090,7 @@ fn process_transcript_update(
         }
         return Ok(());
     }
-    try_match_and_execute(app, rt, audio, &update.text)
+    commands::try_route_and_execute(app, rt, audio, &update.text)
 }
 
 fn show_hud_from_hotkey(
@@ -2187,6 +2054,7 @@ pub fn run() {
                 refresh_command_cache(app.handle(), &command_cache_for_setup)?;
                 let conn = open_db_connection(app.handle())?;
                 let app_settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
+                llm::tauri_cmds::spawn_router_warmup_on_launch(app.handle(), &app_settings);
                 let resource_dir = crate::audio::wake::resolve_wake_resource_root(
                     app.handle(),
                     app_settings.wake_engine.as_str(),
@@ -2399,6 +2267,7 @@ mod tests {
             llm_router_model_path: None,
             llm_router_confidence_threshold: db::settings::DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD,
             llm_router_tier2_enabled: false,
+            llm_router_warmup_on_launch: false,
         }
     }
 
@@ -2437,6 +2306,7 @@ mod tests {
             llm_router_model_path: None,
             llm_router_confidence_threshold: None,
             llm_router_tier2_enabled: None,
+            llm_router_warmup_on_launch: None,
         };
         assert!(settings_patch_triggers_wake_reload(
             &patch,
@@ -2457,6 +2327,7 @@ mod tests {
             llm_router_model_path: None,
             llm_router_confidence_threshold: None,
             llm_router_tier2_enabled: None,
+            llm_router_warmup_on_launch: None,
         };
         assert!(!settings_patch_triggers_wake_reload(
             &patch,
@@ -2509,6 +2380,7 @@ mod tests {
         assert!(reopen_listening_when_visible(HudPhase::Idle));
         assert!(!reopen_listening_when_visible(HudPhase::Listening));
         assert!(!reopen_listening_when_visible(HudPhase::Matched));
+        assert!(!reopen_listening_when_visible(HudPhase::Routing));
         assert!(!reopen_listening_when_visible(HudPhase::Executing));
         assert!(!reopen_listening_when_visible(HudPhase::AwaitingInput));
         assert!(!reopen_listening_when_visible(HudPhase::Stopped));

@@ -119,7 +119,11 @@ describe("announcableText", () => {
 });
 
 describe("selectPhaseLabel", () => {
-  it("does not show a phase line label (state is conveyed by content + motion)", () => {
+  it("shows understanding label during tier-2 routing", () => {
+    expect(selectPhaseLabel("routing")).toBe("Understanding…");
+  });
+
+  it("does not show a phase line label for other phases", () => {
     expect(selectPhaseLabel("listening")).toBeNull();
     expect(selectPhaseLabel("matched")).toBeNull();
     expect(selectPhaseLabel("awaiting_input")).toBeNull();
@@ -127,5 +131,12 @@ describe("selectPhaseLabel", () => {
     expect(selectPhaseLabel("done")).toBeNull();
     expect(selectPhaseLabel("stopped")).toBeNull();
     expect(selectPhaseLabel("idle")).toBeNull();
+  });
+});
+
+describe("selectCenterContent routing", () => {
+  it("shows understanding fallback while routing", () => {
+    const out = selectCenterContent(base("routing"));
+    expect(out).toEqual({ kind: "action", text: "Understanding…" });
   });
 });

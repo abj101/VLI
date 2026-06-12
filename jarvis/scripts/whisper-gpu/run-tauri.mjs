@@ -280,9 +280,11 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
   }
 
   const args = [subcommand];
+  const cargoFeatures = ["llm-local"];
   if (withGpuSelection && selected.backend !== "none") {
-    args.push("--features", `whisper-${selected.backend}`);
+    cargoFeatures.push(`whisper-${selected.backend}`, `llm-${selected.backend}`);
   }
+  args.push("--features", cargoFeatures.join(","));
   args.push(...extraArgs);
 
   if (withGpuSelection) {

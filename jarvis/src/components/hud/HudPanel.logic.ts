@@ -79,6 +79,13 @@ export function selectCenterContent(
     return { kind: "transcript", text: input.transcript };
   }
 
+  if (input.phase === "routing") {
+    return {
+      kind: "action",
+      text: normalizedActionText ?? "Understanding…",
+    };
+  }
+
   if (
     (input.phase === "matched" || input.phase === "executing") &&
     !input.match &&
@@ -114,6 +121,8 @@ function normalizeActionText(actionText: string | null): string | null {
 }
 
 export function selectPhaseLabel(phase: HudPhase): string | null {
-  void phase;
+  if (phase === "routing") {
+    return "Understanding…";
+  }
   return null;
 }

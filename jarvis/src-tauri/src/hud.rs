@@ -17,6 +17,7 @@ pub enum HudPhase {
     Idle,
     Listening,
     Matched,
+    Routing,
     Executing,
     AwaitingInput,
     Done,
@@ -29,6 +30,7 @@ impl HudPhase {
             Self::Idle => "idle",
             Self::Listening => "listening",
             Self::Matched => "matched",
+            Self::Routing => "routing",
             Self::Executing => "executing",
             Self::AwaitingInput => "awaiting_input",
             Self::Done => "done",
@@ -41,6 +43,7 @@ impl HudPhase {
             "idle" => Ok(Self::Idle),
             "listening" => Ok(Self::Listening),
             "matched" => Ok(Self::Matched),
+            "routing" => Ok(Self::Routing),
             "executing" => Ok(Self::Executing),
             "awaiting_input" => Ok(Self::AwaitingInput),
             "done" => Ok(Self::Done),
@@ -82,6 +85,7 @@ pub fn ignore_cursor_for_phase(phase: HudPhase) -> bool {
         phase,
         HudPhase::Idle
             | HudPhase::Matched
+            | HudPhase::Routing
             | HudPhase::Executing
             | HudPhase::Done
             | HudPhase::Stopped
@@ -116,6 +120,7 @@ mod tests {
     fn click_through_when_passive_phases() {
         assert!(ignore_cursor_for_phase(HudPhase::Idle));
         assert!(ignore_cursor_for_phase(HudPhase::Matched));
+        assert!(ignore_cursor_for_phase(HudPhase::Routing));
         assert!(ignore_cursor_for_phase(HudPhase::Executing));
         assert!(ignore_cursor_for_phase(HudPhase::Done));
         assert!(ignore_cursor_for_phase(HudPhase::Stopped));
@@ -133,6 +138,7 @@ mod tests {
             HudPhase::Idle,
             HudPhase::Listening,
             HudPhase::Matched,
+            HudPhase::Routing,
             HudPhase::Executing,
             HudPhase::AwaitingInput,
             HudPhase::Done,

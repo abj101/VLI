@@ -21,6 +21,7 @@ const HUD_PHASES = [
   "idle",
   "listening",
   "matched",
+  "routing",
   "executing",
   "awaiting_input",
   "done",

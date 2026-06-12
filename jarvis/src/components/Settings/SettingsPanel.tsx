@@ -54,6 +54,7 @@ type AppSettingsPayload = {
   llmRouterModelPath: string | null;
   llmRouterConfidenceThreshold: number;
   llmRouterTier2Enabled: boolean;
+  llmRouterWarmupOnLaunch: boolean;
 };
 
 type RouterStatusPayload = {
@@ -137,6 +138,7 @@ export function SettingsPanel({
     message: "This build was compiled without a Whisper GPU backend.",
   });
   const [llmRouterTier2Enabled, setLlmRouterTier2Enabled] = useState(false);
+  const [llmRouterWarmupOnLaunch, setLlmRouterWarmupOnLaunch] = useState(false);
   const [llmRouterConfidenceThreshold, setLlmRouterConfidenceThreshold] = useState(0.7);
   const [llmRouterModelPath, setLlmRouterModelPath] = useState("");
   const [routerPreparing, setRouterPreparing] = useState(false);
@@ -268,6 +270,7 @@ export function SettingsPanel({
     setLocalWhisperUseGpu(app.localWhisperUseGpu);
     setWhisperGpuStatus(gpuStatus);
     setLlmRouterTier2Enabled(app.llmRouterTier2Enabled);
+    setLlmRouterWarmupOnLaunch(app.llmRouterWarmupOnLaunch);
     setLlmRouterConfidenceThreshold(app.llmRouterConfidenceThreshold);
     setLlmRouterModelPath(app.llmRouterModelPath ?? "");
     setRouterStatus(router);
@@ -276,8 +279,17 @@ export function SettingsPanel({
   const whisperGpuCanEnable =
     whisperGpuStatus.compileBackend !== "none" && whisperGpuStatus.runtimeAvailable;
 
-  const routerCanEnable =
-    routerStatus.featureCompiled && routerStatus.modelPresent;
+  const routerFeatureCompiled = routerStatus.featureCompiled;
+  const routerModelPresent = routerStatus.modelPresent;
+  const routerRuntimeReady = routerFeatureCompiled && routerModelPresent;
+  const routerTier2StatusMessage = routerPreparing
+    ? (routerPrepMessage ?? "Preparing model…")
+    : (routerPrepMessage ??
+      (!routerFeatureCompiled
+        ? "This build has no llm-local feature — rebuild with llm-local to route at runtime."
+        : !routerModelPresent
+          ? "Router model missing — run scripts/download-router-model.ps1 from the jarvis folder."
+          : routerStatus.message));
 
   useEffect(() => {
     let mounted = true;
@@ -536,7 +548,7 @@ export function SettingsPanel({
     if (!next) {
       setRouterPreparing(false);
       setRouterPrepMessage(null);
-    } else if (routerCanEnable) {
+    } else if (routerRuntimeReady) {
       setRouterPreparing(true);
       setRouterPrepMessage("Warming router model…");
     }
@@ -545,7 +557,14 @@ export function SettingsPanel({
         patch: { llmRouterTier2Enabled: next },
       });
       setLlmRouterTier2Enabled(s.llmRouterTier2Enabled);
-      if (next && s.llmRouterTier2Enabled && routerCanEnable) {
+      if (next && s.llmRouterTier2Enabled && !routerRuntimeReady) {
+        showSettingsNotice(
+          !routerFeatureCompiled
+            ? "Tier 2 saved. Rebuild Jarvis with the llm-local Cargo feature to activate routing."
+            : "Tier 2 saved. Download the router GGUF (scripts/download-router-model.ps1) to activate routing.",
+        );
+      }
+      if (next && s.llmRouterTier2Enabled && routerRuntimeReady) {
         const unlisten = await listen<RouterWarmupPayload>("router-warmup", (event) => {
           setRouterPrepMessage(event.payload.message);
           showSettingsNotice(event.payload.message);
@@ -582,6 +601,23 @@ export function SettingsPanel({
       });
     } catch (err) {
       showSettingsNotice(formatUserError(err, "Could not save router confidence threshold."));
+    }
+  };
+
+  const persistLlmRouterWarmupOnLaunch = async (next: boolean) => {
+    const prev = llmRouterWarmupOnLaunch;
+    setLlmRouterWarmupOnLaunch(next);
+    try {
+      const s = await invoke<AppSettingsPayload>("update_settings", {
+        patch: { llmRouterWarmupOnLaunch: next },
+      });
+      setLlmRouterWarmupOnLaunch(s.llmRouterWarmupOnLaunch);
+      showSettingsNotice(
+        next ? "Router will warm on next launch" : "Router warmup on launch disabled",
+      );
+    } catch (err) {
+      setLlmRouterWarmupOnLaunch(prev);
+      showSettingsNotice(formatUserError(err, "Could not save router warmup setting."));
     }
   };
 
@@ -1002,6 +1038,11 @@ export function SettingsPanel({
 
                   <section className="editor-settings-section editor-settings-section--compact">
                     <p className="editor-settings-group-label">LLM router (Tier 2)</p>
+                    <p className="editor-settings-help">
+                      When Tier 2 is off, only pinned trigger phrases run commands. Natural speech
+                      like &quot;put slack on the left&quot; is ignored unless Tier 2 is enabled and
+                      the router model is present.
+                    </p>
                     <div className="editor-settings-row editor-settings-row--switch">
                       <div className="editor-settings-row-label editor-settings-row-label--stack">
                         <SettingsLabelWithInfo
@@ -1011,10 +1052,7 @@ export function SettingsPanel({
                         >
                           Enable Tier 2 routing
                         </SettingsLabelWithInfo>
-                        {(routerPreparing ||
-                          routerPrepMessage ||
-                          !routerCanEnable ||
-                          routerStatus.message) && (
+                        {routerTier2StatusMessage && (
                           <span
                             className="editor-settings-switch-meta"
                             role="status"
@@ -1023,13 +1061,7 @@ export function SettingsPanel({
                             {routerPreparing && (
                               <span className="editor-settings-spinner" aria-hidden />
                             )}
-                            {routerPreparing
-                              ? (routerPrepMessage ?? "Preparing model…")
-                              : (routerPrepMessage ??
-                                routerStatus.message ??
-                                (!routerCanEnable
-                                  ? "Router model or feature unavailable"
-                                  : null))}
+                            {routerTier2StatusMessage}
                           </span>
                         )}
                       </div>
@@ -1041,8 +1073,37 @@ export function SettingsPanel({
                           role="switch"
                           aria-labelledby="editor-llm-router-tier2-label"
                           aria-checked={llmRouterTier2Enabled}
-                          disabled={!routerCanEnable}
+                          disabled={routerPreparing}
                           onClick={() => void persistLlmRouterTier2(!llmRouterTier2Enabled)}
+                        >
+                          <span className="editor-switch-knob" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="editor-settings-row editor-settings-row--switch">
+                      <div className="editor-settings-row-label">
+                        <SettingsLabelWithInfo
+                          id="editor-llm-router-warmup-label"
+                          tipId="tip-llm-router-warmup"
+                          tip="Load the router model in the background when Jarvis starts (only when Tier 2 is enabled)."
+                        >
+                          Warm router model on launch
+                        </SettingsLabelWithInfo>
+                      </div>
+                      <div className="editor-settings-row-control editor-settings-row-control--switch">
+                        <button
+                          type="button"
+                          id="editor-llm-router-warmup"
+                          className={`editor-switch${llmRouterWarmupOnLaunch ? " is-on" : ""}`}
+                          role="switch"
+                          aria-labelledby="editor-llm-router-warmup-label"
+                          aria-checked={llmRouterWarmupOnLaunch}
+                          disabled={
+                            !llmRouterTier2Enabled || !routerRuntimeReady || routerPreparing
+                          }
+                          onClick={() =>
+                            void persistLlmRouterWarmupOnLaunch(!llmRouterWarmupOnLaunch)
+                          }
                         >
                           <span className="editor-switch-knob" />
                         </button>

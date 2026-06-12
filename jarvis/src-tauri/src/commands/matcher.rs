@@ -191,12 +191,11 @@ fn best_fuzzy_match(transcript: &str, phrase: &str, mode: &MatchMode) -> (f64, u
             let end = start + window_size - 1;
             let span_start = windows[start].0;
             let span_end = windows[end].1;
-            if matches!(mode, MatchMode::Prefix) {
-                if !is_word_boundary_before(transcript, span_start)
-                    || !is_word_boundary_after(transcript, span_end)
-                {
-                    continue;
-                }
+            if matches!(mode, MatchMode::Prefix)
+                && (!is_word_boundary_before(transcript, span_start)
+                    || !is_word_boundary_after(transcript, span_end))
+            {
+                continue;
             }
             let chunk = &transcript[span_start..span_end];
             let score = fuzz::ratio(chunk.to_lowercase().chars(), phrase_lower.chars());

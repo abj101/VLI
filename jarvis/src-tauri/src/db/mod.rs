@@ -3,6 +3,7 @@
 mod app_index;
 mod models;
 pub mod settings;
+mod registered_scripts;
 mod target_aliases;
 mod tools;
 
@@ -11,6 +12,11 @@ pub use models::{
     Action, CommandNode, MatchMode, NewCommandNode, NewToolDefinition, ToolDefinition,
     ToolParameter,
 };
+pub use registered_scripts::{
+    get_registered_script, verify_registered_script_file,
+};
+#[cfg(test)]
+pub use registered_scripts::{hash_file, upsert_registered_script, RegisteredScript};
 pub use target_aliases::{
     delete_target_alias, get_all_target_aliases, get_target_alias, upsert_target_alias,
     TargetAlias, TargetAliasKind,
@@ -64,6 +70,7 @@ pub fn init_db(path: &Path) -> Result<(), DbError> {
     app_index::ensure_app_index_schema(&conn)?;
     tools::ensure_tools_schema(&conn)?;
     target_aliases::ensure_target_aliases_schema(&conn)?;
+    registered_scripts::ensure_registered_scripts_schema(&conn)?;
     seed_builtin_open_command(&conn)?;
     drop_legacy_ai_command_columns(&conn)?;
     purge_legacy_shipped_sample_commands(&conn)?;

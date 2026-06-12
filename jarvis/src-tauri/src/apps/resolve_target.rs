@@ -472,6 +472,26 @@ mod tests {
     }
 
     #[test]
+    fn resolve_target_learned_alias_used_on_second_resolve() {
+        let entries = vec![github_app_entry()];
+        let aliases = vec![TargetAlias {
+            spoken: "github".into(),
+            kind: TargetAliasKind::Url,
+            value: "https://github.com".into(),
+        }];
+        let first = resolve_target("github", &entries, &[]);
+        assert!(matches!(first, ResolvedTarget::Ambiguous { .. }));
+        let second = resolve_target("github", &entries, &aliases);
+        assert_eq!(
+            second,
+            ResolvedTarget::Url {
+                url: "https://github.com".into(),
+                placement: None,
+            }
+        );
+    }
+
+    #[test]
     fn resolve_target_alias_github_url_overrides_app() {
         let entries = vec![github_app_entry()];
         let aliases = vec![TargetAlias {

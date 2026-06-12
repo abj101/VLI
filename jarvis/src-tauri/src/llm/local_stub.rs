@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use tauri::AppHandle;
 
+#[allow(dead_code)]
 pub const ROUTER_MODEL_FILE: &str = "qwen2.5-0.5b-instruct-q4_k_m.gguf";
 
 pub fn llm_compile_backend() -> &'static str {

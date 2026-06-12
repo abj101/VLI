@@ -24,6 +24,15 @@ pub fn place_window_after_app_launch(
     Err("window placement is only supported on Windows".to_string())
 }
 
+pub fn focus_existing_app_window(
+    _exe_path: &str,
+    _display_name: &str,
+    _zone: Option<&str>,
+    _monitor: &str,
+) -> Result<bool, String> {
+    Ok(false)
+}
+
 pub fn snap_foreground_window(_zone: &str, _monitor: &str) -> Result<(), String> {
     Err("window placement is only supported on Windows".to_string())
 }

@@ -9,10 +9,10 @@ use crate::{
         AppEntry,
     },
     commands::executor::ActionRuntime,
-    db::TargetAlias,
+    db::{TargetAlias, TargetAliasKind},
     window::{
-        place_window_after_app_launch, placement_status_label, snap_foreground_window,
-        snapshot_top_level_windows, DEFAULT_MONITOR,
+        focus_existing_app_window, place_window_after_app_launch, placement_status_label,
+        snap_foreground_window, snapshot_top_level_windows, DEFAULT_MONITOR,
     },
 };
 use rusqlite::Connection;
@@ -127,9 +127,66 @@ fn clarify_and_resolve(
         };
         !app_weak
     });
-    ambiguous_to_choice(ambiguous, choose_app).ok_or_else(|| {
+    let resolved = ambiguous_to_choice(ambiguous, choose_app).ok_or_else(|| {
         format!("Could not interpret follow-up for `{response}`")
-    })
+    })?;
+    learn_alias_from_clarify(runtime, ambiguous, choose_app);
+    Ok(resolved)
+}
+
+fn learn_alias_from_clarify(
+    runtime: &impl ActionRuntime,
+    ambiguous: &ResolvedTarget,
+    choose_app: bool,
+) {
+    let ResolvedTarget::Ambiguous {
+        query,
+        app_candidates,
+        url_candidate,
+        ..
+    } = ambiguous
+    else {
+        return;
+    };
+    let spoken = query.trim().to_lowercase();
+    if spoken.is_empty() {
+        return;
+    }
+    let alias = if choose_app {
+        let Some(top) = app_candidates.first() else {
+            return;
+        };
+        TargetAlias {
+            spoken: spoken.clone(),
+            kind: TargetAliasKind::App,
+            value: top.exe_path.clone(),
+        }
+    } else {
+        TargetAlias {
+            spoken: spoken.clone(),
+            kind: TargetAliasKind::Url,
+            value: if url_candidate.url.is_empty() {
+                format!("https://{spoken}.com")
+            } else {
+                url_candidate.url.clone()
+            },
+        }
+    };
+    if let Err(err) = runtime.persist_target_alias(&alias) {
+        runtime.emit_error(&format!("Could not remember alias: {err}"));
+    } else {
+        runtime.emit_status(&format!(
+            "Remembered `{spoken}` as {}",
+            alias_kind_label(&alias)
+        ));
+    }
+}
+
+fn alias_kind_label(alias: &TargetAlias) -> &'static str {
+    match alias.kind {
+        TargetAliasKind::App => "app",
+        TargetAliasKind::Url => "browser",
+    }
 }
 
 fn launch_resolved(
@@ -144,12 +201,18 @@ fn launch_resolved(
             placement,
         } => {
             let path = resolve_app_launch_path(display_name, exe_path, app_index)?;
-            let snapshot = placement
-                .as_ref()
-                .filter(|z| !z.trim().is_empty())
-                .map(|_| snapshot_top_level_windows());
+            let zone = placement.as_deref().filter(|z| !z.trim().is_empty());
+            if focus_existing_app_window(&path, display_name, zone, DEFAULT_MONITOR)? {
+                runtime.emit_status(&format!(
+                    "Focused {display_name}{}",
+                    zone.map(|z| format!(" ({})", placement_status_label(z)))
+                        .unwrap_or_default()
+                ));
+                return Ok(());
+            }
+            let snapshot = zone.map(|_| snapshot_top_level_windows());
             runtime.open_app(&path)?;
-            if let (Some(zone), Some(before)) = (placement.as_deref(), snapshot) {
+            if let (Some(zone), Some(before)) = (zone, snapshot) {
                 apply_placement_after_launch(runtime, &path, zone, before)?;
             }
             Ok(())
@@ -159,9 +222,8 @@ fn launch_resolved(
             runtime.open_url(url)?;
             if let Some(zone) = placement.as_deref().filter(|z| !z.trim().is_empty()) {
                 thread::sleep(Duration::from_millis(600));
-                snap_foreground_window(zone, DEFAULT_MONITOR).map_err(|err| {
-                    runtime.emit_error(&err);
-                    err
+                snap_foreground_window(zone, DEFAULT_MONITOR).inspect_err(|err| {
+                    runtime.emit_error(err);
                 })?;
                 runtime.emit_status(&format!(
                     "Placed browser window ({})",
@@ -268,6 +330,7 @@ mod tests {
         errors: Vec<String>,
         follow_up_answers: Vec<String>,
         follow_up_prompts: Vec<String>,
+        learned_aliases: Vec<TargetAlias>,
     }
 
     #[derive(Clone, Default)]
@@ -322,12 +385,17 @@ mod tests {
         fn emit_error(&self, message: &str) {
             self.state.lock().unwrap().errors.push(message.to_string());
         }
+
+        fn persist_target_alias(&self, alias: &TargetAlias) -> Result<(), String> {
+            self.state.lock().unwrap().learned_aliases.push(alias.clone());
+            Ok(())
+        }
     }
 
     fn brave_entry() -> AppEntry {
         AppEntry {
             display_name: "Brave".into(),
-            exe_path: r"C:\Brave\brave.exe".into(),
+            exe_path: r"C:\JarvisTestOnly\no-real-brave-xyz.exe".into(),
             icon_data_url: None,
         }
     }
@@ -341,7 +409,7 @@ mod tests {
         assert!(msg.contains("Brave"));
         assert_eq!(
             runtime.state.lock().unwrap().app_calls,
-            vec![r"C:\Brave\brave.exe".to_string()]
+            vec![r"C:\JarvisTestOnly\no-real-brave-xyz.exe".to_string()]
         );
     }
 
@@ -364,6 +432,28 @@ mod tests {
             runtime.state.lock().unwrap().url_calls,
             vec!["https://github.com".to_string()]
         );
+    }
+
+    #[test]
+    fn clarify_learns_url_alias() {
+        let runtime = MockRuntime {
+            state: Arc::new(Mutex::new(MockState {
+                follow_up_answers: vec!["browser".into()],
+                ..Default::default()
+            })),
+        };
+        let index = vec![AppEntry {
+            display_name: "GitHub".into(),
+            exe_path: "gh.exe".into(),
+            icon_data_url: None,
+        }];
+        execute_open_target_with_aliases("github", None, &[], &runtime, Some(&index))
+            .expect("clarified");
+        let learned = &runtime.state.lock().unwrap().learned_aliases;
+        assert_eq!(learned.len(), 1);
+        assert_eq!(learned[0].spoken, "github");
+        assert_eq!(learned[0].kind, TargetAliasKind::Url);
+        assert_eq!(learned[0].value, "https://github.com");
     }
 
     #[test]

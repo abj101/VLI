@@ -15,6 +15,7 @@ pub const SETTING_LLM_ROUTER_MODEL_PATH: &str = "llm_router_model_path";
 pub const SETTING_LLM_ROUTER_CONFIDENCE_THRESHOLD: &str = "llm_router_confidence_threshold";
 pub const DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD: f32 = 0.7;
 pub const SETTING_LLM_ROUTER_TIER2_ENABLED: &str = "llm_router_tier2_enabled";
+pub const SETTING_LLM_ROUTER_WARMUP_ON_LAUNCH: &str = "llm_router_warmup_on_launch";
 
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>, DbError> {
     let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
@@ -118,6 +119,8 @@ pub struct AppSettings {
     pub llm_router_confidence_threshold: f32,
     /// When true, Tier 2 on-device LLM routing is allowed (Phase C).
     pub llm_router_tier2_enabled: bool,
+    /// When true, warm the router model at app startup (if Tier 2 is enabled).
+    pub llm_router_warmup_on_launch: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -133,6 +136,7 @@ pub struct SettingsPatch {
     pub llm_router_model_path: Option<String>,
     pub llm_router_confidence_threshold: Option<f32>,
     pub llm_router_tier2_enabled: Option<bool>,
+    pub llm_router_warmup_on_launch: Option<bool>,
 }
 
 pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
@@ -164,6 +168,10 @@ pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
         llm_router_tier2_enabled: bool_from_setting(get_setting(
             conn,
             SETTING_LLM_ROUTER_TIER2_ENABLED,
+        )?),
+        llm_router_warmup_on_launch: bool_from_setting(get_setting(
+            conn,
+            SETTING_LLM_ROUTER_WARMUP_ON_LAUNCH,
         )?),
     })
 }
@@ -251,7 +259,7 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
         }
     }
     if let Some(t) = patch.llm_router_confidence_threshold {
-        if !(t.is_finite() && t >= 0.0 && t <= 1.0) {
+        if !(t.is_finite() && (0.0..=1.0).contains(&t)) {
             return Err(DbError::Validation(
                 "llm_router_confidence_threshold must be between 0 and 1".into(),
             ));
@@ -266,6 +274,13 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
         set_setting(
             conn,
             SETTING_LLM_ROUTER_TIER2_ENABLED,
+            if on { "1" } else { "0" },
+        )?;
+    }
+    if let Some(on) = patch.llm_router_warmup_on_launch {
+        set_setting(
+            conn,
+            SETTING_LLM_ROUTER_WARMUP_ON_LAUNCH,
             if on { "1" } else { "0" },
         )?;
     }
@@ -348,6 +363,7 @@ mod tests {
                 < f32::EPSILON
         );
         assert!(!s.llm_router_tier2_enabled);
+        assert!(!s.llm_router_warmup_on_launch);
     }
 
     #[test]
@@ -366,6 +382,7 @@ mod tests {
                 llm_router_model_path: None,
                 llm_router_confidence_threshold: None,
                 llm_router_tier2_enabled: None,
+                llm_router_warmup_on_launch: None,
             },
         )
         .expect("patch");
@@ -390,6 +407,7 @@ mod tests {
                 llm_router_model_path: None,
                 llm_router_confidence_threshold: None,
                 llm_router_tier2_enabled: None,
+                llm_router_warmup_on_launch: None,
             },
         )
         .expect_err("expected validation error");
@@ -415,6 +433,7 @@ mod tests {
                 llm_router_model_path: None,
                 llm_router_confidence_threshold: None,
                 llm_router_tier2_enabled: None,
+                llm_router_warmup_on_launch: None,
             },
         )
         .expect("patch");
@@ -441,6 +460,7 @@ mod tests {
                 llm_router_model_path: None,
                 llm_router_confidence_threshold: None,
                 llm_router_tier2_enabled: None,
+                llm_router_warmup_on_launch: None,
             },
         )
         .expect_err("expected validation error");
@@ -463,6 +483,7 @@ mod tests {
                 llm_router_model_path: None,
                 llm_router_confidence_threshold: None,
                 llm_router_tier2_enabled: None,
+                llm_router_warmup_on_launch: None,
             },
         )
         .expect("patch");
@@ -481,6 +502,7 @@ mod tests {
                 llm_router_model_path: None,
                 llm_router_confidence_threshold: None,
                 llm_router_tier2_enabled: None,
+                llm_router_warmup_on_launch: None,
             },
         )
         .expect("patch off");
@@ -504,6 +526,7 @@ mod tests {
                 llm_router_model_path: Some(r"C:\models\router.gguf".into()),
                 llm_router_confidence_threshold: Some(0.55),
                 llm_router_tier2_enabled: Some(true),
+                llm_router_warmup_on_launch: Some(true),
             },
         )
         .expect("patch");
@@ -514,5 +537,6 @@ mod tests {
         );
         assert!((s.llm_router_confidence_threshold - 0.55).abs() < 0.0001);
         assert!(s.llm_router_tier2_enabled);
+        assert!(s.llm_router_warmup_on_launch);
     }
 }

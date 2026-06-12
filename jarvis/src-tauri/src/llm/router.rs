@@ -6,12 +6,22 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
-/// Successful router output after parse + schema validation.
+/// Maximum tool calls in one router response (multi-step intents).
+pub const MAX_ROUTER_TOOL_CALLS: usize = 3;
+
+/// One validated tool invocation (no per-call confidence).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RouterToolCall {
     pub tool: String,
     pub args: HashMap<String, String>,
+}
+
+/// Successful router output after parse + schema validation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouterRouteResult {
+    pub tool_calls: Vec<RouterToolCall>,
     pub confidence: f32,
 }
 
@@ -48,9 +58,19 @@ pub trait RouterInfer {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct RawRouterOutput {
+    #[serde(default)]
+    tool: String,
+    #[serde(default)]
+    args: Map<String, Value>,
+    #[serde(default)]
+    tool_calls: Vec<RawRouterToolCall>,
+    confidence: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RawRouterToolCall {
     tool: String,
     args: Map<String, Value>,
-    confidence: f64,
 }
 
 /// Pull the first balanced `{ ... }` object from model text.
@@ -158,23 +178,68 @@ pub fn validate_router_call(
     conn: &Connection,
     raw: &RawRouterOutput,
     confidence_threshold: f32,
-) -> Result<RouterToolCall, RouterError> {
-    if !(raw.confidence.is_finite() && raw.confidence >= 0.0 && raw.confidence <= 1.0) {
+) -> Result<RouterRouteResult, RouterError> {
+    let confidence = validate_confidence(raw.confidence, confidence_threshold)?;
+    let tool_calls = normalize_raw_tool_calls(raw)?;
+    if tool_calls.is_empty() {
+        return Err(RouterError {
+            code: RouterErrorCode::SchemaInvalid,
+            message: "at least one tool call is required".into(),
+        });
+    }
+    if tool_calls.len() > MAX_ROUTER_TOOL_CALLS {
+        return Err(RouterError {
+            code: RouterErrorCode::SchemaInvalid,
+            message: format!(
+                "too many tool calls (max {MAX_ROUTER_TOOL_CALLS}); multi-step sequence not supported"
+            ),
+        });
+    }
+    let mut validated = Vec::with_capacity(tool_calls.len());
+    for raw_call in tool_calls {
+        validated.push(validate_single_tool_call(conn, &raw_call)?);
+    }
+    Ok(RouterRouteResult {
+        tool_calls: validated,
+        confidence,
+    })
+}
+
+fn validate_confidence(confidence: f64, threshold: f32) -> Result<f32, RouterError> {
+    if !(confidence.is_finite() && (0.0..=1.0).contains(&confidence)) {
         return Err(RouterError {
             code: RouterErrorCode::SchemaInvalid,
             message: "confidence must be a number between 0 and 1".into(),
         });
     }
-    let confidence = raw.confidence as f32;
-    if confidence < confidence_threshold {
+    let confidence = confidence as f32;
+    if confidence < threshold {
         return Err(RouterError {
             code: RouterErrorCode::LowConfidence,
-            message: format!(
-                "confidence {confidence:.2} is below threshold {confidence_threshold:.2}"
-            ),
+            message: format!("confidence {confidence:.2} is below threshold {threshold:.2}"),
         });
     }
+    Ok(confidence)
+}
 
+fn normalize_raw_tool_calls(raw: &RawRouterOutput) -> Result<Vec<RawRouterToolCall>, RouterError> {
+    if !raw.tool_calls.is_empty() {
+        return Ok(raw.tool_calls.clone());
+    }
+    let tool_name = raw.tool.trim();
+    if tool_name.is_empty() {
+        return Ok(vec![]);
+    }
+    Ok(vec![RawRouterToolCall {
+        tool: tool_name.to_string(),
+        args: raw.args.clone(),
+    }])
+}
+
+fn validate_single_tool_call(
+    conn: &Connection,
+    raw: &RawRouterToolCall,
+) -> Result<RouterToolCall, RouterError> {
     let tool_name = raw.tool.trim();
     if tool_name.is_empty() {
         return Err(RouterError {
@@ -182,7 +247,6 @@ pub fn validate_router_call(
             message: "tool name is required".into(),
         });
     }
-
     let tool = get_tool_by_name(conn, tool_name)
         .map_err(|e| RouterError {
             code: RouterErrorCode::SchemaInvalid,
@@ -192,19 +256,16 @@ pub fn validate_router_call(
             code: RouterErrorCode::UnknownTool,
             message: format!("unknown tool `{tool_name}`"),
         })?;
-
     if !tool.enabled {
         return Err(RouterError {
             code: RouterErrorCode::ToolDisabled,
             message: format!("tool `{tool_name}` is disabled"),
         });
     }
-
     let args = validate_args_against_tool(&tool, &raw.args)?;
     Ok(RouterToolCall {
         tool: tool.name,
         args,
-        confidence,
     })
 }
 
@@ -253,7 +314,7 @@ pub fn route_transcript_with_infer(
     transcript: &str,
     confidence_threshold: f32,
     infer: &impl RouterInfer,
-) -> Result<RouterToolCall, RouterError> {
+) -> Result<RouterRouteResult, RouterError> {
     let prompt = crate::llm::prompt::build_router_prompt(transcript, tools);
     let completion = infer.infer(&prompt).map_err(|message| RouterError {
         code: RouterErrorCode::InferFailed,
@@ -314,10 +375,14 @@ mod tests {
             &mock,
         )
         .expect("route");
-        assert_eq!(result.tool, "open_target");
-        assert_eq!(result.args.get("target").map(String::as_str), Some("brave"));
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].tool, "open_target");
         assert_eq!(
-            result.args.get("placement").map(String::as_str),
+            result.tool_calls[0].args.get("target").map(String::as_str),
+            Some("brave")
+        );
+        assert_eq!(
+            result.tool_calls[0].args.get("placement").map(String::as_str),
             Some("left_half")
         );
         assert!(result.confidence >= 0.7);
@@ -350,6 +415,7 @@ mod tests {
         let raw = RawRouterOutput {
             tool: "open_target".into(),
             args: Map::from_iter([("bogus".into(), json!("x"))]),
+            tool_calls: vec![],
             confidence: 0.9,
         };
         let err = validate_router_call(&conn, &raw, 0.7).unwrap_err();
@@ -365,9 +431,53 @@ mod tests {
                 ("target".into(), json!("brave")),
                 ("placement".into(), json!("top_left")),
             ]),
+            tool_calls: vec![],
             confidence: 0.9,
         };
         let err = validate_router_call(&conn, &raw, 0.7).unwrap_err();
         assert_eq!(err.code, RouterErrorCode::SchemaInvalid);
+    }
+
+    #[test]
+    fn multi_step_tool_calls_up_to_three() {
+        let (_dir, conn) = test_conn();
+        let raw = RawRouterOutput {
+            tool: String::new(),
+            args: Map::new(),
+            tool_calls: vec![
+                RawRouterToolCall {
+                    tool: "open_target".into(),
+                    args: Map::from_iter([("target".into(), json!("brave"))]),
+                },
+                RawRouterToolCall {
+                    tool: "snap_window".into(),
+                    args: Map::from_iter([("zone".into(), json!("maximize"))]),
+                },
+            ],
+            confidence: 0.88,
+        };
+        let result = validate_router_call(&conn, &raw, 0.7).expect("multi-step");
+        assert_eq!(result.tool_calls.len(), 2);
+        assert_eq!(result.tool_calls[0].tool, "open_target");
+        assert_eq!(result.tool_calls[1].tool, "snap_window");
+    }
+
+    #[test]
+    fn rejects_more_than_max_tool_calls() {
+        let (_dir, conn) = test_conn();
+        let raw = RawRouterOutput {
+            tool: String::new(),
+            args: Map::new(),
+            tool_calls: (0..4)
+                .map(|_| RawRouterToolCall {
+                    tool: "open_url".into(),
+                    args: Map::from_iter([("url".into(), json!("https://example.com"))]),
+                })
+                .collect(),
+            confidence: 0.9,
+        };
+        let err = validate_router_call(&conn, &raw, 0.7).unwrap_err();
+        assert_eq!(err.code, RouterErrorCode::SchemaInvalid);
+        assert!(err.message.contains("max 3"));
     }
 }

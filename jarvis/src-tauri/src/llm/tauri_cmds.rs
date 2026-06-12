@@ -7,7 +7,7 @@ use crate::db::{
 use crate::llm::{
     infer_router_completion, llm_compile_backend, llm_gpu_runtime_available,
     resolve_router_model_path, route_transcript_with_infer, RouterError, RouterErrorCode,
-    RouterInfer, RouterToolCall,
+    RouterInfer, RouterRouteResult,
 };
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -124,9 +124,7 @@ fn router_status_inner(app: &AppHandle) -> RouterStatus {
     let message = if !feature_compiled {
         Some("This build was compiled without the `llm-local` feature.".into())
     } else if !model_present {
-        Some(format!(
-            "Router model not found. Run scripts/download-router-model.ps1."
-        ))
+        Some("Router model not found. Run scripts/download-router-model.ps1.".into())
     } else if compile_backend != "none" && runtime_available {
         Some(format!(
             "Router GPU backend ready: {}.",
@@ -193,6 +191,27 @@ fn warmup_router_blocking(app: AppHandle) -> RouterWarmupPayload {
     }
 }
 
+/// Background warmup when Tier 2 and warmup-on-launch are enabled (app startup).
+pub fn spawn_router_warmup_on_launch(app: &AppHandle, settings: &crate::db::AppSettings) {
+    if !settings.llm_router_tier2_enabled || !settings.llm_router_warmup_on_launch {
+        return;
+    }
+    let status = router_status_inner(app);
+    if !status.feature_compiled || !status.model_present {
+        return;
+    }
+    if let Some(cache) = app.try_state::<RouterModelCache>() {
+        if cache.is_warmed() {
+            return;
+        }
+    }
+    let app_bg = app.clone();
+    std::thread::spawn(move || {
+        let payload = warmup_router_blocking(app_bg.clone());
+        let _ = app_bg.emit("router-warmup", &payload);
+    });
+}
+
 #[tauri::command]
 pub fn router_warmup(app: AppHandle, cache: State<'_, RouterModelCache>) -> RouterWarmupPayload {
     let status = router_status_inner(&app);
@@ -226,7 +245,7 @@ pub fn router_warmup(app: AppHandle, cache: State<'_, RouterModelCache>) -> Rout
 }
 
 #[tauri::command]
-pub fn route_transcript(app: AppHandle, transcript: String) -> Result<RouterToolCall, String> {
+pub fn route_transcript(app: AppHandle, transcript: String) -> Result<RouterRouteResult, String> {
     if !cfg!(feature = "llm-local") {
         return Err(
             RouterError {

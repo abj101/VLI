@@ -59,15 +59,20 @@ pub fn build_tool_catalog(tools: &[ToolDefinition]) -> Vec<Value> {
     enabled.iter().map(|t| tool_catalog_entry(t)).collect()
 }
 
-const SYSTEM_INSTRUCTIONS: &str = r#"You are a voice-command router. Given the user transcript and available tools, pick exactly one tool call.
+const SYSTEM_INSTRUCTIONS: &str = r#"You are a voice-command router. Given the user transcript and available tools, pick one or more tool calls (max 3).
 
 Respond with a single JSON object only — no markdown, no explanation:
+{ "tool_calls": [ { "tool": "<tool_name>", "args": { ... } }, ... ], "confidence": <0.0-1.0> }
+
+Legacy single-call shape is also accepted:
 { "tool": "<tool_name>", "args": { ... }, "confidence": <0.0-1.0> }
 
 Rules:
-- "tool" must be one of the catalog tool names.
-- "args" must match that tool's parameter schema.
-- "confidence" is how sure you are (0.0–1.0).
+- Prefer "tool_calls" for multi-step intents (e.g. open app then snap window).
+- At most 3 tool calls per response.
+- Each "tool" must be one of the catalog tool names.
+- Each "args" object must match that tool's parameter schema.
+- "confidence" is how sure you are about the whole plan (0.0–1.0).
 - Omit optional args when not needed.
 - If nothing matches, use the closest tool with low confidence."#;
 

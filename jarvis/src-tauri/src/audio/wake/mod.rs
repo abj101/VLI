@@ -238,6 +238,7 @@ mod tests {
             llm_router_model_path: None,
             llm_router_confidence_threshold: crate::db::settings::DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD,
             llm_router_tier2_enabled: false,
+            llm_router_warmup_on_launch: false,
         };
         let r = build_wake_detector("hotkey", tmp.path(), &s);
         assert!(r.is_err());

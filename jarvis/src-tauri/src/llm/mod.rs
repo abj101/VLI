@@ -21,6 +21,6 @@ pub use local_stub::{
 };
 
 pub use router::{
-    route_transcript_with_infer, RouterError, RouterErrorCode, RouterInfer, RouterToolCall,
+    route_transcript_with_infer, RouterError, RouterErrorCode, RouterInfer, RouterRouteResult,
 };
 pub use tauri_cmds::RouterModelCache;

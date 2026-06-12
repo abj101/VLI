@@ -1,5 +1,6 @@
 //! Win32 window zone placement: half-screen snap, maximize, foreground snap.
 
+use rapidfuzz::fuzz;
 use std::collections::HashSet;
 use std::path::Path;
 use std::thread;
@@ -14,10 +15,13 @@ use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetAncestor, GetForegroundWindow, GetWindowThreadProcessId, IsWindowVisible,
-    SetWindowPos, ShowWindow, GA_ROOT, HWND_TOP, SW_MAXIMIZE, SW_RESTORE, SWP_NOZORDER,
-    SWP_SHOWWINDOW,
+    EnumWindows, GetAncestor, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+    IsWindowVisible, SetForegroundWindow, SetWindowPos, ShowWindow, GA_ROOT, HWND_TOP,
+    SW_MAXIMIZE, SW_RESTORE, SWP_NOZORDER, SWP_SHOWWINDOW,
 };
+
+/// Minimum title / display-name fuzzy ratio for existing-window focus.
+const TITLE_MATCH_MIN_RATIO: f64 = 0.72;
 
 pub const DEFAULT_MONITOR: &str = "monitor_primary";
 
@@ -70,6 +74,26 @@ pub fn place_window_after_app_launch(
     Err(format!(
         "timed out waiting for a new `{target_exe}` window to place ({zone})"
     ))
+}
+
+/// Focus an already-running app window when possible; optionally snap to `zone`.
+/// Returns `true` when an existing window was focused (no new launch needed).
+pub fn focus_existing_app_window(
+    exe_path: &str,
+    display_name: &str,
+    zone: Option<&str>,
+    monitor: &str,
+) -> Result<bool, String> {
+    let Some(hwnd) = find_existing_window_for_app(exe_path, display_name) else {
+        return Ok(false);
+    };
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+    }
+    if let Some(zone) = zone.map(str::trim).filter(|z| !z.is_empty()) {
+        apply_zone(hwnd, validate_placement_zone(zone)?, monitor)?;
+    }
+    Ok(true)
 }
 
 pub fn snap_foreground_window(zone: &str, monitor: &str) -> Result<(), String> {
@@ -139,6 +163,86 @@ fn monitor_work_area(hwnd: HWND, monitor: &str) -> Result<RECT, String> {
             .map_err(|e| format!("GetMonitorInfoW failed: {e}"))?;
     }
     Ok(info.rcWork)
+}
+
+fn find_existing_window_for_app(exe_path: &str, display_name: &str) -> Option<HWND> {
+    let target_exe = exe_basename(exe_path);
+    let display_lower = display_name.trim().to_lowercase();
+    let mut best: Option<(f64, HWND)> = None;
+    let ctx = ExistingFindCtx {
+        target_exe,
+        display_lower: &display_lower,
+        best: &mut best,
+    };
+    unsafe {
+        let _ = EnumWindows(Some(enum_find_existing), LPARAM(&ctx as *const _ as isize));
+    }
+    best.map(|(_, hwnd)| hwnd)
+}
+
+struct ExistingFindCtx<'a> {
+    target_exe: String,
+    display_lower: &'a str,
+    best: &'a mut Option<(f64, HWND)>,
+}
+
+unsafe extern "system" fn enum_find_existing(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let ctx = &mut *(lparam.0 as *mut ExistingFindCtx<'_>);
+    if !is_placeable_top_level(hwnd) {
+        return TRUE;
+    }
+    let mut score = 0.0f64;
+    if let Some(pid) = window_pid(hwnd) {
+        if let Some(image) = process_image_name(pid) {
+            if exe_names_match(&ctx.target_exe, &image) {
+                score = score.max(1.0);
+            }
+        }
+    }
+    if !ctx.display_lower.is_empty() {
+        if let Some(title) = window_title(hwnd) {
+            let title_lower = title.to_lowercase();
+            let ratio = title_matches_display(ctx.display_lower, &title_lower);
+            if ratio >= TITLE_MATCH_MIN_RATIO {
+                score = score.max(ratio);
+            }
+        }
+    }
+    if score > 0.0 {
+        let replace = match ctx.best {
+            None => true,
+            Some((prev, _)) => score > *prev + 1e-9,
+        };
+        if replace {
+            *ctx.best = Some((score, hwnd));
+        }
+    }
+    TRUE
+}
+
+fn title_matches_display(display_lower: &str, title_lower: &str) -> f64 {
+    if display_lower.is_empty() || title_lower.is_empty() {
+        return 0.0;
+    }
+    if title_lower == display_lower {
+        return 1.0;
+    }
+    if title_lower.starts_with(display_lower) {
+        let boundary = title_lower.chars().nth(display_lower.len());
+        if boundary.map(|c| !c.is_ascii_alphanumeric()).unwrap_or(true) {
+            return 0.95;
+        }
+    }
+    fuzz::ratio(display_lower.chars(), title_lower.chars())
+}
+
+fn window_title(hwnd: HWND) -> Option<String> {
+    let mut buf = [0u16; 512];
+    let len = unsafe { GetWindowTextW(hwnd, &mut buf) };
+    if len == 0 {
+        return None;
+    }
+    Some(String::from_utf16_lossy(&buf[..len as usize]))
 }
 
 fn find_new_window_for_exe(target_exe: &str, before: &WindowSnapshot) -> Option<HWND> {
@@ -284,5 +388,11 @@ mod tests {
     fn placement_status_label_maps_zones() {
         assert_eq!(placement_status_label("left_half"), "left");
         assert_eq!(placement_status_label("right_half"), "right");
+    }
+
+    #[test]
+    fn window_title_score_fuzzy_matches_brave() {
+        let score = title_matches_display("brave", "brave - github");
+        assert!(score >= TITLE_MATCH_MIN_RATIO);
     }
 }

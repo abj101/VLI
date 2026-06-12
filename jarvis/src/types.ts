@@ -4,6 +4,7 @@ export type HudPhase =
   | "idle"
   | "listening"
   | "matched"
+  | "routing"
   | "executing"
   | "awaiting_input"
   | "done"

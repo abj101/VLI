@@ -97,6 +97,11 @@ pub enum Action {
         monitor: Option<String>,
     },
     RunScript { script: String, args: Vec<String> },
+    /// Resolved from `registered_scripts` by id (LLM / tool path only).
+    RunRegisteredScript {
+        script_id: String,
+        args: Vec<String>,
+    },
     SendKeys { keys: String },
     Wait { ms: u64 },
     Speak { text: String },
@@ -121,6 +126,10 @@ mod tests {
             Action::RunScript {
                 script: "echo".into(),
                 args: vec!["hello".into()],
+            },
+            Action::RunRegisteredScript {
+                script_id: "deploy".into(),
+                args: vec!["staging".into()],
             },
             Action::SendKeys {
                 keys: "ctrl+shift+n".into(),

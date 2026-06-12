@@ -9,6 +9,7 @@ import type { HudPhase } from "../../types";
  */
 export const HUD_OVERLAY_SHELL_PHASES: readonly HudPhase[] = [
   "listening",
+  "routing",
   "awaiting_input",
 ] as const;
 

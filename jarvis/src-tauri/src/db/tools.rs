@@ -23,6 +23,45 @@ pub fn ensure_tools_schema(conn: &Connection) -> Result<(), DbError> {
     seed_builtin_open_url(conn)?;
     seed_builtin_open_target(conn)?;
     seed_builtin_snap_window(conn)?;
+    seed_builtin_run_registered_script(conn)?;
+    Ok(())
+}
+
+fn seed_builtin_run_registered_script(conn: &Connection) -> Result<(), DbError> {
+    let parameters = vec![
+        ToolParameter {
+            name: "script_id".into(),
+            param_type: "string".into(),
+            description: Some("Registered script id from the allowlist".into()),
+            required: true,
+            enum_values: vec![],
+        },
+        ToolParameter {
+            name: "args".into(),
+            param_type: "string".into(),
+            description: Some(
+                "Optional JSON array of string arguments, e.g. [\"staging\"]".into(),
+            ),
+            required: false,
+            enum_values: vec![],
+        },
+    ];
+    let actions = vec![Action::RunRegisteredScript {
+        script_id: "{{script_id}}".into(),
+        args: vec![],
+    }];
+    let row = NewToolDefinition {
+        name: "run_registered_script".into(),
+        display_name: "Run registered script".into(),
+        description: "Runs an allowlisted user script by id with declared arguments only".into(),
+        parameters,
+        actions,
+        enabled: true,
+        builtin: true,
+    };
+    if get_tool_by_name(conn, "run_registered_script")?.is_none() {
+        insert_tool(conn, &row)?;
+    }
     Ok(())
 }
 
