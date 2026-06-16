@@ -2,6 +2,7 @@ mod apps;
 mod audio;
 mod commands;
 mod db;
+mod gpu_startup;
 mod hud;
 mod llm;
 mod keychain;
@@ -12,7 +13,7 @@ mod window_frame_win;
 
 use audio::SharedAudioPipeline;
 use hud::{sync_hud_webview_background, sync_hud_window, HudPhase, HUD_WINDOW_LABEL};
-use log::{debug, warn};
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -61,6 +62,10 @@ static WHISPER_GPU_MODEL_WARMED: AtomicBool = AtomicBool::new(false);
 pub struct WhisperModelCache(pub Mutex<Option<whisper_rs::WhisperContext>>);
 
 impl WhisperModelCache {
+    pub fn has_context(&self) -> bool {
+        self.0.lock().ok().is_some_and(|slot| slot.is_some())
+    }
+
     pub fn take_context(&self) -> Option<whisper_rs::WhisperContext> {
         self.0.lock().ok()?.take()
     }
@@ -70,6 +75,13 @@ impl WhisperModelCache {
             *slot = Some(ctx);
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WhisperModelWarmupPayload {
+    ready: bool,
+    message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -101,7 +113,11 @@ fn now_unix_secs() -> i64 {
         .unwrap_or(0)
 }
 
-fn refresh_app_index_on_startup(app: &AppHandle, store: &AppIndexStore) -> Result<(), String> {
+fn refresh_app_index_on_startup(
+    app: &AppHandle,
+    store: &AppIndexStore,
+    kick_background_scan: bool,
+) -> Result<(), String> {
     let conn = open_db_connection(app)?;
     let entries = db::load_app_index(&conn).map_err(|e| e.to_string())?;
     {
@@ -119,9 +135,11 @@ fn refresh_app_index_on_startup(app: &AppHandle, store: &AppIndexStore) -> Resul
     // they hit "Rescan now" after a scanner fix.
     let _ = app.emit(
         APP_INDEX_READY_EVENT,
-        serde_json::json!({ "count": count, "scanning": true }),
+        serde_json::json!({ "count": count, "scanning": kick_background_scan }),
     );
-    spawn_app_index_scan(app.clone(), Arc::clone(store));
+    if kick_background_scan {
+        spawn_app_index_scan(app.clone(), Arc::clone(store));
+    }
     Ok(())
 }
 
@@ -410,7 +428,7 @@ fn load_stt_pipeline_choice(app: &AppHandle) -> audio::SttPipelineChoice {
     };
     match audio::transcription::parse_stt_provider(Some(settings.stt_provider.as_str())) {
         audio::transcription::SttProvider::Local => audio::SttPipelineChoice::Local {
-            use_gpu: settings.local_whisper_use_gpu,
+            use_gpu: settings.local_whisper_use_gpu && whisper_gpu_compile_supported(),
         },
         audio::transcription::SttProvider::Os => audio::SttPipelineChoice::Os,
         audio::transcription::SttProvider::Remote => {
@@ -1247,6 +1265,27 @@ fn try_start_wake_supervisor(
     .map(Some)
 }
 
+fn start_wake_from_settings(
+    app: &AppHandle,
+    resource_dir: std::path::PathBuf,
+    settings: &db::AppSettings,
+    hud: &SharedHud,
+    audio: &SharedAudioPipeline,
+    is_paused: &Arc<AtomicBool>,
+) {
+    match try_start_wake_supervisor(app, resource_dir, settings, hud, audio, is_paused) {
+        Ok(Some(s)) => {
+            if let Some(wake_slot) = app.try_state::<WakeSupervisorState>() {
+                if let Ok(mut g) = wake_slot.0.lock() {
+                    *g = Some(s);
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(e) => warn!("wake thread not started: {e}"),
+    }
+}
+
 fn wake_reload_from_settings(
     app: &AppHandle,
     slot: &WakeSupervisorState,
@@ -1907,10 +1946,14 @@ fn warmup_whisper_gpu(app: AppHandle) -> WhisperGpuWarmupPayload {
         };
     }
     let app_bg = app.clone();
-    std::thread::spawn(move || {
+    if gpu_startup::spawn_whisper_loader_thread("whisper-gpu-warmup", move || {
         let payload = warmup_whisper_gpu_blocking(app_bg.clone());
         let _ = app_bg.emit("whisper-gpu-warmup", &payload);
-    });
+    })
+    .is_err()
+    {
+        log::warn!("whisper-gpu-warmup: failed to spawn loader thread");
+    }
     WhisperGpuWarmupPayload {
         ready: false,
         message: format!(
@@ -1918,6 +1961,55 @@ fn warmup_whisper_gpu(app: AppHandle) -> WhisperGpuWarmupPayload {
             whisper_backend_label(&status.compile_backend)
         ),
     }
+}
+
+fn warmup_whisper_model_blocking(app: AppHandle, use_gpu: bool) -> WhisperModelWarmupPayload {
+    if let Some(cache) = app.try_state::<WhisperModelCache>() {
+        if cache.has_context() {
+            WHISPER_GPU_MODEL_WARMED.store(true, Ordering::SeqCst);
+            return WhisperModelWarmupPayload {
+                ready: true,
+                message: "Speech model ready.".into(),
+            };
+        }
+    }
+    #[cfg(debug_assertions)]
+    info!("whisper: loading STT model (debug MSVC builds can take several minutes)");
+    #[cfg(not(debug_assertions))]
+    info!("whisper: loading STT model");
+    let model_path = match audio::stt::resolve_whisper_model_path(&app) {
+        Ok(path) => path,
+        Err(msg) => {
+            return WhisperModelWarmupPayload {
+                ready: false,
+                message: msg,
+            };
+        }
+    };
+    match audio::stt::load_whisper_context_serialized(
+        model_path.to_string_lossy().as_ref(),
+        use_gpu,
+    ) {
+        Ok((ctx, _)) => {
+            if let Some(cache) = app.try_state::<WhisperModelCache>() {
+                cache.store(ctx);
+            }
+            WHISPER_GPU_MODEL_WARMED.store(true, Ordering::SeqCst);
+            WhisperModelWarmupPayload {
+                ready: true,
+                message: "Speech model ready.".into(),
+            }
+        }
+        Err(msg) => WhisperModelWarmupPayload {
+            ready: false,
+            message: format!("Speech model load failed: {msg}"),
+        },
+    }
+}
+
+fn run_whisper_preload_at_launch(app: AppHandle, use_gpu: bool) {
+    let payload = warmup_whisper_model_blocking(app.clone(), use_gpu);
+    let _ = app.emit("whisper-model-warmup", &payload);
 }
 
 fn warmup_whisper_gpu_blocking(app: AppHandle) -> WhisperGpuWarmupPayload {
@@ -1928,29 +2020,17 @@ fn warmup_whisper_gpu_blocking(app: AppHandle) -> WhisperGpuWarmupPayload {
             message: format!("{} model ready.", whisper_backend_label(backend)),
         };
     }
-    let model_path = match audio::stt::resolve_whisper_model_path(&app) {
-        Ok(path) => path,
-        Err(msg) => {
-            return WhisperGpuWarmupPayload {
-                ready: false,
-                message: msg,
-            };
-        }
-    };
-    match audio::stt::load_whisper_context(model_path.to_string_lossy().as_ref(), true) {
-        Ok((ctx, _)) => {
-            if let Some(cache) = app.try_state::<WhisperModelCache>() {
-                cache.store(ctx);
-            }
-            WHISPER_GPU_MODEL_WARMED.store(true, Ordering::SeqCst);
-            WhisperGpuWarmupPayload {
-                ready: true,
-                message: format!("{} model ready.", whisper_backend_label(backend)),
-            }
-        }
-        Err(msg) => WhisperGpuWarmupPayload {
-            ready: false,
-            message: format!("{} warmup failed: {msg}", whisper_backend_label(backend)),
+    let payload = warmup_whisper_model_blocking(app, true);
+    WhisperGpuWarmupPayload {
+        ready: payload.ready,
+        message: if payload.ready {
+            format!("{} model ready.", whisper_backend_label(backend))
+        } else {
+            format!(
+                "{} warmup failed: {}",
+                whisper_backend_label(backend),
+                payload.message
+            )
         },
     }
 }
@@ -2050,33 +2130,83 @@ pub fn run() {
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                 db::init_db(&dir.join("jarvis.db")).map_err(|e| e.to_string())?;
                 keychain::purge_retired_credentials();
-                refresh_app_index_on_startup(app.handle(), &app_index_for_setup)?;
                 refresh_command_cache(app.handle(), &command_cache_for_setup)?;
                 let conn = open_db_connection(app.handle())?;
                 let app_settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
-                llm::tauri_cmds::spawn_router_warmup_on_launch(app.handle(), &app_settings);
+                let whisper_cache_warm = app
+                    .try_state::<WhisperModelCache>()
+                    .is_some_and(|cache| cache.has_context());
+                let whisper_preload = gpu_startup::should_run_whisper_preload_at_launch(
+                    &app_settings,
+                    whisper_cache_warm,
+                );
+                let whisper_use_gpu =
+                    gpu_startup::whisper_preload_use_gpu(&app_settings);
+                let router_warmup =
+                    gpu_startup::should_router_warmup_at_launch(&app_settings);
+                let defer_wake = gpu_startup::defer_wake_for_gpu_whisper(
+                    &app_settings,
+                    whisper_cache_warm,
+                );
+                log::info!(
+                    "gpu-startup: whisper_preload={whisper_preload} whisper_use_gpu={whisper_use_gpu} defer_wake={defer_wake} router_warmup={router_warmup}"
+                );
+                refresh_app_index_on_startup(
+                    app.handle(),
+                    &app_index_for_setup,
+                    !defer_wake,
+                )?;
                 let resource_dir = crate::audio::wake::resolve_wake_resource_root(
                     app.handle(),
                     app_settings.wake_engine.as_str(),
                 );
-                let wake_slot = app.state::<WakeSupervisorState>();
                 let app_h = app.handle().clone();
-                match try_start_wake_supervisor(
-                    &app_h,
-                    resource_dir,
-                    &app_settings,
-                    &hud_state,
-                    &audio_for_shortcut,
-                    &is_paused_for_shortcut,
-                ) {
-                    Ok(Some(s)) => {
-                        if let Ok(mut g) = wake_slot.0.lock() {
-                            *g = Some(s);
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => warn!("wake thread not started: {e}"),
+                let settings_for_wake = app_settings.clone();
+                let hud_for_wake = Arc::clone(&hud_state);
+                let audio_for_wake = audio_for_shortcut.clone();
+                let is_paused_for_wake = Arc::clone(&is_paused_for_shortcut);
+                let resource_dir_for_wake = resource_dir.clone();
+
+                if !defer_wake {
+                    start_wake_from_settings(
+                        app.handle(),
+                        resource_dir,
+                        &app_settings,
+                        &hud_state,
+                        &audio_for_shortcut,
+                        &is_paused_for_shortcut,
+                    );
                 }
+
+                let app_whisper = app_h.clone();
+                let app_router = app_h.clone();
+                let app_wake = app_h.clone();
+                let app_index_deferred = app_h.clone();
+                let app_index_store_deferred = app_index_for_setup.clone();
+                let needs_background =
+                    whisper_preload || router_warmup || defer_wake;
+                let use_whisper_stack = whisper_preload;
+                gpu_startup::spawn_startup_sequence(needs_background, use_whisper_stack, move || {
+                    if whisper_preload {
+                        run_whisper_preload_at_launch(app_whisper, whisper_use_gpu);
+                    }
+                    if defer_wake {
+                        spawn_app_index_scan(app_index_deferred, app_index_store_deferred);
+                    }
+                    if router_warmup {
+                        llm::tauri_cmds::run_router_warmup_at_launch_blocking(&app_router);
+                    }
+                    if defer_wake {
+                        start_wake_from_settings(
+                            &app_wake,
+                            resource_dir_for_wake,
+                            &settings_for_wake,
+                            &hud_for_wake,
+                            &audio_for_wake,
+                            &is_paused_for_wake,
+                        );
+                    }
+                });
                 let configured_hotkey =
                     match db::get_setting(&conn, SETTING_KEY_HOTKEY).map_err(|e| e.to_string())? {
                         Some(value) if !value.trim().is_empty() => value.trim().to_string(),
@@ -2179,6 +2309,9 @@ pub fn run() {
                 sync_hud_webview_background(app.handle());
                 #[cfg(windows)]
                 sync_native_window_rounding(app.handle());
+                log::info!(
+                    "jarvis: ready — press {configured_hotkey} for voice HUD; tray icon for Settings (no logs until you speak)"
+                );
                 Ok(())
             }
         })

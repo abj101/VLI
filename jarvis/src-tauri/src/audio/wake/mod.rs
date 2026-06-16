@@ -28,12 +28,9 @@ fn tauri_resource_dir_ready_for_engine(dir: &Path, wake_engine: &str) -> bool {
 
 /// Pick `resource_root` for the active [`wake_engine`](crate::db::AppSettings::wake_engine).
 ///
-/// In `tauri dev`, [`AppHandle::path().resource_dir`] often resolves next to the exe
-/// (`target/debug/`) where wake assets are not copied. We only accept that directory if
-/// it already contains the **engine-specific** ONNX bundle — otherwise a partial `oww/`
-/// beside the exe must not block fallback to `src-tauri/resources`. **Debug** builds then
-/// fall back to `src-tauri/resources`. **Release** uses the Tauri path when markers are absent
-/// so errors refer to the install layout.
+/// Prefer the Tauri resource dir when it has a complete engine bundle (installed app).
+/// Otherwise use `src-tauri/resources` when that bundle exists — required for `tauri dev
+/// --release` where the exe lives under `target/release/` without copied ONNX assets.
 fn wake_resource_root_from_candidates(
     wake_engine: &str,
     tauri_dir: Option<&Path>,
@@ -44,13 +41,12 @@ fn wake_resource_root_from_candidates(
             return dir.to_path_buf();
         }
     }
-    if cfg!(debug_assertions) {
-        manifest_resources.to_path_buf()
-    } else {
-        tauri_dir
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| manifest_resources.to_path_buf())
+    if tauri_resource_dir_ready_for_engine(manifest_resources, wake_engine) {
+        return manifest_resources.to_path_buf();
     }
+    tauri_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| manifest_resources.to_path_buf())
 }
 
 /// Root directory passed to [`build_wake_detector`] (`oww/` lives underneath when using OWW).
@@ -204,7 +200,7 @@ mod tests {
         std::fs::write(oww_dir.join(OWW_WAKE_ONNX), b"x").expect("write");
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
         let picked = wake_resource_root_from_candidates("oww", Some(tmp.path()), &manifest);
-        if cfg!(debug_assertions) {
+        if tauri_resource_dir_ready_for_engine(&manifest, "oww") {
             assert_eq!(picked, manifest);
         } else {
             assert_eq!(picked, tmp.path());
@@ -212,11 +208,11 @@ mod tests {
     }
 
     #[test]
-    fn wake_resource_root_falls_back_to_manifest_in_debug_when_tauri_dir_empty() {
+    fn wake_resource_root_falls_back_to_manifest_when_tauri_dir_empty() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let manifest = tmp.path().join("resources");
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
         let picked = wake_resource_root_from_candidates("oww", Some(tmp.path()), &manifest);
-        if cfg!(debug_assertions) {
+        if tauri_resource_dir_ready_for_engine(&manifest, "oww") {
             assert_eq!(picked, manifest);
         } else {
             assert_eq!(picked, tmp.path());

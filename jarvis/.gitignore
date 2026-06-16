@@ -36,5 +36,5 @@ src-tauri/resources/qwen2.5-0.5b-instruct-q4_k_m.gguf
 # Legacy Picovoice Porcupine assets (wake engine removed; do not commit)
 src-tauri/resources/porcupine/
 
-# Legacy Picovoice Porcupine assets (wake engine removed; do not commit)
-src-tauri/resources/porcupine/
+# Compiler cache (ccache/sccache via scripts/whisper-gpu/detect.mjs)
+.cache/

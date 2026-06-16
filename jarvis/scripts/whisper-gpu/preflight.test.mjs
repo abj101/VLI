@@ -7,10 +7,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   cargoLockPaths,
   checkCargoBuildLock,
+  clearGpuSysCmakeCacheOnGeneratorMismatch,
+  clearIncompleteGpuSysCmakeCache,
   clearWhisperRsSysBuildCacheOnGeneratorMismatch,
   isLikelyFirstCudaWhisperBuild,
+  summarizeGgmlCudaArtifacts,
+  summarizeGpuNativeBuildActivity,
   summarizeWhisperRsSysBuildActivity,
 } from "./preflight.mjs";
+import { collectBuildEnvDiagnostics } from "../diagnose-build-env.mjs";
 
 const JARVIS_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -59,7 +64,7 @@ describe("isLikelyFirstCudaWhisperBuild", () => {
   });
 });
 
-describe("clearWhisperRsSysBuildCacheOnGeneratorMismatch", () => {
+describe("clearGpuSysCmakeCacheOnGeneratorMismatch", () => {
   /** @type {string | null} */
   let tmpRoot = null;
 
@@ -70,8 +75,80 @@ describe("clearWhisperRsSysBuildCacheOnGeneratorMismatch", () => {
     }
   });
 
-  it("removes out/build when cached generator differs", () => {
+  it("removes whisper-rs-sys out/build when cached generator differs", () => {
     tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-cmake-"));
+    const outBuild = path.join(
+      tmpRoot,
+      "src-tauri",
+      "target",
+      "debug",
+      "build",
+      "whisper-rs-sys-deadbeef",
+      "out",
+      "build",
+    );
+    fs.mkdirSync(outBuild, { recursive: true });
+    fs.writeFileSync(
+      path.join(outBuild, "CMakeCache.txt"),
+      "CMAKE_GENERATOR:INTERNAL=Visual Studio 17 2022\n",
+    );
+
+    const r = clearGpuSysCmakeCacheOnGeneratorMismatch(tmpRoot, "NMake Makefiles");
+    expect(r.cleared.length).toBe(1);
+    expect(fs.existsSync(outBuild)).toBe(false);
+  });
+
+  it("removes llama-cpp-sys-2 out/build when cached generator differs", () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-cmake-llama-"));
+    const outBuild = path.join(
+      tmpRoot,
+      "src-tauri",
+      "target",
+      "debug",
+      "build",
+      "llama-cpp-sys-2-cafebabe",
+      "out",
+      "build",
+    );
+    fs.mkdirSync(outBuild, { recursive: true });
+    fs.writeFileSync(
+      path.join(outBuild, "CMakeCache.txt"),
+      "CMAKE_GENERATOR:INTERNAL=Visual Studio 17 2022\n",
+    );
+
+    const r = clearGpuSysCmakeCacheOnGeneratorMismatch(tmpRoot, "Ninja");
+    expect(r.cleared.length).toBe(1);
+    expect(fs.existsSync(outBuild)).toBe(false);
+  });
+
+  it("detects Ninja cache when CMAKE_CUDA_COMPILER is present", () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-cmake-ninja-cuda-"));
+    const outBuild = path.join(
+      tmpRoot,
+      "src-tauri",
+      "target",
+      "debug",
+      "build",
+      "whisper-rs-sys-deadbeef",
+      "out",
+      "build",
+    );
+    fs.mkdirSync(outBuild, { recursive: true });
+    fs.writeFileSync(
+      path.join(outBuild, "CMakeCache.txt"),
+      [
+        "CMAKE_GENERATOR:INTERNAL=Ninja",
+        "CMAKE_CUDA_COMPILER:FILEPATH=C:/CUDA/bin/nvcc.exe",
+        "CMAKE_MAKE_PROGRAM:FILEPATH=C:/tools/ninja.exe",
+      ].join("\n"),
+    );
+
+    const r = clearGpuSysCmakeCacheOnGeneratorMismatch(tmpRoot, "NMake Makefiles");
+    expect(r.cleared.length).toBe(1);
+  });
+
+  it("clearWhisperRsSysBuildCacheOnGeneratorMismatch alias matches", () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-cmake-alias-"));
     const outBuild = path.join(
       tmpRoot,
       "src-tauri",
@@ -93,7 +170,84 @@ describe("clearWhisperRsSysBuildCacheOnGeneratorMismatch", () => {
       "NMake Makefiles",
     );
     expect(r.cleared.length).toBe(1);
+  });
+});
+
+describe("clearIncompleteGpuSysCmakeCache", () => {
+  /** @type {string | null} */
+  let tmpRoot = null;
+
+  afterEach(() => {
+    if (tmpRoot) {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+      tmpRoot = null;
+    }
+  });
+
+  it("removes llama-cpp-sys out/build when CMakeCache exists without build.ninja", () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-cmake-incomplete-"));
+    const outBuild = path.join(
+      tmpRoot,
+      "src-tauri",
+      "target",
+      "debug",
+      "build",
+      "llama-cpp-sys-2-deadbeef",
+      "out",
+      "build",
+    );
+    fs.mkdirSync(outBuild, { recursive: true });
+    fs.writeFileSync(
+      path.join(outBuild, "CMakeCache.txt"),
+      "CMAKE_GENERATOR:UNINITIALIZED=Ninja\n",
+    );
+
+    const r = clearIncompleteGpuSysCmakeCache(tmpRoot);
+    expect(r.cleared.length).toBe(1);
     expect(fs.existsSync(outBuild)).toBe(false);
+  });
+
+  it("keeps complete Ninja trees that have build.ninja", () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-cmake-complete-"));
+    const outBuild = path.join(
+      tmpRoot,
+      "src-tauri",
+      "target",
+      "debug",
+      "build",
+      "llama-cpp-sys-2-cafebabe",
+      "out",
+      "build",
+    );
+    fs.mkdirSync(outBuild, { recursive: true });
+    fs.writeFileSync(
+      path.join(outBuild, "CMakeCache.txt"),
+      "CMAKE_GENERATOR:INTERNAL=Ninja\n",
+    );
+    fs.writeFileSync(path.join(outBuild, "build.ninja"), "# ninja\n");
+
+    const r = clearIncompleteGpuSysCmakeCache(tmpRoot);
+    expect(r.cleared.length).toBe(0);
+    expect(fs.existsSync(outBuild)).toBe(true);
+  });
+});
+
+describe("summarizeGgmlCudaArtifacts", () => {
+  it("returns both GPU crates without throwing", () => {
+    const rows = summarizeGgmlCudaArtifacts(JARVIS_ROOT);
+    expect(rows.length).toBe(2);
+    expect(rows.map((r) => r.label)).toEqual(["whisper-rs-sys", "llama-cpp-sys"]);
+  });
+});
+
+describe("collectBuildEnvDiagnostics", () => {
+  it("returns structured env report without throwing", () => {
+    const report = collectBuildEnvDiagnostics(JARVIS_ROOT);
+    expect(report.platform).toBe(process.platform);
+    expect(report.tauriCuda).toHaveProperty("CMAKE_GENERATOR");
+    expect(Array.isArray(report.ggmlCudaArtifacts)).toBe(true);
+    expect(report.ggmlCudaArtifacts.length).toBe(2);
+    expect(Array.isArray(report.warnings)).toBe(true);
   });
 });
 
@@ -102,5 +256,20 @@ describe("summarizeWhisperRsSysBuildActivity", () => {
     const s = summarizeWhisperRsSysBuildActivity(JARVIS_ROOT);
     expect(typeof s.artifactCount).toBe("number");
     expect(s.newestAgeSec === null || typeof s.newestAgeSec === "number").toBe(true);
+  });
+});
+
+describe("summarizeGpuNativeBuildActivity", () => {
+  it("returns per-crate activity without throwing", () => {
+    const s = summarizeGpuNativeBuildActivity(JARVIS_ROOT);
+    expect(typeof s.artifactCount).toBe("number");
+    expect(Array.isArray(s.crates)).toBe(true);
+    for (const crate of s.crates) {
+      expect(typeof crate.label).toBe("string");
+      expect(typeof crate.artifactCount).toBe("number");
+      expect(crate.newestAgeSec === null || typeof crate.newestAgeSec === "number").toBe(
+        true,
+      );
+    }
   });
 });

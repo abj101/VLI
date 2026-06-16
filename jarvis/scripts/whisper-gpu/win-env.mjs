@@ -84,6 +84,11 @@ export function clangPath(p) {
   return path.resolve(p).replace(/\\/g, "/");
 }
 
+/** CMake -D cache paths: forward slashes avoid \\ escape errors (e.g. \\P in Program Files). */
+export function cmakePath(p) {
+  return clangPath(p);
+}
+
 export function windowsShortPath(longPath) {
   const resolved = path.resolve(longPath);
   if (process.platform !== "win32" || !resolved.includes(" ")) {
@@ -118,6 +123,98 @@ export function windowsBindgenExtraClangArgs() {
   });
   parts.push("-std=c11");
   return parts.join(" ");
+}
+
+/** @returns {string | null} Windows 10/11 SDK version folder (e.g. 10.0.26100.0). */
+export function discoverWindowsKitsVersion() {
+  const kits = discoverWindowsKitsBindgenIncludes();
+  if (kits.length === 0) return null;
+  const match = kits[0].match(/Include[\\/](\d+\.\d+\.\d+\.\d+)[\\/]/i);
+  return match?.[1] ?? null;
+}
+
+export function discoverWindowsMsvcLibDir() {
+  const msvcInc = discoverWindowsMsvcIncludeDir();
+  if (!msvcInc) return null;
+  const lib = path.normalize(path.join(msvcInc, "..", "lib", "x64"));
+  return fs.existsSync(path.join(lib, "libcmt.lib")) ? lib : null;
+}
+
+/**
+ * MSVC + Windows SDK env for standalone CMake/Ninja (rc.exe, INCLUDE, LIB).
+ * @returns {{ include: string, lib: string, pathDirs: string[] } | null}
+ */
+export function buildWindowsMsvcDevEnv() {
+  if (process.platform !== "win32") return null;
+  const msvcInc = discoverWindowsMsvcIncludeDir();
+  const kitsInc = discoverWindowsKitsBindgenIncludes();
+  const msvcLib = discoverWindowsMsvcLibDir();
+  const hostBin = discoverWindowsMsvcHostX64BinDir();
+  const kitsVersion = discoverWindowsKitsVersion();
+  if (!msvcInc || kitsInc.length === 0 || !msvcLib || !hostBin || !kitsVersion) {
+    return null;
+  }
+
+  const kitsRoot = path.join(
+    process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
+    "Windows Kits",
+    "10",
+  );
+  const kitsLibUm = path.join(kitsRoot, "Lib", kitsVersion, "um", "x64");
+  const kitsLibUcrt = path.join(kitsRoot, "Lib", kitsVersion, "ucrt", "x64");
+  const kitsBin = path.join(kitsRoot, "bin", kitsVersion, "x64");
+  const rcExe = path.join(kitsBin, "rc.exe");
+  if (!fs.existsSync(rcExe)) return null;
+  const mtExe = path.join(kitsBin, "mt.exe");
+
+  return {
+    include: [msvcInc, ...kitsInc].join(";"),
+    lib: [msvcLib, kitsLibUm, kitsLibUcrt].join(";"),
+    pathDirs: [hostBin, kitsBin],
+    rcCompiler: rcExe,
+    mt: fs.existsSync(mtExe) ? mtExe : null,
+  };
+}
+
+function prependPathDirLocal(envObj, dir) {
+  const segment = dir?.trim();
+  if (!segment) return;
+  const resolved = path.resolve(segment);
+  const pathKey = process.platform === "win32" ? "Path" : "PATH";
+  const prev = envObj[pathKey] ?? envObj.PATH ?? "";
+  const parts = prev.split(path.delimiter).filter(Boolean);
+  const norm = resolved.toLowerCase();
+  if (parts.some((p) => path.resolve(p).toLowerCase() === norm)) return;
+  envObj[pathKey] = [resolved, ...parts].join(path.delimiter);
+  if (pathKey === "Path") envObj.PATH = envObj.Path;
+}
+
+/**
+ * Apply MSVC INCLUDE/LIB/PATH for Ninja/NMake CMake when not in a Developer shell.
+ * @param {NodeJS.ProcessEnv} envObj
+ * @param {{ onlyIfMissing?: boolean }} [opts]
+ */
+export function applyWindowsMsvcDevEnv(envObj, opts = {}) {
+  const onlyIfMissing = opts.onlyIfMissing !== false;
+  const dev = buildWindowsMsvcDevEnv();
+  if (!dev) return false;
+
+  if (!onlyIfMissing || !envObj.INCLUDE?.trim()) {
+    envObj.INCLUDE = dev.include;
+  }
+  if (!onlyIfMissing || !envObj.LIB?.trim()) {
+    envObj.LIB = dev.lib;
+  }
+  for (const dir of dev.pathDirs) {
+    prependPathDirLocal(envObj, dir);
+  }
+  if (!onlyIfMissing || !envObj.CMAKE_RC_COMPILER?.trim()) {
+    envObj.CMAKE_RC_COMPILER = cmakePath(dev.rcCompiler);
+  }
+  if (dev.mt && (!onlyIfMissing || !envObj.CMAKE_MT?.trim())) {
+    envObj.CMAKE_MT = cmakePath(dev.mt);
+  }
+  return true;
 }
 
 export function validateWindowsWhisperBindgenEnv() {

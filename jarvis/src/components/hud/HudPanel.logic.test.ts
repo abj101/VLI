@@ -26,6 +26,14 @@ describe("selectCenterContent", () => {
     expect(out).toEqual({ kind: "transcript", text: "hello there" });
   });
 
+  it("shows router loading status while listening before transcript", () => {
+    const out = selectCenterContent({
+      ...base("listening"),
+      actionText: "Router model loading…",
+    });
+    expect(out).toEqual({ kind: "action", text: "Router model loading…" });
+  });
+
   it("shows action status in executing when available", () => {
     const out = selectCenterContent({
       ...base("executing"),

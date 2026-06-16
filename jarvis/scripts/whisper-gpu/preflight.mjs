@@ -6,6 +6,16 @@ import fs from "fs";
 import path from "path";
 import { spawnSync } from "child_process";
 
+import {
+  GPU_NATIVE_BUILD_PREFIXES,
+  clearUnusableGpuSysCmakeCaches,
+  isCmakeBuildTreeIncomplete,
+  readCachedCmakeGenerator,
+  resolveBestGpuSysDir,
+} from "../gpu-native-sys.mjs";
+
+export { GPU_NATIVE_BUILD_PREFIXES };
+
 /** @returns {string[]} */
 export function cargoLockPaths(jarvisRoot) {
   return [
@@ -201,27 +211,13 @@ export function isLikelyFirstCudaWhisperBuild(jarvisRoot, profile = "debug") {
 }
 
 /**
- * @param {string} cacheText
- * @returns {string | null}
- */
-function readCachedCmakeGenerator(cacheText) {
-  const internal = cacheText.match(/^CMAKE_GENERATOR:INTERNAL=(.+)$/m);
-  if (internal?.[1]?.trim()) return internal[1].trim();
-  const plain = cacheText.match(/^CMAKE_GENERATOR:STRING=(.+)$/m);
-  if (plain?.[1]?.trim()) return plain[1].trim();
-  if (/CMAKE_CUDA_COMPILER:/m.test(cacheText)) return "NMake Makefiles";
-  if (/CMAKE_GENERATOR:INTERNAL=Ninja/m.test(cacheText)) return "Ninja";
-  return null;
-}
-
-/**
- * Remove stale whisper-rs-sys CMake trees when generator changes (VS ↔ NMake hangs or errors).
+ * Remove stale GPU `-sys` CMake trees when generator changes (VS ↔ NMake/Ninja hangs or errors).
  * @param {string} jarvisRoot
  * @param {string} intendedGenerator e.g. "NMake Makefiles" or "Visual Studio 17 2022"
  * @param {"debug"|"release"} [profile]
  * @returns {{ cleared: string[] }}
  */
-export function clearWhisperRsSysBuildCacheOnGeneratorMismatch(
+export function clearGpuSysCmakeCacheOnGeneratorMismatch(
   jarvisRoot,
   intendedGenerator,
   profile = "debug",
@@ -240,38 +236,283 @@ export function clearWhisperRsSysBuildCacheOnGeneratorMismatch(
     return { cleared };
   }
 
-  for (const ent of entries) {
-    if (!ent.isDirectory() || !ent.name.startsWith("whisper-rs-sys-")) continue;
-    const outBuild = path.join(buildRoot, ent.name, "out", "build");
-    const cachePath = path.join(outBuild, "CMakeCache.txt");
-    if (!fs.existsSync(cachePath)) continue;
+  for (const { prefix, label } of GPU_NATIVE_BUILD_PREFIXES) {
+    for (const ent of entries) {
+      if (!ent.isDirectory() || !ent.name.startsWith(prefix)) continue;
+      const outBuild = path.join(buildRoot, ent.name, "out", "build");
+      const cachePath = path.join(outBuild, "CMakeCache.txt");
+      if (!fs.existsSync(cachePath)) continue;
 
-    let text;
-    try {
-      text = fs.readFileSync(cachePath, "utf8");
-    } catch {
-      continue;
-    }
-    const cached = readCachedCmakeGenerator(text);
-    if (!cached || cached === intendedGenerator) continue;
+      let text;
+      try {
+        text = fs.readFileSync(cachePath, "utf8");
+      } catch {
+        continue;
+      }
+      const cached = readCachedCmakeGenerator(text);
+      if (!cached || cached === intendedGenerator) continue;
 
-    try {
-      fs.rmSync(outBuild, { recursive: true, force: true });
-      cleared.push(path.relative(jarvisRoot, outBuild));
-    } catch (err) {
-      console.warn(
-        `whisper-gpu: could not clear mismatched CMake cache at ${path.relative(jarvisRoot, outBuild)}:`,
-        err instanceof Error ? err.message : err,
-      );
+      try {
+        fs.rmSync(outBuild, { recursive: true, force: true });
+        cleared.push(path.relative(jarvisRoot, outBuild));
+      } catch (err) {
+        console.warn(
+          `whisper-gpu: could not clear mismatched ${label} CMake cache at ${path.relative(jarvisRoot, outBuild)}:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
   }
 
   if (cleared.length > 0) {
     console.warn(
-      `whisper-gpu: cleared whisper-rs-sys CMake cache (${cleared.length} dir(s)) — was wrong generator for "${intendedGenerator}".`,
+      `whisper-gpu: cleared GPU -sys CMake cache (${cleared.length} dir(s)) — wrong generator for "${intendedGenerator}".`,
     );
   }
   return { cleared };
+}
+
+/**
+ * Remove interrupted GPU `-sys` CMake trees (CMakeCache without build.ninja / Makefile).
+ * @param {string} jarvisRoot
+ * @param {"debug"|"release"} [profile]
+ * @returns {{ cleared: string[] }}
+ */
+export function clearIncompleteGpuSysCmakeCache(jarvisRoot, profile = "debug") {
+  return clearUnusableGpuSysCmakeCaches(jarvisRoot, profile);
+}
+
+/** @deprecated Use clearGpuSysCmakeCacheOnGeneratorMismatch */
+export function clearWhisperRsSysBuildCacheOnGeneratorMismatch(
+  jarvisRoot,
+  intendedGenerator,
+  profile = "debug",
+) {
+  return clearGpuSysCmakeCacheOnGeneratorMismatch(jarvisRoot, intendedGenerator, profile);
+}
+
+/**
+ * @param {string} sysDir
+ * @returns {string | null}
+ */
+function findGgmlCudaArtifactInSysDir(sysDir) {
+  const markers = [
+    path.join(sysDir, "out", "build", "ggml", "src", "ggml-cuda", "libggml-cuda.a"),
+    path.join(sysDir, "out", "build", "ggml", "src", "ggml-cuda", "ggml-cuda.lib"),
+    path.join(sysDir, "out", "build", "lib", "ggml-cuda.lib"),
+  ];
+  for (const marker of markers) {
+    if (fs.existsSync(marker)) return marker;
+  }
+  const outBuild = path.join(sysDir, "out", "build");
+  if (!fs.existsSync(outBuild)) return null;
+  try {
+    const walk = (dir, depth) => {
+      if (depth > 6) return null;
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, ent.name);
+        if (ent.isFile() && /ggml-cuda/i.test(ent.name) && /\.(lib|a)$/i.test(ent.name)) {
+          return p;
+        }
+        if (ent.isDirectory()) {
+          const nested = walk(p, depth + 1);
+          if (nested) return nested;
+        }
+      }
+      return null;
+    };
+    return walk(outBuild, 0);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {string} jarvisRoot
+ * @param {"debug"|"release"} [profile]
+ * @returns {Array<{ label: string, artifactPath: string | null, sysDir: string | null }>}
+ */
+export function summarizeGgmlCudaArtifacts(jarvisRoot, profile = "debug") {
+  const buildRoot = path.join(jarvisRoot, "src-tauri", "target", profile, "build");
+  if (!fs.existsSync(buildRoot)) {
+    return GPU_NATIVE_BUILD_PREFIXES.map(({ label }) => ({
+      label,
+      artifactPath: null,
+      sysDir: null,
+    }));
+  }
+
+  let entries;
+  try {
+    entries = fs.readdirSync(buildRoot, { withFileTypes: true });
+  } catch {
+    return GPU_NATIVE_BUILD_PREFIXES.map(({ label }) => ({
+      label,
+      artifactPath: null,
+      sysDir: null,
+    }));
+  }
+
+  return GPU_NATIVE_BUILD_PREFIXES.map(({ prefix, label }) => {
+    const sysDir = resolveBestGpuSysDir(buildRoot, prefix);
+    if (!sysDir) {
+      return { label, artifactPath: null, sysDir: null };
+    }
+    return {
+      label,
+      artifactPath: findGgmlCudaArtifactInSysDir(sysDir),
+      sysDir,
+    };
+  });
+}
+
+/**
+ * @param {string} jarvisRoot
+ * @param {string} intendedGenerator
+ * @param {"debug"|"release"} [profile]
+ * @returns {Array<{ label: string, cached: string, cachePath: string }>}
+ */
+export function listGpuSysCmakeGeneratorMismatches(
+  jarvisRoot,
+  intendedGenerator,
+  profile = "debug",
+) {
+  /** @type {Array<{ label: string, cached: string, cachePath: string }>} */
+  const mismatches = [];
+  if (!intendedGenerator?.trim()) return mismatches;
+
+  const buildRoot = path.join(jarvisRoot, "src-tauri", "target", profile, "build");
+  if (!fs.existsSync(buildRoot)) return mismatches;
+
+  let entries;
+  try {
+    entries = fs.readdirSync(buildRoot, { withFileTypes: true });
+  } catch {
+    return mismatches;
+  }
+
+  for (const { prefix, label } of GPU_NATIVE_BUILD_PREFIXES) {
+    for (const ent of entries) {
+      if (!ent.isDirectory() || !ent.name.startsWith(prefix)) continue;
+      const cachePath = path.join(buildRoot, ent.name, "out", "build", "CMakeCache.txt");
+      if (!fs.existsSync(cachePath)) continue;
+      let text;
+      try {
+        text = fs.readFileSync(cachePath, "utf8");
+      } catch {
+        continue;
+      }
+      const cached = readCachedCmakeGenerator(text);
+      if (cached && cached !== intendedGenerator) {
+        mismatches.push({ label, cached, cachePath });
+      }
+    }
+  }
+  return mismatches;
+}
+
+/**
+ * @param {string} dir
+ * @param {number} depth
+ * @returns {{ artifactCount: number, newestMtime: number }}
+ */
+function walkNativeBuildArtifacts(dir, depth) {
+  let artifactCount = 0;
+  let newestMtime = 0;
+  if (depth > 8) return { artifactCount, newestMtime };
+
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return { artifactCount, newestMtime };
+  }
+
+  for (const ent of entries) {
+    const p = path.join(dir, ent.name);
+    if (ent.isDirectory()) {
+      const nested = walkNativeBuildArtifacts(p, depth + 1);
+      artifactCount += nested.artifactCount;
+      if (nested.newestMtime > newestMtime) newestMtime = nested.newestMtime;
+      continue;
+    }
+    if (!/\.(obj|o|lib|a|dll|exe|pdb)$/i.test(ent.name)) continue;
+    artifactCount += 1;
+    try {
+      const mtime = fs.statSync(p).mtimeMs;
+      if (mtime > newestMtime) newestMtime = mtime;
+    } catch {
+      /* ignore */
+    }
+  }
+  return { artifactCount, newestMtime };
+}
+
+/**
+ * @param {string} jarvisRoot
+ * @param {"debug"|"release"} [profile]
+ * @returns {{
+ *   artifactCount: number,
+ *   newestAgeSec: number | null,
+ *   crates: Array<{ label: string, artifactCount: number, newestAgeSec: number | null }>,
+ * }}
+ */
+export function summarizeGpuNativeBuildActivity(jarvisRoot, profile = "debug") {
+  const buildRoot = path.join(jarvisRoot, "src-tauri", "target", profile, "build");
+  if (!fs.existsSync(buildRoot)) {
+    return { artifactCount: 0, newestAgeSec: null, crates: [] };
+  }
+
+  let entries;
+  try {
+    entries = fs.readdirSync(buildRoot, { withFileTypes: true });
+  } catch {
+    return { artifactCount: 0, newestAgeSec: null, crates: [] };
+  }
+
+  /** @type {Map<string, { label: string, artifactCount: number, newestMtime: number }>} */
+  const byLabel = new Map();
+
+  for (const { prefix, label } of GPU_NATIVE_BUILD_PREFIXES) {
+    for (const ent of entries) {
+      if (!ent.isDirectory() || !ent.name.startsWith(prefix)) continue;
+      const walked = walkNativeBuildArtifacts(
+        path.join(buildRoot, ent.name, "out", "build"),
+        0,
+      );
+      const slot = byLabel.get(label) ?? {
+        label,
+        artifactCount: 0,
+        newestMtime: 0,
+      };
+      slot.artifactCount += walked.artifactCount;
+      if (walked.newestMtime > slot.newestMtime) slot.newestMtime = walked.newestMtime;
+      byLabel.set(label, slot);
+    }
+  }
+
+  const crates = [...byLabel.values()].map((slot) => ({
+    label: slot.label,
+    artifactCount: slot.artifactCount,
+    newestAgeSec:
+      slot.newestMtime > 0
+        ? Math.max(0, Math.floor((Date.now() - slot.newestMtime) / 1000))
+        : null,
+  }));
+
+  let artifactCount = 0;
+  let newestMtime = 0;
+  for (const crate of crates) {
+    artifactCount += crate.artifactCount;
+    if (crate.newestAgeSec != null) {
+      const mtime = Date.now() - crate.newestAgeSec * 1000;
+      if (mtime > newestMtime) newestMtime = mtime;
+    }
+  }
+
+  const newestAgeSec =
+    newestMtime > 0 ? Math.max(0, Math.floor((Date.now() - newestMtime) / 1000)) : null;
+  return { artifactCount, newestAgeSec, crates };
 }
 
 /**
@@ -280,104 +521,37 @@ export function clearWhisperRsSysBuildCacheOnGeneratorMismatch(
  * @returns {{ artifactCount: number, newestAgeSec: number | null }}
  */
 export function summarizeWhisperRsSysBuildActivity(jarvisRoot, profile = "debug") {
-  const buildRoot = path.join(jarvisRoot, "src-tauri", "target", profile, "build");
-  if (!fs.existsSync(buildRoot)) {
-    return { artifactCount: 0, newestAgeSec: null };
-  }
-
-  let artifactCount = 0;
-  let newestMtime = 0;
-
-  /** @param {string} dir @param {number} depth */
-  const walk = (dir, depth) => {
-    if (depth > 8) return;
-    let entries;
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const ent of entries) {
-      const p = path.join(dir, ent.name);
-      if (ent.isDirectory()) {
-        walk(p, depth + 1);
-        continue;
-      }
-      if (!/\.(obj|o|lib|a|dll|exe|pdb)$/i.test(ent.name)) continue;
-      artifactCount += 1;
-      try {
-        const mtime = fs.statSync(p).mtimeMs;
-        if (mtime > newestMtime) newestMtime = mtime;
-      } catch {
-        /* ignore */
-      }
-    }
+  const activity = summarizeGpuNativeBuildActivity(jarvisRoot, profile);
+  const whisper = activity.crates.find((c) => c.label === "whisper-rs-sys");
+  return {
+    artifactCount: whisper?.artifactCount ?? 0,
+    newestAgeSec: whisper?.newestAgeSec ?? null,
   };
-
-  let entries;
-  try {
-    entries = fs.readdirSync(buildRoot, { withFileTypes: true });
-  } catch {
-    return { artifactCount: 0, newestAgeSec: null };
-  }
-
-  for (const ent of entries) {
-    if (!ent.isDirectory() || !ent.name.startsWith("whisper-rs-sys-")) continue;
-    walk(path.join(buildRoot, ent.name, "out", "build"), 0);
-  }
-
-  const newestAgeSec =
-    newestMtime > 0 ? Math.max(0, Math.floor((Date.now() - newestMtime) / 1000)) : null;
-  return { artifactCount, newestAgeSec };
 }
 
 /**
- * Warn when a prior whisper-rs-sys CMake cache used a different generator (VS vs NMake).
+ * Warn when a prior GPU `-sys` CMake cache used a different generator (VS vs NMake/Ninja).
  * @param {string} jarvisRoot
  * @param {string} intendedGenerator e.g. "NMake Makefiles" or "Visual Studio 17 2022"
  */
 export function warnIfCmakeGeneratorMismatch(jarvisRoot, intendedGenerator) {
-  const { cleared } = clearWhisperRsSysBuildCacheOnGeneratorMismatch(
-    jarvisRoot,
-    intendedGenerator,
-  );
+  clearIncompleteGpuSysCmakeCache(jarvisRoot);
+  const { cleared } = clearGpuSysCmakeCacheOnGeneratorMismatch(jarvisRoot, intendedGenerator);
   if (cleared.length > 0) return;
   if (!intendedGenerator?.trim()) return;
 
-  const buildRoot = path.join(jarvisRoot, "src-tauri", "target", "debug", "build");
-  if (!fs.existsSync(buildRoot)) return;
-
-  let entries;
-  try {
-    entries = fs.readdirSync(buildRoot, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const ent of entries) {
-    if (!ent.isDirectory() || !ent.name.startsWith("whisper-rs-sys-")) continue;
-    const cachePath = path.join(buildRoot, ent.name, "out", "build", "CMakeCache.txt");
-    if (!fs.existsSync(cachePath)) continue;
-    let text;
-    try {
-      text = fs.readFileSync(cachePath, "utf8");
-    } catch {
-      continue;
-    }
-    const cached = readCachedCmakeGenerator(text);
-    if (cached && cached !== intendedGenerator) {
-      console.warn(
-        `whisper-gpu: prior whisper-rs-sys CMake cache used generator "${cached}"; this run uses "${intendedGenerator}" — expect a full whisper-rs-sys rebuild.`,
-      );
-      return;
-    }
+  const mismatches = listGpuSysCmakeGeneratorMismatches(jarvisRoot, intendedGenerator);
+  for (const { label, cached } of mismatches) {
+    console.warn(
+      `whisper-gpu: prior ${label} CMake cache used generator "${cached}"; this run uses "${intendedGenerator}" — expect a full ${label} rebuild.`,
+    );
   }
 }
 
-export function logFirstCudaBuildNotice(jarvisRoot) {
-  if (!isLikelyFirstCudaWhisperBuild(jarvisRoot)) return;
+export function logFirstCudaBuildNotice(jarvisRoot, profile = "debug") {
+  if (!isLikelyFirstCudaWhisperBuild(jarvisRoot, profile)) return;
   console.warn(
-    "whisper-gpu: first whisper-cuda build compiles many CUDA kernels — often 20–45+ minutes on Windows.",
+    "whisper-gpu: first GPU dev build compiles CUDA for whisper-rs-sys and llama-cpp-sys — often 45–90+ minutes on Windows.",
   );
   console.warn(
     "whisper-gpu: progress may pause near the end (link step). Use one terminal; do not run parallel `cargo` / `tauri dev`.",

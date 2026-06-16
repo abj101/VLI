@@ -49,7 +49,8 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // Windows: `host: false` can bind only [::1]; WebView2 often loads 127.0.0.1 → blank dev window.
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",

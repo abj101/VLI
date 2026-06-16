@@ -18,7 +18,7 @@ use tauri::Emitter;
 use tauri::Manager;
 
 use capture::CaptureSession;
-use stt::{load_whisper_context, resolve_whisper_model_path, spawn_stt_thread};
+use stt::{load_whisper_context_serialized, resolve_whisper_model_path, spawn_stt_thread};
 use transcription::{spawn_os_stt_thread, spawn_remote_stt_thread};
 
 pub use transcription::RemoteSttParams;
@@ -83,11 +83,11 @@ impl AudioPipeline {
                     let warmed = app
                         .try_state::<crate::WhisperModelCache>()
                         .and_then(|c| c.take_context());
-                    Some(std::thread::Builder::new().name("whisper-loader".into()).spawn(move || {
+                    Some(crate::gpu_startup::spawn_whisper_loader_thread("whisper-loader", move || {
                         let load_result = warmed
                             .map(|ctx| Ok((ctx, use_gpu)))
                             .unwrap_or_else(|| {
-                                load_whisper_context(model_path_text.as_str(), use_gpu)
+                                load_whisper_context_serialized(model_path_text.as_str(), use_gpu)
                             });
                         match load_result {
                             Ok((ctx, effective_gpu)) => {

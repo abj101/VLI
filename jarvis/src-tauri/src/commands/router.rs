@@ -279,6 +279,13 @@ pub(crate) fn route_transcript_tier2(
             message: "Tier 2 LLM routing is disabled in settings.".into(),
         });
     }
+    if !crate::llm::router_model_ready(app) {
+        let _ = crate::llm::spawn_router_preload(app);
+        return Err(RouterError {
+            code: RouterErrorCode::ModelLoading,
+            message: crate::llm::ROUTER_LOADING_STATUS.into(),
+        });
+    }
     let model_path = resolve_router_model_path(app, settings.llm_router_model_path.as_deref())
         .map_err(|message| RouterError {
             code: RouterErrorCode::ModelMissing,
@@ -418,6 +425,13 @@ pub fn try_route_and_execute(
         return Ok(());
     };
 
+    if !crate::llm::router_model_ready(app) {
+        let _ = crate::llm::spawn_router_preload(app);
+        crate::llm::tauri_cmds::emit_router_loading_notice(app);
+        debug!("flow: tier2 gated until router model is warm");
+        return Ok(());
+    }
+
     let routing_session_id = match begin_tier2_routing(app, rt, audio) {
         Ok(id) => id,
         Err(err) if err == "skip" => return Ok(()),
@@ -452,6 +466,12 @@ pub fn try_route_and_execute(
             }) => {
                 debug!("flow: tier2 low confidence: {message}");
                 finalize_command_run(&app_bg, &rt_bg, &audio_bg);
+            }
+            Err(RouterError {
+                code: RouterErrorCode::ModelLoading,
+                message,
+            }) => {
+                debug!("flow: tier2 gated: {message}");
             }
             Err(err) => {
                 debug!("flow: tier2 route miss: {} ({:?})", err.message, err.code);

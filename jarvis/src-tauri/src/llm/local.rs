@@ -3,7 +3,7 @@
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::pin::pin;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use encoding_rs::UTF_8;
 use llama_cpp_2::context::params::LlamaContextParams;
@@ -15,9 +15,12 @@ use llama_cpp_2::sampling::LlamaSampler;
 use tauri::{AppHandle, Manager};
 
 pub const ROUTER_MODEL_FILE: &str = "qwen2.5-0.5b-instruct-q4_k_m.gguf";
+/// llama.cpp context init/decode/teardown uses deep native stacks on Windows MSVC.
+pub const ROUTER_LOADER_STACK: usize = crate::gpu_startup::WHISPER_LOADER_STACK;
 const MAX_GENERATED_TOKENS: i32 = 256;
 
 static LLAMA_BACKEND: OnceLock<Result<LlamaBackend, String>> = OnceLock::new();
+static ROUTER_LOAD_GATE: Mutex<()> = Mutex::new(());
 
 fn backend() -> Result<&'static LlamaBackend, String> {
     LLAMA_BACKEND
@@ -213,21 +216,49 @@ fn generate_completion(model: &LlamaModel, prompt: &str) -> Result<String, Strin
     Ok(out)
 }
 
-pub fn infer_router_completion(model_path: &str, prompt: &str, use_gpu: bool) -> Result<String, String> {
-    let backend = backend()?;
-    let path = Path::new(model_path);
-    let params = pin!(model_params(use_gpu));
-    let model = LlamaModel::load_from_file(backend, path, &params)
-        .map_err(|e| format!("load router model failed: {e}"))?;
+fn infer_router_completion_inner(
+    model_path: &str,
+    prompt: &str,
+    use_gpu: bool,
+) -> Result<String, String> {
+    let _gate = ROUTER_LOAD_GATE
+        .lock()
+        .map_err(|_| "router load mutex poisoned".to_string())?;
     let use_accel = use_gpu && llm_gpu_runtime_available(llm_compile_backend());
-    match generate_completion(&model, prompt) {
-        Ok(text) => Ok(text),
-        Err(gpu_err) if use_accel => {
-            log::warn!("router gpu infer failed; retrying on cpu: {gpu_err}");
-            generate_completion(&model, prompt)
+
+    let load_and_infer = || -> Result<String, String> {
+        let backend = backend()?;
+        let path = Path::new(model_path);
+        let params = pin!(model_params(use_gpu));
+        let model = LlamaModel::load_from_file(backend, path, &params)
+            .map_err(|e| format!("load router model failed: {e}"))?;
+        match generate_completion(&model, prompt) {
+            Ok(text) => Ok(text),
+            Err(gpu_err) if use_accel => {
+                log::warn!("router gpu infer failed; retrying on cpu: {gpu_err}");
+                generate_completion(&model, prompt)
+            }
+            Err(e) => Err(e),
         }
-        Err(e) => Err(e),
+    };
+
+    if use_accel {
+        crate::gpu_startup::with_ggml_cuda_init(true, load_and_infer)
+    } else {
+        load_and_infer()
     }
+}
+
+pub fn infer_router_completion(model_path: &str, prompt: &str, use_gpu: bool) -> Result<String, String> {
+    let model_path = model_path.to_string();
+    let prompt = prompt.to_string();
+    std::thread::Builder::new()
+        .name("router-infer".into())
+        .stack_size(ROUTER_LOADER_STACK)
+        .spawn(move || infer_router_completion_inner(&model_path, &prompt, use_gpu))
+        .map_err(|e| format!("spawn router infer thread: {e}"))?
+        .join()
+        .map_err(|_| "router infer thread panicked".to_string())?
 }
 
 #[cfg(test)]

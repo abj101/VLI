@@ -79,6 +79,7 @@ pub fn setup_tray(
         })
         .build(app)?;
 
+    log::info!("tray: icon ready (Settings / Pause / Quit — check hidden icons on Windows 11)");
     Ok(())
 }
 

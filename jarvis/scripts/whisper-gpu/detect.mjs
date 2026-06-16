@@ -3,12 +3,16 @@
  */
 
 import fs from "fs";
+import os from "os";
 import path from "path";
+import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
 
 import {
   compareVersionNamesDesc,
+  cmakePath,
   discoverWindowsMsvcHostX64BinDir,
+  applyWindowsMsvcDevEnv,
 } from "./win-env.mjs";
 import {
   normalizeWindowsVulkanSdkRoot,
@@ -16,6 +20,13 @@ import {
 } from "./win-sdk.mjs";
 
 const VALID_BACKENDS = new Set(["metal", "cuda", "vulkan", "none"]);
+
+const JARVIS_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/** Prefer ccache over sccache when both are on PATH. */
+const COMPILER_CACHE_LAUNCHERS = ["ccache", "sccache"];
+
+let compilerCacheMissingWarned = false;
 
 export function run(cmd, args) {
   const out = spawnSync(cmd, args, { encoding: "utf8" });
@@ -135,7 +146,223 @@ function appendWindowsClFlag(envObj, flag) {
   }
 }
 
-export function applyWindowsCudaBuildEnvIfNeeded(envObj) {
+/** Prepend a directory to PATH when not already present (case-insensitive on Windows). */
+export function prependPathDir(envObj, dir) {
+  const segment = dir?.trim();
+  if (!segment) return;
+  const resolved = path.resolve(segment);
+  const pathKey = process.platform === "win32" ? "Path" : "PATH";
+  const prev = envObj[pathKey] ?? envObj.PATH ?? "";
+  const parts = prev.split(path.delimiter).filter(Boolean);
+  const norm = resolved.toLowerCase();
+  if (parts.some((p) => path.resolve(p).toLowerCase() === norm)) return;
+  envObj[pathKey] = [resolved, ...parts].join(path.delimiter);
+  if (pathKey === "Path") envObj.PATH = envObj.Path;
+}
+
+/** CUDA builds must not use Visual Studio multi-config generators (cache invalidation + slow nvcc). */
+export const CUDA_COMPATIBLE_GENERATORS = new Set(["NMake Makefiles", "Ninja"]);
+
+/** Default nvcc arch for RTX 40 (Ada, sm_89). Override with `JARVIS_CUDA_ARCH`. */
+export const DEFAULT_CUDA_ARCHITECTURES = "89";
+
+/**
+ * @param {"ccache"|"sccache"} launcher
+ */
+export function resolveJarvisCompilerCacheDir(launcher) {
+  const sub = launcher === "sccache" ? "sccache" : "ccache";
+  return path.join(JARVIS_ROOT, ".cache", sub);
+}
+
+/**
+ * @returns {{ launcher: "ccache"|"sccache", exe: string } | null}
+ */
+export function findCompilerCacheOnPath() {
+  const whereExe =
+    process.platform === "win32" && process.env.SystemRoot
+      ? `${process.env.SystemRoot}\\System32\\where.exe`
+      : null;
+
+  for (const name of COMPILER_CACHE_LAUNCHERS) {
+    if (whereExe) {
+      const w = run(whereExe, [name]);
+      if (!w.ok) continue;
+      const line = w.stdout
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .find((l) => new RegExp(`${name}(\\.exe)?$`, "i").test(l));
+      if (line && fs.existsSync(line)) {
+        return { launcher: /** @type {"ccache"|"sccache"} */ (name), exe: path.resolve(line) };
+      }
+    } else if (commandExists(name, ["--version"])) {
+      return { launcher: /** @type {"ccache"|"sccache"} */ (name), exe: name };
+    }
+  }
+  return null;
+}
+
+/**
+ * Optional CMake compiler launchers (ccache/sccache). Skips when not on PATH — warns once, never fails.
+ * @param {NodeJS.ProcessEnv} envObj
+ * @param {{ logPrefix?: string, warnIfMissing?: boolean }} [opts]
+ * @returns {{ enabled: boolean, launcher: string | null, cacheDir?: string, source?: string }}
+ */
+export function applyCompilerCacheLauncherEnv(envObj, opts = {}) {
+  const logPrefix = opts.logPrefix ?? "whisper-gpu";
+  const warnIfMissing = opts.warnIfMissing !== false;
+
+  const existing =
+    envObj.CMAKE_C_COMPILER_LAUNCHER?.trim() ||
+    envObj.CMAKE_CXX_COMPILER_LAUNCHER?.trim() ||
+    envObj.CMAKE_CUDA_COMPILER_LAUNCHER?.trim();
+  if (existing) {
+    return { enabled: true, launcher: existing, source: "env" };
+  }
+
+  const found = findCompilerCacheOnPath();
+  if (!found) {
+    if (warnIfMissing && !compilerCacheMissingWarned) {
+      compilerCacheMissingWarned = true;
+      console.warn(
+        `${logPrefix}: ccache/sccache not on PATH (optional). Install: winget install Ccache.Ccache or winget install Mozilla.sccache`,
+      );
+    }
+    return { enabled: false, launcher: null };
+  }
+
+  // MSVC + Ninja: CMAKE_*_COMPILER_LAUNCHER (incl. nvcc via CMAKE_CUDA_COMPILER_LAUNCHER)
+  // breaks links on Windows (LNK1181 — linker cannot open input .obj).
+  if (process.platform !== "win32") {
+    envObj.CMAKE_C_COMPILER_LAUNCHER = found.launcher;
+    envObj.CMAKE_CXX_COMPILER_LAUNCHER = found.launcher;
+    envObj.CMAKE_CUDA_COMPILER_LAUNCHER = found.launcher;
+  }
+
+  const cacheDir = resolveJarvisCompilerCacheDir(found.launcher);
+  try {
+    fs.mkdirSync(cacheDir, { recursive: true });
+  } catch {
+    // Non-fatal — compiler cache still works with default dir.
+  }
+  if (found.launcher === "sccache") {
+    if (!envObj.SCCACHE_DIR?.trim()) envObj.SCCACHE_DIR = cacheDir;
+  } else if (!envObj.CCACHE_DIR?.trim()) {
+    envObj.CCACHE_DIR = cacheDir;
+  }
+
+  return { enabled: true, launcher: found.launcher, cacheDir };
+}
+
+export function findWindowsNinjaExe() {
+  if (process.platform !== "win32") return null;
+  const whereExe = process.env.SystemRoot
+    ? `${process.env.SystemRoot}\\System32\\where.exe`
+    : "where.exe";
+  const w = run(whereExe, ["ninja"]);
+  if (!w.ok) return null;
+  const line = w.stdout
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => /ninja(\.exe)?$/i.test(l));
+  return line && fs.existsSync(line) ? path.resolve(line) : null;
+}
+
+/**
+ * Pin nvcc arch for ggml-cuda (whisper-rs-sys + llama-cpp-sys-2).
+ * @param {NodeJS.ProcessEnv} [envObj]
+ */
+export function resolveCudaArchitectures(envObj = process.env) {
+  const override = (envObj.JARVIS_CUDA_ARCH ?? process.env.JARVIS_CUDA_ARCH)?.trim();
+  if (override) return override;
+  return DEFAULT_CUDA_ARCHITECTURES;
+}
+
+/**
+ * Parallel CMake/nvcc jobs — whisper-rs-sys does not set this internally.
+ */
+export function resolveCudaBuildParallelLevel() {
+  const cpus = os.cpus()?.length ?? 1;
+  return String(Math.max(1, cpus));
+}
+
+/**
+ * Pick Ninja (when `ninja.exe` on PATH), else NMake, for whisper-cuda / llama-cuda on Windows.
+ * Override with `JARVIS_CMAKE_GENERATOR` (e.g. `NMake Makefiles` to skip Ninja).
+ * @param {NodeJS.ProcessEnv} [envObj]
+ */
+export function resolveCudaCmakeGenerator(envObj = process.env) {
+  const override = (envObj.JARVIS_CMAKE_GENERATOR ?? process.env.JARVIS_CMAKE_GENERATOR)?.trim();
+  if (override) return override;
+  if (process.platform === "win32" && findWindowsNinjaExe()) {
+    return "Ninja";
+  }
+  return "NMake Makefiles";
+}
+
+/**
+ * Force a CUDA-compatible generator over stale shell / IDE values (e.g. Visual Studio 17 2022).
+ * @param {NodeJS.ProcessEnv} envObj
+ * @param {{ logPrefix?: string }} [opts]
+ * @returns {{ target: string, previous: string | null, overridden: boolean }}
+ */
+export function applyCudaCmakeGenerator(envObj, opts = {}) {
+  const logPrefix = opts.logPrefix ?? "whisper-gpu";
+  const target = resolveCudaCmakeGenerator(envObj);
+  const previous = envObj.CMAKE_GENERATOR?.trim() || null;
+
+  if (previous !== target) {
+    if (previous) {
+      console.warn(
+        `${logPrefix}: overriding CMAKE_GENERATOR="${previous}" → "${target}" for CUDA build`,
+      );
+    }
+    envObj.CMAKE_GENERATOR = target;
+  } else if (!previous) {
+    envObj.CMAKE_GENERATOR = target;
+  }
+
+  return { target, previous, overridden: !!previous && previous !== target };
+}
+
+/**
+ * Arch pin, parallel nvcc jobs, skip whisper-rs-sys bindgen (bundled bindings.rs).
+ * @param {NodeJS.ProcessEnv} envObj
+ * @returns {{ arch: string, parallelLevel: string }}
+ */
+export function applyCudaBuildTuningEnv(envObj) {
+  const arch = resolveCudaArchitectures(envObj);
+  const parallelLevel = resolveCudaBuildParallelLevel();
+  envObj.CMAKE_CUDA_ARCHITECTURES = arch;
+  envObj.CMAKE_BUILD_PARALLEL_LEVEL = parallelLevel;
+  // Override whisper-rs-sys RelWithDebInfo for debug Rust builds — reduces ggml-cuda stack pressure.
+  envObj.CMAKE_BUILD_TYPE = "Release";
+  // Bundled whisper-rs-sys bindings.rs is Linux glibc — breaks Windows MSVC (E0080).
+  if (process.platform !== "win32") {
+    envObj.WHISPER_DONT_GENERATE_BINDINGS = "1";
+  }
+  return { arch, parallelLevel };
+}
+
+/**
+ * @param {{ cudaRoot: string, generator: string, arch: string, parallelLevel: string, compilerCache?: string | null }} profile
+ */
+export function formatCudaBuildProfileLog(profile) {
+  const parts = [
+    `arch=${profile.arch}`,
+    `generator=${profile.generator}`,
+    `parallel=${profile.parallelLevel}`,
+    `CUDA_PATH=${profile.cudaRoot}`,
+  ];
+  if (profile.compilerCache) {
+    parts.push(`compiler-cache=${profile.compilerCache}`);
+  }
+  if (profile.gpuPrebuildWarm) {
+    parts.push(`gpu-prebuild=warm`);
+  }
+  return `CUDA build profile: ${parts.join("; ")}`;
+}
+
+export function applyWindowsCudaBuildEnvIfNeeded(envObj, opts = {}) {
   if (process.platform !== "win32") return null;
   const cudaRoot = resolveWindowsCudaToolkitRoot();
   if (!cudaRoot) return null;
@@ -151,24 +378,41 @@ export function applyWindowsCudaBuildEnvIfNeeded(envObj) {
   const clExe = path.join(msvcHostBin, "cl.exe");
   if (!fs.existsSync(nmakeExe) || !fs.existsSync(clExe)) return null;
 
-  if (!envObj.CMAKE_GENERATOR) envObj.CMAKE_GENERATOR = "NMake Makefiles";
-  if (envObj.CMAKE_GENERATOR === "NMake Makefiles") {
-    delete envObj.CMAKE_GENERATOR_INSTANCE;
-    delete envObj.CMAKE_GENERATOR_PLATFORM;
-    delete envObj.CMAKE_GENERATOR_TOOLSET;
+  const { target: generator } = applyCudaCmakeGenerator(envObj);
+  delete envObj.CMAKE_GENERATOR_INSTANCE;
+  delete envObj.CMAKE_GENERATOR_PLATFORM;
+  delete envObj.CMAKE_GENERATOR_TOOLSET;
+
+  if (generator === "Ninja") {
+    const ninjaExe = findWindowsNinjaExe();
+    if (ninjaExe) envObj.CMAKE_MAKE_PROGRAM = cmakePath(ninjaExe);
+    // Standalone CMake + Ninja on Windows needs explicit MSVC compilers (no VS generator).
+    if (!envObj.CMAKE_C_COMPILER) envObj.CMAKE_C_COMPILER = cmakePath(clExe);
+    if (!envObj.CMAKE_CXX_COMPILER) envObj.CMAKE_CXX_COMPILER = cmakePath(clExe);
+  } else if (!envObj.CMAKE_MAKE_PROGRAM) {
+    envObj.CMAKE_MAKE_PROGRAM = cmakePath(nmakeExe);
   }
-  if (!envObj.CMAKE_MAKE_PROGRAM) envObj.CMAKE_MAKE_PROGRAM = nmakeExe;
-  if (!envObj.CMAKE_CUDA_COMPILER) envObj.CMAKE_CUDA_COMPILER = nvccExe;
-  if (!envObj.CMAKE_CUDA_HOST_COMPILER) envObj.CMAKE_CUDA_HOST_COMPILER = clExe;
+  applyWindowsMsvcDevEnv(envObj);
+  if (!envObj.CMAKE_CUDA_COMPILER) envObj.CMAKE_CUDA_COMPILER = cmakePath(nvccExe);
+  if (!envObj.CMAKE_CUDA_HOST_COMPILER) envObj.CMAKE_CUDA_HOST_COMPILER = cmakePath(clExe);
   if (!envObj.CMAKE_CUDA_FLAGS) envObj.CMAKE_CUDA_FLAGS = "-Xcompiler=/Zc:preprocessor";
   appendWindowsClFlag(envObj, "/Zc:preprocessor");
   if (!envObj.CMAKE_SUPPRESS_DEVELOPER_WARNINGS) {
     envObj.CMAKE_SUPPRESS_DEVELOPER_WARNINGS = "1";
   }
+
+  const { arch, parallelLevel } = applyCudaBuildTuningEnv(envObj);
+  const compilerCache = opts.skipCompilerCache
+    ? { enabled: false, launcher: null }
+    : applyCompilerCacheLauncherEnv(envObj, { logPrefix: "whisper-gpu" });
+
   return {
     cudaRoot,
     generator: envObj.CMAKE_GENERATOR,
+    arch,
+    parallelLevel,
     nmakeExe,
+    compilerCache: compilerCache.enabled ? compilerCache.launcher : null,
   };
 }
 

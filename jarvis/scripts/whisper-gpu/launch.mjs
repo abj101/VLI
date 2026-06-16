@@ -53,14 +53,8 @@ export function prependWindowsPathEntries(pathValue, entries) {
 
 export function buildWindowsTerminateByExecutablePathScript(exePath) {
   const target = String(exePath).replace(/'/g, "''");
-  return [
-    `$target = '${target}'`,
-    "$killed = 0",
-    "Get-CimInstance Win32_Process -Filter \"Name = 'jarvis.exe'\" |",
-    "  Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -ieq $target) } |",
-    "  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $killed += 1 }",
-    "Write-Output $killed",
-  ].join("; ");
+  // Single-line pipeline — joining multiline stages with "; " leaves `|;` and breaks PowerShell.
+  return `$target = '${target}'; $killed = 0; Get-CimInstance Win32_Process -Filter "Name = 'jarvis.exe'" | Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -ieq $target) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $killed += 1 }; Write-Output $killed`;
 }
 
 /** Debug `jarvis` / `jarvis.exe` produced by `tauri dev`. */
@@ -71,11 +65,5 @@ export function resolveJarvisDebugExecutablePath(jarvisRoot) {
 
 export function buildWindowsIsExecutableRunningScript(exePath) {
   const target = String(exePath).replace(/'/g, "''");
-  return [
-    `$target = '${target}'`,
-    "$hit = Get-CimInstance Win32_Process -Filter \"Name = 'jarvis.exe'\" |",
-    "  Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -ieq $target) } |",
-    "  Select-Object -First 1",
-    "if ($hit) { exit 0 } else { exit 1 }",
-  ].join("; ");
+  return `$target = '${target}'; $hit = Get-CimInstance Win32_Process -Filter "Name = 'jarvis.exe'" | Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -ieq $target) } | Select-Object -First 1; if ($hit) { exit 0 } else { exit 1 }`;
 }

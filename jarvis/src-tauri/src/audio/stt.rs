@@ -4,6 +4,7 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
+use std::sync::Mutex;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
@@ -55,26 +56,71 @@ fn whisper_model_candidates(app: &AppHandle) -> Vec<PathBuf> {
     out
 }
 
+static WHISPER_LOAD_GATE: Mutex<()> = Mutex::new(());
+
+fn whisper_gpu_compile_supported() -> bool {
+    cfg!(any(
+        feature = "whisper-metal",
+        feature = "whisper-cuda",
+        feature = "whisper-vulkan"
+    ))
+}
+
+/// Flash attention during CUDA init is release-only to reduce debug MSVC stack pressure.
+#[cfg(feature = "whisper-cuda")]
+pub fn whisper_flash_attn_enabled() -> bool {
+    !cfg!(debug_assertions)
+}
+
+#[cfg(not(feature = "whisper-cuda"))]
+pub fn whisper_flash_attn_enabled() -> bool {
+    false
+}
+
+fn new_whisper_context(
+    model_path: &str,
+    params: WhisperContextParameters,
+    use_gpu: bool,
+) -> Result<WhisperContext, whisper_rs::WhisperError> {
+    if use_gpu {
+        crate::gpu_startup::with_ggml_cuda_init(true, || {
+            WhisperContext::new_with_params(model_path, params)
+        })
+    } else {
+        WhisperContext::new_with_params(model_path, params)
+    }
+}
+
 /// Load Whisper weights (may take seconds on first GPU init). Call from a background thread.
 /// Returns `(context, use_accelerator)` where `use_accelerator` is false after a GPU→CPU fallback.
+///
+/// Windows debug + `whisper-cuda`: intermittent `STATUS_STACK_BUFFER_OVERRUN` during preload —
+/// mitigated by startup sequencing + debug flash-attn off; see
+/// `jarvis/docs/bugs/BUG-debug-cuda-whisper-stack-buffer-overrun.md`.
 pub fn load_whisper_context(
     model_path: &str,
     use_gpu: bool,
 ) -> Result<(WhisperContext, bool), String> {
+    // CPU-only builds abort inside whisper.cpp when `use_gpu` is true (STATUS_BREAKPOINT on Windows).
+    let use_gpu = use_gpu && whisper_gpu_compile_supported();
+    if use_gpu {
+        log::debug!("whisper: loading model with GPU backend");
+    }
     let mut params = WhisperContextParameters::default();
     params.use_gpu(use_gpu);
     if use_gpu {
         params.gpu_device(0);
-        #[cfg(feature = "whisper-cuda")]
-        params.flash_attn(true);
+        if whisper_flash_attn_enabled() {
+            params.flash_attn(true);
+        }
     }
-    match WhisperContext::new_with_params(model_path, params) {
+    match new_whisper_context(model_path, params, use_gpu) {
         Ok(ctx) => Ok((ctx, use_gpu)),
         Err(gpu_err) if use_gpu => {
             log::warn!("whisper gpu init failed; falling back to cpu: {gpu_err}");
             let mut cpu_params = WhisperContextParameters::default();
             cpu_params.use_gpu(false);
-            WhisperContext::new_with_params(model_path, cpu_params)
+            new_whisper_context(model_path, cpu_params, false)
                 .map(|ctx| (ctx, false))
                 .map_err(|cpu_err| {
                     format!(
@@ -84,6 +130,17 @@ pub fn load_whisper_context(
         }
         Err(e) => Err(format!("failed to load whisper model: {e}")),
     }
+}
+
+/// Serialize whisper.cpp init — concurrent `WhisperContext::new` calls can abort on Windows.
+pub fn load_whisper_context_serialized(
+    model_path: &str,
+    use_gpu: bool,
+) -> Result<(WhisperContext, bool), String> {
+    let _gate = WHISPER_LOAD_GATE
+        .lock()
+        .map_err(|_| "whisper load mutex poisoned".to_string())?;
+    load_whisper_context(model_path, use_gpu)
 }
 
 pub fn resolve_whisper_model_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -420,6 +477,75 @@ mod tests {
         assert_eq!(j["text"], "hello");
         assert_eq!(j["is_final"], true);
         assert_eq!(j["hud_session_id"], 42);
+    }
+
+    /// Manual: `cargo test manual_load_whisper_tiny_model -- --ignored --nocapture`
+    #[test]
+    #[ignore = "loads bundled whisper weights (~75 MiB); run manually when debugging STT crashes"]
+    fn manual_load_whisper_tiny_model() {
+        manual_load_whisper_tiny_model_impl_on_loader_thread(false);
+    }
+
+    #[cfg(feature = "whisper-cuda")]
+    /// Manual: `cargo test manual_load_whisper_tiny_model_gpu -- --ignored --nocapture`
+    #[test]
+    #[ignore = "loads bundled whisper weights on CUDA; run manually when debugging GPU STT crashes"]
+    fn manual_load_whisper_tiny_model_gpu() {
+        manual_load_whisper_tiny_model_impl_on_loader_thread(true);
+    }
+
+    #[cfg(feature = "llm-local")]
+    /// Manual: `cargo test manual_load_whisper_after_llama_backend -- --ignored --nocapture`
+    #[test]
+    #[ignore = "probes ggml clash between llama-cpp and whisper in dev builds"]
+    fn manual_load_whisper_after_llama_backend() {
+        llama_cpp_2::llama_backend::LlamaBackend::init().expect("llama backend init");
+        manual_load_whisper_tiny_model_impl_on_loader_thread(false);
+    }
+
+    fn manual_load_whisper_tiny_model_impl_on_loader_thread(use_gpu: bool) {
+        let model = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join(super::WHISPER_MODEL_FILE);
+        assert!(
+            model.is_file(),
+            "missing {}; run scripts/download-model.ps1",
+            model.display()
+        );
+        let model_path = model.to_string_lossy().to_string();
+        let result = crate::gpu_startup::spawn_whisper_loader_thread("manual-whisper-load", move || {
+            super::load_whisper_context_serialized(model_path.as_str(), use_gpu)
+        })
+        .expect("spawn loader thread")
+        .join()
+        .expect("join loader thread");
+        match result {
+            Ok(_) => eprintln!("whisper model load ok (use_gpu={use_gpu})"),
+            Err(e) => panic!("whisper model load failed (use_gpu={use_gpu}): {e}"),
+        }
+    }
+
+    #[test]
+    fn whisper_flash_attn_enabled_only_in_release_cuda() {
+        let enabled = super::whisper_flash_attn_enabled();
+        #[cfg(feature = "whisper-cuda")]
+        {
+            assert_eq!(enabled, !cfg!(debug_assertions));
+        }
+        #[cfg(not(feature = "whisper-cuda"))]
+        {
+            assert!(!enabled);
+        }
+    }
+
+    #[test]
+    fn whisper_gpu_compile_supported_matches_feature_flags() {
+        let expected = cfg!(any(
+            feature = "whisper-metal",
+            feature = "whisper-cuda",
+            feature = "whisper-vulkan"
+        ));
+        assert_eq!(super::whisper_gpu_compile_supported(), expected);
     }
 
     #[test]

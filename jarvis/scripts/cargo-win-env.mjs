@@ -9,13 +9,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 import {
-  applyDiscoveredCudaToolkitToProcessEnv,
-  applyWindowsCudaBuildEnvIfNeeded,
-} from "./whisper-gpu/detect.mjs";
-import {
-  assertWindowsWhisperBindgenEnv,
-  buildWindowsWhisperCargoEnv,
-} from "./whisper-gpu/win-env.mjs";
+  formatResolvedCudaLog,
+  prepareGpuNativeBuild,
+  resolveBuildEnvironment,
+} from "./build-environment.mjs";
 import { checkCargoBuildLock } from "./whisper-gpu/preflight.mjs";
 
 const JARVIS_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -27,10 +24,10 @@ if (args.length === 0) {
   process.exit(1);
 }
 
-/** True when cargo args request whisper-cuda (must use NMake + nvcc on Windows). */
+/** True when cargo args request CUDA features (must use NMake/Ninja + nvcc on Windows). */
 function cargoArgsNeedCudaEnv(cargoArgs) {
   const joined = cargoArgs.join(" ").toLowerCase();
-  return joined.includes("whisper-cuda");
+  return joined.includes("whisper-cuda") || joined.includes("llm-cuda");
 }
 
 if (process.platform === "win32") {
@@ -39,36 +36,34 @@ if (process.platform === "win32") {
     console.error(`cargo-win-env: ${lock.message}`);
     process.exit(1);
   }
-  assertWindowsWhisperBindgenEnv("cargo-win-env");
 }
 
 const needsCuda = process.platform === "win32" && cargoArgsNeedCudaEnv(args);
 
-/** @type {NodeJS.ProcessEnv} */
-let env = { ...process.env };
+const { env, cudaBuildEnv, generator, gpuPrebuild } = resolveBuildEnvironment({
+  jarvisRoot: JARVIS_ROOT,
+  channel: "cargo",
+  baseEnv: process.env,
+  needsCuda,
+  logPrefix: "cargo-win-env",
+});
 
-if (process.platform === "win32") {
-  env = {
-    ...env,
-    ...buildWindowsWhisperCargoEnv(env, {
-      force: true,
-      includeCmakeGenerator: !needsCuda,
-    }),
-    CARGO_TERM_PROGRESS: env.CARGO_TERM_PROGRESS ?? "always",
-  };
-  if (needsCuda) {
-    applyDiscoveredCudaToolkitToProcessEnv();
-    const cudaBuildEnv = applyWindowsCudaBuildEnvIfNeeded(env);
-    if (!cudaBuildEnv) {
-      console.error(
-        "cargo-win-env: whisper-cuda requires CUDA toolkit + MSVC (NMake). Use `npm run tauri dev` or install CUDA.",
-      );
-      process.exit(1);
-    }
-    console.log(
-      `cargo-win-env: CUDA build env (generator=${cudaBuildEnv.generator}; CUDA_PATH=${cudaBuildEnv.cudaRoot})`,
-    );
-  }
+if (needsCuda && !cudaBuildEnv) {
+  console.error(
+    "cargo-win-env: whisper-cuda / llm-cuda requires CUDA toolkit + MSVC (NMake/Ninja). Use `npm run tauri dev` or install CUDA.",
+  );
+  process.exit(1);
+}
+
+if (cudaBuildEnv) {
+  const cudaLog = formatResolvedCudaLog(cudaBuildEnv, gpuPrebuild);
+  if (cudaLog) console.log(`cargo-win-env: ${cudaLog}`);
+  prepareGpuNativeBuild(JARVIS_ROOT, env, {
+    logPrefix: "cargo-win-env",
+    profile: "debug",
+    generator: generator ?? undefined,
+    warnGeneratorMismatch: false,
+  });
 }
 
 const child = spawnSync("cargo", args, {

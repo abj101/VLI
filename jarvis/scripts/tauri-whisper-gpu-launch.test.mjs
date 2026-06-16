@@ -56,6 +56,7 @@ describe("buildWindowsIsExecutableRunningScript", () => {
     expect(script).toContain("Select-Object -First 1");
     expect(script).toContain("if ($hit) { exit 0 } else { exit 1 }");
     expect(script).toContain("jarvis.exe");
+    expect(script).not.toMatch(/\|\s*;/);
   });
 });
 

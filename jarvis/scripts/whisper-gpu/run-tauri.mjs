@@ -7,8 +7,6 @@ import { spawn, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 
 import {
-  applyDiscoveredCudaToolkitToProcessEnv,
-  applyWindowsCudaBuildEnvIfNeeded,
   finalizeWindowsBackendSelection,
   resolveBackend,
   resolveWindowsVulkanSdkRoot,
@@ -16,19 +14,23 @@ import {
 import {
   buildWindowsIsExecutableRunningScript,
   buildWindowsTerminateByExecutablePathScript,
-  prependWindowsPathEntries,
-  resolveJarvisDebugExecutablePath,
   shouldReleaseWindowsJarvisExeLockForSubcommand,
 } from "./launch.mjs";
 import {
-  assertWindowsWhisperBindgenEnv,
-  buildWindowsWhisperCargoEnv,
-} from "./win-env.mjs";
+  formatResolvedCudaLog,
+  prepareGpuNativeBuild,
+  resolveBuildEnvironment,
+} from "../build-environment.mjs";
+import { collectBuildEnvDiagnostics } from "../diagnose-build-env.mjs";
+import {
+  formatCondensedBuildEnvDiagnostics,
+  formatGpuBuildProgressBar,
+  summarizeGpuNativeBuildProgress,
+  tickGpuBuildProgressPoll,
+} from "../gpu-build-progress.mjs";
 import {
   checkCargoBuildLock,
   logFirstCudaBuildNotice,
-  summarizeWhisperRsSysBuildActivity,
-  warnIfCmakeGeneratorMismatch,
 } from "./preflight.mjs";
 
 const JARVIS_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -47,6 +49,30 @@ function resolveTauriCli() {
   return p;
 }
 
+/**
+ * @param {string[]} argv
+ * @returns {{ extraArgs: string[], backendOverride: string | null }}
+ */
+function parseLauncherFlags(argv) {
+  /** @type {string[]} */
+  const extraArgs = [];
+  let backendOverride = null;
+
+  for (const arg of argv) {
+    if (arg === "--cpu") {
+      backendOverride = "none";
+      continue;
+    }
+    if (arg === "--gpu") {
+      backendOverride = "auto";
+      continue;
+    }
+    extraArgs.push(arg);
+  }
+
+  return { extraArgs, backendOverride };
+}
+
 function releaseWindowsDevJarvisExeLock(subcommand) {
   if (
     process.platform !== "win32" ||
@@ -54,81 +80,35 @@ function releaseWindowsDevJarvisExeLock(subcommand) {
   ) {
     return;
   }
-  const debugExePath = path.join(JARVIS_ROOT, "src-tauri", "target", "debug", "jarvis.exe");
-  const script = buildWindowsTerminateByExecutablePathScript(debugExePath);
-  const r = spawnSync(
-    "powershell",
-    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
-    {
-      cwd: JARVIS_ROOT,
-      env: process.env,
-      encoding: "utf8",
-    },
-  );
-  const killed = Number.parseInt((r.stdout ?? "").trim(), 10);
-  if (Number.isInteger(killed) && killed > 0) {
-    console.warn(
-      `whisper-gpu: terminated ${killed} stale jarvis.exe process(es) to avoid Windows file-lock rebuild failure.`,
+  for (const profile of ["debug", "release"]) {
+    const exePath = path.join(JARVIS_ROOT, "src-tauri", "target", profile, "jarvis.exe");
+    const script = buildWindowsTerminateByExecutablePathScript(exePath);
+    const r = spawnSync(
+      "powershell",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+      {
+        cwd: JARVIS_ROOT,
+        env: process.env,
+        encoding: "utf8",
+      },
     );
-  }
-}
-
-function buildChildEnv(withGpuSelection, selected) {
-  const childEnv = { ...process.env };
-  childEnv.CARGO_TERM_PROGRESS = childEnv.CARGO_TERM_PROGRESS ?? "always";
-
-  if (withGpuSelection && selected.backend === "cuda" && process.platform === "win32") {
-    const cudaBuildEnv = applyWindowsCudaBuildEnvIfNeeded(childEnv);
-    if (cudaBuildEnv) {
-      const cudaBin = path.join(cudaBuildEnv.cudaRoot, "bin");
-      const cudaBinX64 = path.join(cudaBuildEnv.cudaRoot, "bin", "x64");
-      const nvtxBin = path.join(cudaBuildEnv.cudaRoot, "extras", "CUPTI", "lib64");
-      const existingPath =
-        childEnv.PATH ?? childEnv.Path ?? process.env.PATH ?? process.env.Path ?? "";
-      const mergedPath = prependWindowsPathEntries(existingPath, [cudaBinX64, cudaBin, nvtxBin]);
-      childEnv.PATH = mergedPath;
-      childEnv.Path = mergedPath;
-      console.log(
-        `whisper-gpu: configured CUDA build env (generator=${cudaBuildEnv.generator}; CUDA_PATH=${cudaBuildEnv.cudaRoot})`,
+    const killed = Number.parseInt((r.stdout ?? "").trim(), 10);
+    if (Number.isInteger(killed) && killed > 0) {
+      console.warn(
+        `whisper-gpu: terminated ${killed} stale jarvis.exe process(es) (${profile}) to avoid Windows file-lock rebuild failure.`,
       );
     }
-  } else if (process.platform === "win32" && !childEnv.CMAKE_GENERATOR?.trim()) {
-    childEnv.CMAKE_GENERATOR = "Visual Studio 17 2022";
   }
-
-  if (process.platform === "win32") {
-    assertWindowsWhisperBindgenEnv("whisper-gpu");
-    const whisperEnv = buildWindowsWhisperCargoEnv(childEnv, {
-      force: true,
-      // Never inject VS CMake generator when CUDA already pinned NMake — avoids cache invalidation.
-      includeCmakeGenerator:
-        !(withGpuSelection && selected.backend === "cuda" && childEnv.CMAKE_GENERATOR?.trim()),
-    });
-    Object.assign(childEnv, whisperEnv);
-    if (whisperEnv.LIBCLANG_PATH) {
-      console.log(`whisper-gpu: set LIBCLANG_PATH=${whisperEnv.LIBCLANG_PATH} (whisper-rs-sys bindgen)`);
-    }
-    if (whisperEnv.BINDGEN_EXTRA_CLANG_ARGS) {
-      console.log("whisper-gpu: set BINDGEN_EXTRA_CLANG_ARGS for MSVC + Windows SDK includes");
-    }
-  }
-
-  if (withGpuSelection && selected.backend === "vulkan" && process.platform === "win32") {
-    const vkRoot = resolveWindowsVulkanSdkRoot();
-    if (vkRoot) {
-      childEnv.VULKAN_SDK = vkRoot;
-      const prev = process.env.VULKAN_SDK;
-      if (!hasPath(prev) || path.resolve(prev) !== path.resolve(vkRoot)) {
-        console.log(`whisper-gpu: set VULKAN_SDK=${vkRoot}`);
-      }
-    }
-  }
-
-  return childEnv;
 }
 
-function isJarvisDebugProcessRunning(jarvisRoot) {
-  const exePath = resolveJarvisDebugExecutablePath(jarvisRoot);
+function resolveJarvisDevExecutablePath(jarvisRoot, useReleaseNative) {
+  const name = process.platform === "win32" ? "jarvis.exe" : "jarvis";
+  const profile = useReleaseNative ? "release" : "debug";
+  return path.join(jarvisRoot, "src-tauri", "target", profile, name);
+}
+
+function isJarvisDevProcessRunning(jarvisRoot, useReleaseNative) {
+  const exePath = resolveJarvisDevExecutablePath(jarvisRoot, useReleaseNative);
   if (!fs.existsSync(exePath)) {
     return false;
   }
@@ -145,17 +125,101 @@ function isJarvisDebugProcessRunning(jarvisRoot) {
   return r.status === 0;
 }
 
+const GPU_PROGRESS_POLL_MS = 5_000;
+const GPU_PROGRESS_NON_TTY_MS = 10_000;
+/**
+ * @param {string} line
+ * @param {boolean} isTty
+ */
+function writeGpuProgressLine(line, isTty) {
+  if (isTty) {
+    process.stderr.write(`\r\x1b[2K${line}`);
+  } else {
+    console.warn(line);
+  }
+}
+
+/**
+ * @param {import("../gpu-build-progress.mjs").GpuNativeBuildProgressSnapshot | null} snapshot
+ * @returns {string}
+ */
+function formatDevAppRunningProgressLine(snapshot) {
+  if (snapshot && snapshot.overallPercent >= 100) {
+    return "whisper-gpu: GPU native build ready — jarvis dev app running";
+  }
+  if (snapshot) {
+    return `${formatGpuBuildProgressBar(snapshot)} — jarvis dev app running`;
+  }
+  return "whisper-gpu: jarvis dev app running — build progress monitoring stopped";
+}
+
+/**
+ * @param {object} opts
+ * @param {boolean} opts.isTty
+ * @param {number} opts.startedAt
+ * @param {import("../gpu-build-progress.mjs").GpuNativeBuildProgressSnapshot | null} opts.prevSnapshot
+ * @param {number} opts.stallCount
+ * @param {"debug"|"release"} opts.nativeProfile
+ * @param {boolean} opts.prebuildWarm
+ * @returns {{
+ *   tick: ReturnType<typeof tickGpuBuildProgressPoll>,
+ *   prevSnapshot: import("../gpu-build-progress.mjs").GpuNativeBuildProgressSnapshot,
+ *   stallCount: number,
+ *   lastNonTtyWrite: number,
+ * }}
+ */
+function emitGpuProgressTick(opts) {
+  const { isTty, startedAt, prevSnapshot, stallCount, nativeProfile, prebuildWarm } = opts;
+  const tick = tickGpuBuildProgressPoll({
+    jarvisRoot: JARVIS_ROOT,
+    profile: nativeProfile,
+    startedAt,
+    prebuildWarm,
+    prevSnapshot,
+    stallCount,
+  });
+
+  const now = Date.now();
+  let lastNonTtyWrite = opts.lastNonTtyWrite ?? 0;
+  if (isTty || now - lastNonTtyWrite >= GPU_PROGRESS_NON_TTY_MS) {
+    writeGpuProgressLine(tick.barLine, isTty);
+    lastNonTtyWrite = now;
+  }
+
+  if (tick.debugBlock) {
+    if (isTty) process.stderr.write("\n");
+    console.warn(tick.debugBlock);
+  }
+
+  return {
+    tick,
+    prevSnapshot: tick.snapshot,
+    stallCount: tick.stallCount,
+    lastNonTtyWrite,
+  };
+}
+
 /**
  * @param {string} spawnExecutable
  * @param {string[]} spawnArgv
  * @param {NodeJS.ProcessEnv} childEnv
- * @param {{ cudaFirstBuild: boolean, subcommand: string }} opts
+ * @param {{
+ *   cudaFirstBuild: boolean,
+ *   subcommand: string,
+ *   useReleaseNative: boolean,
+ *   nativeProfile: "debug" | "release",
+ *   prebuildWarm: boolean,
+ * }} opts
  * @returns {Promise<number>}
  */
-function spawnTauriWithHeartbeat(spawnExecutable, spawnArgv, childEnv, opts) {
-  const { cudaFirstBuild, subcommand } = opts;
-  const stopHeartbeatOnDevApp =
-    subcommand === "dev" ? () => isJarvisDebugProcessRunning(JARVIS_ROOT) : null;
+function spawnTauriWithGpuProgress(spawnExecutable, spawnArgv, childEnv, opts) {
+  const { cudaFirstBuild, subcommand, useReleaseNative, nativeProfile, prebuildWarm } = opts;
+  const progressEnabled =
+    cudaFirstBuild && process.env.JARVIS_GPU_BUILD_PROGRESS !== "0";
+  const stopProgressOnDevApp =
+    subcommand === "dev"
+      ? () => isJarvisDevProcessRunning(JARVIS_ROOT, useReleaseNative)
+      : null;
 
   return new Promise((resolve, reject) => {
     const child = spawn(spawnExecutable, spawnArgv, {
@@ -165,52 +229,62 @@ function spawnTauriWithHeartbeat(spawnExecutable, spawnArgv, childEnv, opts) {
       windowsHide: false,
     });
 
-    const started = Date.now();
-    let heartbeat = null;
+    const startedAt = Date.now();
+    let progressPoll = null;
     let devReadyPoll = null;
+    /** @type {import("../gpu-build-progress.mjs").GpuNativeBuildProgressSnapshot | null} */
+    let prevSnapshot = null;
+    let stallCount = 0;
+    const isTty = process.stderr.isTTY === true;
 
     const clearBuildTimers = () => {
-      if (heartbeat) {
-        clearInterval(heartbeat);
-        heartbeat = null;
+      if (progressPoll) {
+        clearInterval(progressPoll);
+        progressPoll = null;
       }
       if (devReadyPoll) {
         clearInterval(devReadyPoll);
         devReadyPoll = null;
       }
+      if (isTty && progressEnabled) {
+        process.stderr.write("\n");
+      }
     };
 
-    heartbeat = setInterval(() => {
-      if (stopHeartbeatOnDevApp?.()) {
-        clearBuildTimers();
-        return;
-      }
-      const mins = Math.floor((Date.now() - started) / 60_000);
-      if (mins < 1) return;
-      let hint = cudaFirstBuild ? " (first whisper-cuda build often 20–45+ min)" : "";
-      if (cudaFirstBuild) {
-        const activity = summarizeWhisperRsSysBuildActivity(JARVIS_ROOT);
-        if (activity.artifactCount > 0) {
-          const age =
-            activity.newestAgeSec == null
-              ? "unknown"
-              : activity.newestAgeSec < 90
-                ? `${activity.newestAgeSec}s ago`
-                : `${Math.floor(activity.newestAgeSec / 60)}m ago`;
-          hint += `; ${activity.artifactCount} build artifacts, last activity ${age}`;
-        } else {
-          hint += "; cmake/nvcc stage (little Cargo output yet)";
+    if (progressEnabled) {
+      let lastNonTtyWrite = 0;
+      const runPoll = () => {
+        if (stopProgressOnDevApp?.()) {
+          console.warn(formatDevAppRunningProgressLine(prevSnapshot));
+          clearBuildTimers();
+          return;
         }
-      }
-      console.warn(`whisper-gpu: still building… ${mins} min elapsed${hint}`);
-    }, 60_000);
 
-    if (stopHeartbeatOnDevApp) {
+        const emitted = emitGpuProgressTick({
+          isTty,
+          startedAt,
+          prevSnapshot,
+          stallCount,
+          nativeProfile,
+          prebuildWarm,
+          lastNonTtyWrite,
+        });
+        prevSnapshot = emitted.prevSnapshot;
+        stallCount = emitted.stallCount;
+        lastNonTtyWrite = emitted.lastNonTtyWrite;
+      };
+
+      runPoll();
+      progressPoll = setInterval(runPoll, GPU_PROGRESS_POLL_MS);
+    }
+
+    if (stopProgressOnDevApp) {
       devReadyPoll = setInterval(() => {
-        if (stopHeartbeatOnDevApp()) {
+        if (stopProgressOnDevApp()) {
+          console.warn(formatDevAppRunningProgressLine(prevSnapshot));
           clearBuildTimers();
         }
-      }, 15_000);
+      }, 2_000);
     }
 
     child.on("error", (err) => {
@@ -229,6 +303,84 @@ function spawnTauriWithHeartbeat(spawnExecutable, spawnArgv, childEnv, opts) {
   });
 }
 
+/**
+ * Plain spawn without GPU progress polling (heartbeat removed; opt-out path).
+ * @param {string} spawnExecutable
+ * @param {string[]} spawnArgv
+ * @param {NodeJS.ProcessEnv} childEnv
+ * @param {{ subcommand: string, useReleaseNative: boolean }} opts
+ * @returns {Promise<number>}
+ */
+function spawnTauriPlain(spawnExecutable, spawnArgv, childEnv, opts) {
+  const { subcommand, useReleaseNative } = opts;
+  const stopOnDevApp =
+    subcommand === "dev"
+      ? () => isJarvisDevProcessRunning(JARVIS_ROOT, useReleaseNative)
+      : null;
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(spawnExecutable, spawnArgv, {
+      stdio: "inherit",
+      cwd: JARVIS_ROOT,
+      env: childEnv,
+      windowsHide: false,
+    });
+
+    let devReadyPoll = null;
+    const clearTimers = () => {
+      if (devReadyPoll) {
+        clearInterval(devReadyPoll);
+        devReadyPoll = null;
+      }
+    };
+
+    if (stopOnDevApp) {
+      devReadyPoll = setInterval(() => {
+        if (stopOnDevApp()) clearTimers();
+      }, 15_000);
+    }
+
+    child.on("error", (err) => {
+      clearTimers();
+      reject(err);
+    });
+
+    child.on("close", (code, signal) => {
+      clearTimers();
+      if (signal) {
+        resolve(128);
+        return;
+      }
+      resolve(code ?? 1);
+    });
+  });
+}
+
+/**
+ * CUDA dev uses release native profile to avoid MSVC debug stack overrun (see docs/bugs).
+ * @param {string} subcommand
+ * @param {string} backend
+ * @param {string[]} extraArgs
+ */
+function applyGpuDevProfile(subcommand, backend, extraArgs) {
+  if (subcommand !== "dev" || backend !== "cuda") {
+    return extraArgs;
+  }
+  if (process.env.JARVIS_GPU_DEV_DEBUG === "1") {
+    console.warn(
+      "whisper-gpu: JARVIS_GPU_DEV_DEBUG=1 — using debug native profile (may crash on Whisper CUDA load).",
+    );
+    return extraArgs;
+  }
+  if (extraArgs.includes("--release")) {
+    return extraArgs;
+  }
+  console.log(
+    "whisper-gpu: CUDA dev uses --release native profile (stable GPU startup; set JARVIS_GPU_DEV_DEBUG=1 to opt out).",
+  );
+  return ["--release", ...extraArgs];
+}
+
 async function runTauri(subcommand, extraArgs, withGpuSelection) {
   const lock = checkCargoBuildLock(JARVIS_ROOT);
   if (lock.blocked) {
@@ -236,19 +388,7 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
     process.exit(1);
   }
 
-  if (
-    withGpuSelection &&
-    subcommand === "dev" &&
-    !(process.env.WHISPER_GPU_BACKEND ?? "").trim()
-  ) {
-    process.env.WHISPER_GPU_BACKEND = "none";
-    console.warn(
-      "whisper-gpu: dev defaults to CPU Whisper (fast). Use npm run tauri:dev:gpu or WHISPER_GPU_BACKEND=auto for CUDA/Vulkan.",
-    );
-  }
-
   releaseWindowsDevJarvisExeLock(subcommand);
-  applyDiscoveredCudaToolkitToProcessEnv();
 
   let selected = resolveBackend();
   if (withGpuSelection) {
@@ -279,13 +419,18 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
     };
   }
 
+  const tauriExtraArgs = applyGpuDevProfile(subcommand, selected.backend, extraArgs);
+
+  const nativeProfile =
+    subcommand === "build" || tauriExtraArgs.includes("--release") ? "release" : "debug";
+
   const args = [subcommand];
   const cargoFeatures = ["llm-local"];
   if (withGpuSelection && selected.backend !== "none") {
     cargoFeatures.push(`whisper-${selected.backend}`, `llm-${selected.backend}`);
   }
   args.push("--features", cargoFeatures.join(","));
-  args.push(...extraArgs);
+  args.push(...tauriExtraArgs);
 
   if (withGpuSelection) {
     console.log(
@@ -295,7 +440,7 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
       console.warn("whisper-gpu: building CPU-only Whisper backend.");
     }
     if (selected.backend === "cuda") {
-      logFirstCudaBuildNotice(JARVIS_ROOT);
+      logFirstCudaBuildNotice(JARVIS_ROOT, nativeProfile);
     }
   } else {
     console.log(
@@ -310,23 +455,95 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
     `whisper-gpu: exec node ${path.relative(JARVIS_ROOT, tauriCli)} ${args.join(" ")}`,
   );
 
-  const childEnv = buildChildEnv(withGpuSelection, selected);
-  if (withGpuSelection && process.platform === "win32") {
-    const intended =
-      selected.backend === "cuda"
-        ? childEnv.CMAKE_GENERATOR ?? "NMake Makefiles"
-        : childEnv.CMAKE_GENERATOR ?? "Visual Studio 17 2022";
-    warnIfCmakeGeneratorMismatch(JARVIS_ROOT, intended);
+  const { env: childEnv, cudaBuildEnv, generator, gpuPrebuild } = resolveBuildEnvironment({
+    jarvisRoot: JARVIS_ROOT,
+    channel: "tauri",
+    baseEnv: process.env,
+    backend: withGpuSelection ? selected.backend : "none",
+    needsCuda: withGpuSelection && selected.backend === "cuda",
+    logPrefix: "whisper-gpu",
+  });
+
+  if (cudaBuildEnv) {
+    const cudaLog = formatResolvedCudaLog(cudaBuildEnv, gpuPrebuild);
+    if (cudaLog) console.log(`whisper-gpu: ${cudaLog}`);
   }
-  const cudaFirstBuild =
-    withGpuSelection && selected.backend === "cuda";
+  if (process.platform === "win32" && childEnv.LIBCLANG_PATH) {
+    console.log(`whisper-gpu: set LIBCLANG_PATH=${childEnv.LIBCLANG_PATH} (whisper-rs-sys bindgen)`);
+  }
+  if (process.platform === "win32" && childEnv.BINDGEN_EXTRA_CLANG_ARGS) {
+    console.log("whisper-gpu: set BINDGEN_EXTRA_CLANG_ARGS for MSVC + Windows SDK includes");
+  }
+  if (
+    withGpuSelection &&
+    selected.backend === "vulkan" &&
+    process.platform === "win32" &&
+    childEnv.VULKAN_SDK
+  ) {
+    const prev = process.env.VULKAN_SDK;
+    if (!hasPath(prev) || path.resolve(prev) !== path.resolve(childEnv.VULKAN_SDK)) {
+      console.log(`whisper-gpu: set VULKAN_SDK=${childEnv.VULKAN_SDK}`);
+    }
+  }
+
+  if (withGpuSelection && process.platform === "win32" && selected.backend === "cuda") {
+    prepareGpuNativeBuild(JARVIS_ROOT, childEnv, {
+      logPrefix: "whisper-gpu",
+      profile: nativeProfile,
+      generator: generator ?? undefined,
+    });
+  }
+
+  const cudaGpuDev = withGpuSelection && selected.backend === "cuda";
+  const prebuildWarm = childEnv.JARVIS_GPU_PREBUILD_WARM === "1" || gpuPrebuild?.warm === true;
+  const gpuBuildSnapshot = cudaGpuDev
+    ? summarizeGpuNativeBuildProgress(JARVIS_ROOT, nativeProfile, { prebuildWarm })
+    : null;
+  const gpuBuildNeedsProgress =
+    cudaGpuDev &&
+    process.env.JARVIS_GPU_BUILD_PROGRESS !== "0" &&
+    (gpuBuildSnapshot?.overallPercent ?? 0) < 100;
+
+  if (cudaGpuDev) {
+    for (const line of formatCondensedBuildEnvDiagnostics(
+      collectBuildEnvDiagnostics(JARVIS_ROOT, nativeProfile),
+    )) {
+      console.log(line);
+    }
+    if (!prebuildWarm) {
+      console.warn(
+        "whisper-gpu: GPU prebuild cache is COLD — expect 45–90+ min unless you run: npm run prebuild:gpu-cuda",
+      );
+    }
+    if (process.env.JARVIS_GPU_BUILD_PROGRESS !== "0") {
+      if (gpuBuildNeedsProgress) {
+        console.log(
+          "whisper-gpu: GPU build progress bar enabled (5s updates on stderr; set JARVIS_GPU_BUILD_PROGRESS=0 to disable)",
+        );
+      } else if (gpuBuildSnapshot) {
+        console.log(
+          `${formatGpuBuildProgressBar({ ...gpuBuildSnapshot, elapsedSec: 0 })} — CUDA cache warm (incremental cargo only)`,
+        );
+      }
+    }
+  }
 
   let status;
   try {
-    status = await spawnTauriWithHeartbeat(spawnExecutable, spawnArgv, childEnv, {
-      cudaFirstBuild,
+    const spawnOpts = {
       subcommand,
-    });
+      useReleaseNative: tauriExtraArgs.includes("--release"),
+    };
+    if (gpuBuildNeedsProgress) {
+      status = await spawnTauriWithGpuProgress(spawnExecutable, spawnArgv, childEnv, {
+        ...spawnOpts,
+        cudaFirstBuild: true,
+        nativeProfile,
+        prebuildWarm,
+      });
+    } else {
+      status = await spawnTauriPlain(spawnExecutable, spawnArgv, childEnv, spawnOpts);
+    }
   } catch (err) {
     console.error(
       "whisper-gpu: failed to spawn Tauri CLI:",
@@ -344,8 +561,25 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
 }
 
 async function main() {
+  const cleanupDevChildren = () => {
+    releaseWindowsDevJarvisExeLock("dev");
+    releaseWindowsDevJarvisExeLock("build");
+  };
+  process.once("SIGINT", cleanupDevChildren);
+  process.once("SIGTERM", cleanupDevChildren);
+  if (process.platform === "win32") {
+    process.once("SIGBREAK", cleanupDevChildren);
+  }
+
   try {
-    const [subcommand = "build", ...rest] = process.argv.slice(2);
+    const rawArgv = process.argv.slice(2);
+    const { extraArgs, backendOverride } = parseLauncherFlags(rawArgv);
+    if (backendOverride === "none") {
+      process.env.WHISPER_GPU_BACKEND = "none";
+    } else if (backendOverride === "auto") {
+      process.env.WHISPER_GPU_BACKEND = "auto";
+    }
+    const [subcommand = "build", ...rest] = extraArgs;
     await runTauri(subcommand, rest, ["build", "dev"].includes(subcommand));
   } catch (e) {
     console.error("whisper-gpu:", e instanceof Error ? e.message : e);

@@ -53,6 +53,10 @@ export function selectCenterContent(
   }
 
   const transcript = input.transcript.trim();
+
+  if (input.phase === "listening" && normalizedActionText && transcript.length === 0) {
+    return { kind: "action", text: normalizedActionText };
+  }
   if (input.phase === "awaiting_input" && transcript.length > 0) {
     return { kind: "transcript", text: input.transcript };
   }

@@ -15,3 +15,7 @@ include = ["config.local.toml"]
 # E0080 in whisper-rs-sys out/bindings.rs = bindgen failed (often missing stdbool.h) → Linux fallback.
 [env]
 CMAKE = { value = "cmake", force = false }
+
+# Default Windows thread stack is 1 MiB; whisper.cpp CUDA model load needs more in debug hosts.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-Clink-arg=/STACK:16777216"]

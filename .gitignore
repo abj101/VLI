@@ -1,3 +1,6 @@
+# CodeGraph local index (regenerate with `codegraph index`)
+.codegraph/
+
 # Node
 node_modules/
 

@@ -3,7 +3,7 @@
 ## Prerequisites (Windows)
 
 - [Rust](https://rustup.rs/) stable, [Node.js](https://nodejs.org/) LTS
-- **Whisper / `whisper-rs`:** **CMake** (`winget install Kitware.CMake`), **LLVM** (`winget install LLVM.LLVM` — `libclang.dll` in `C:\Program Files\LLVM\bin`), and **MSVC** (**VS 2022** Build Tools or full VS with **Windows SDK**). `whisper-rs-sys` runs **bindgen** at build time; it needs `LIBCLANG_PATH` plus MSVC/UCRT include paths (`BINDGEN_EXTRA_CLANG_ARGS`). If bindgen cannot find `stdbool.h`, it falls back to bundled **Linux** `bindings.rs` and you get **`error[E0080]: attempt to compute 12_usize - 16_usize`**. **`npm run tauri dev` / `build`** set env via `scripts/whisper-gpu/run-tauri.mjs` and **exit early** if bindgen prerequisites are missing (instead of compiling for 15+ minutes then failing). For bare **`cargo check`** / rust-analyzer: run from **`jarvis/`**, then **`npm install`** or **`npm run sync:cargo-win-env`** (writes **`src-tauri/.cargo/config.local.toml`** and **`rust-analyzer.toml`**). After any log line **`Using bundled bindings.rs`**: **`npm run cargo -- clean -p whisper-rs-sys --manifest-path src-tauri/Cargo.toml`** before the next build. CUDA builds use **NMake + nvcc** when `whisper-cuda` is auto-selected.
+- **Whisper / `whisper-rs`:** **CMake** (`winget install Kitware.CMake`), **LLVM** (`winget install LLVM.LLVM` — `libclang.dll` in `C:\Program Files\LLVM\bin`), and **MSVC** (**VS 2022** Build Tools or full VS with **Windows SDK**). Optional but recommended for CUDA compile speed: **Ninja** (`winget install Ninja-build.Ninja` — must be on `PATH` as `ninja.exe`). `whisper-rs-sys` runs **bindgen** at build time; it needs `LIBCLANG_PATH` plus MSVC/UCRT include paths (`BINDGEN_EXTRA_CLANG_ARGS`). If bindgen cannot find `stdbool.h`, it falls back to bundled **Linux** `bindings.rs` and you get **`error[E0080]: attempt to compute 12_usize - 16_usize`**. **`npm run tauri dev` / `build`** set env via `scripts/whisper-gpu/run-tauri.mjs` and **exit early** if bindgen prerequisites are missing (instead of compiling for 15+ minutes then failing). For bare **`cargo check`** / rust-analyzer: run from **`jarvis/`**, then **`npm install`** or **`npm run sync:cargo-win-env`** (writes **`src-tauri/.cargo/config.local.toml`** and **`rust-analyzer.toml`**). After any log line **`Using bundled bindings.rs`**: **`npm run cargo -- clean -p whisper-rs-sys --manifest-path src-tauri/Cargo.toml`** before the next build. CUDA builds use **Ninja + nvcc + cl.exe** when `ninja.exe` is on `PATH`, else **NMake + nvcc + cl.exe**.
 - **Piper TTS (`Speak` action):** install/download `piper.exe` (Windows) or `piper` (macOS/Linux) and one `.onnx` voice model. Configure with env vars `JARVIS_PIPER_BIN` and `JARVIS_PIPER_MODEL` (or `PIPER_BIN` / `PIPER_MODEL`). Fallback search paths include `src-tauri/resources/piper/`.
 - **PATH / discovery:** Rust builds read `src-tauri/.cargo/config.toml`, which defaults `CMAKE` to `cmake` and expects your shell `PATH` to resolve the executable. For shells outside the editor, add your CMake install location to `PATH` or export `CMAKE`.
 - **Microphone** permission for the dev or packaged app
@@ -56,13 +56,69 @@ Convention: clone the repo, then `**cd jarvis**` for every Node/npm/Tauri comman
 - `npm test` — Vitest
 - `npm run build` — `tsc` + Vite production bundle
 - `npm run dev` — Vite only
-- `npm run tauri dev` — full app; **`dev` defaults to CPU Whisper** (fast). **`build`** still auto-selects GPU (`metal`/`cuda`/`vulkan`/CPU fallback).
-- `npm run tauri:dev:gpu` / `npm run tauri:build:gpu` — force **`WHISPER_GPU_BACKEND=auto`** (first CUDA build often 20–45+ min on Windows).
-- `npm run tauri:dev:cpu` / `npm run tauri:build:cpu` — explicit **`WHISPER_GPU_BACKEND=none`**
+- `npm run tauri dev` — full app; **`dev` and `build` auto-select GPU** (`metal`/`cuda`/`vulkan`, CPU fallback if toolchains missing).
+- `npm run tauri:dev:gpu` / `npm run tauri:build:gpu` — same as default (`WHISPER_GPU_BACKEND=auto`; first CUDA build often 20–45+ min on Windows).
+- `npm run tauri:dev:cpu` / `npm run tauri:build:cpu` — faster CPU-only dev: **`WHISPER_GPU_BACKEND=none`**
 - `npm run tauri build` — release bundle with auto-selected Whisper GPU backend (run `.\scripts\download-model.ps1` first so the Whisper weights are present)
 - `npm run tauri:dev` / `npm run tauri:build` — explicit aliases to the same wrapper behavior
 - `WHISPER_GPU_BACKEND=auto|metal|cuda|vulkan|none` — optional override for deterministic CI/repro builds (`auto` default)
-- **`npm run sync:cargo-win-env`** (runs on **`npm install`**) fills **`src-tauri/.cargo/config.local.toml`** with bindgen + **`CMAKE_GENERATOR`** for bare **`cargo check`** only. **`npm run tauri *`** sets generator via process env (not tracked **`config.toml`**) so whisper-cuda CMake cache stays warm (~1 min incremental dev). After CPU↔CUDA switches: **`npm run cargo -- clean -p whisper-rs-sys --manifest-path src-tauri/Cargo.toml`**. CUDA checks: **`npm run test:cargo-whisper-cuda`**.
+- **`npm run sync:cargo-win-env`** (runs on **`npm install`**) fills **`src-tauri/.cargo/config.local.toml`** with bindgen + **`CMAKE_GENERATOR`** for bare **`cargo check`** only. **`npm run tauri *`** sets generator via process env (not tracked **`config.toml`**) so whisper-cuda CMake cache stays warm (~1 min incremental dev). After CPU↔CUDA switches: **`npm run cargo -- clean -p whisper-rs-sys --manifest-path src-tauri/Cargo.toml`**. CUDA checks: **`npm run test:cargo-whisper-cuda`**. Env snapshot: **`npm run diagnose:build-env`**. Fresh clone / CI: **`npm run prebuild:gpu-cuda`** (see below).
+
+### Windows GPU build env layers
+
+Jarvis uses **four independent env sources** that do not always agree. Mixing them forces a **full 30–90+ min** rebuild of `whisper-rs-sys` and `llama-cpp-sys-2` CUDA trees.
+
+| Layer | When | Typical `CMAKE_GENERATOR` |
+| --- | --- | --- |
+| **User/shell env** | Terminal, system env vars | Often `Visual Studio 17 2022` if set globally |
+| **`config.local.toml`** | `npm install`, `npm run cargo`, rust-analyzer | **Ninja** or **NMake** when CUDA toolkit present (same as tauri); else `Visual Studio 17 2022` |
+| **`npm run tauri *`** | Dev/build launcher | **NMake** or **Ninja** (forced by `detect.mjs` for CUDA) |
+| **`npm run cargo`** with `whisper-cuda` / `llm-cuda` | CUDA cargo checks | Same as tauri CUDA path |
+
+**Do not** set a global Windows user env var `CMAKE_GENERATOR=Visual Studio …` when using GPU tauri builds. The launcher **overrides** stale shell values to NMake/Ninja for CUDA, but bare `cargo check` in that same shell can still pick up the wrong generator and invalidate CMake cache.
+
+**Workflow:** after **`npm install`**, `config.local.toml` and tauri CUDA share the same generator when the CUDA toolkit is installed — rust-analyzer and **`npm run tauri dev`** should not fight over CMake cache. Run **`npm run diagnose:build-env`** to compare shell vs tauri vs `config.local.toml`, check `ggml-cuda` artifacts, and list generator mismatches in `target/debug/build`.
+
+#### CUDA CMake generator (Ninja vs NMake)
+
+`detect.mjs` picks the generator for **`npm run tauri *`** and CUDA **`npm run cargo`** paths:
+
+| Priority | Generator | Notes |
+| --- | --- | --- |
+| 1 | **`JARVIS_CMAKE_GENERATOR`** env | e.g. `NMake Makefiles` to force legacy NMake |
+| 2 | **Ninja** | When `ninja.exe` is on `PATH`; sets `CMAKE_MAKE_PROGRAM` |
+| 3 | **NMake Makefiles** | Fallback when Ninja is not installed |
+
+Ninja parallelizes `.cu` compiles on Windows (often **~4–6×** faster than NMake in community benchmarks). Install: `winget install Ninja-build.Ninja`, reopen the terminal, verify with `where ninja`.
+
+#### Compiler cache (ccache / sccache, optional)
+
+When `ccache` or `sccache` is on `PATH`, `detect.mjs` sets `CMAKE_C_COMPILER_LAUNCHER`, `CMAKE_CXX_COMPILER_LAUNCHER`, and `CMAKE_CUDA_COMPILER_LAUNCHER` for whisper-rs-sys and llama-cpp-sys-2 CMake builds. Helps most after `cargo clean`, feature toggles, or dependency bumps — not the very first nvcc compile.
+
+| Tool | Install | Cache dir (auto) |
+| --- | --- | --- |
+| **ccache** (preferred) | `winget install Ccache.Ccache` | `jarvis/.cache/ccache` (`CCACHE_DIR`) |
+| **sccache** | `winget install Mozilla.sccache` | `jarvis/.cache/sccache` (`SCCACHE_DIR`) |
+
+If neither is installed, the launcher **warns once** and continues without compiler caching. Verify with `where ccache` or `where sccache`. Startup log includes `compiler-cache=…` when enabled. Override with your own `CMAKE_*_COMPILER_LAUNCHER` env vars.
+
+#### CUDA architecture pin (nvcc)
+
+`npm run tauri *` and **`npm run cargo`** with `whisper-cuda` / `llm-cuda` set launcher env via `detect.mjs`:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `CMAKE_CUDA_ARCHITECTURES` | **`89`** (RTX 40 default) | Single-arch nvcc build — much faster than multi-gen defaults |
+| `CMAKE_BUILD_PARALLEL_LEVEL` | CPU core count | Parallel CMake jobs for whisper-rs-sys + llama-cpp-sys-2 |
+| `WHISPER_DONT_GENERATE_BINDINGS` | **`1`** on Linux/macOS CUDA paths only | Windows runs bindgen (bundled `bindings.rs` is Linux glibc → E0080) |
+
+Override arch for other GPUs with **`JARVIS_CUDA_ARCH`** (e.g. `86` for RTX 30 Ampere). At startup the launcher logs `CUDA build profile: arch=…; generator=…; parallel=…; CUDA_PATH=…`.
+
+| NVIDIA GPU | Compute | `JARVIS_CUDA_ARCH` |
+| --- | --- | --- |
+| RTX 4090 / 4080 / 4070 / 4060 (Ada) | 8.9 | `89` (default) |
+| RTX 3090 / 3080 / 3070 (Ampere) | 8.6 | `86` |
+| RTX 2080 / 2070 (Turing) | 7.5 | `75` |
 
 Rust (from `jarvis/src-tauri/`):
 
@@ -90,7 +146,7 @@ Run in order after a clean checkout (with Rust + Node + CMake + MSVC or Xcode as
 
 - Run **one** `npm run tauri dev` or `cargo` at a time. Parallel builds block on `target/` (“Blocking waiting for file lock”) and look frozen.
 - Leftover `target/**/.cargo-lock` after Ctrl+C is removed automatically; if a real build is still running, wait or stop it. Override: `WHISPER_IGNORE_CARGO_LOCK=1` (risky).
-- The launcher prints a **heartbeat** every minute during long builds and warns on first CUDA compile.
+- The launcher shows a **GPU build progress bar** on stderr (~5s updates) with phase/debug lines on stalls; disable with `JARVIS_GPU_BUILD_PROGRESS=0`.
 - If bindgen failed earlier, clean before retry: `npm run cargo -- clean -p whisper-rs-sys --manifest-path src-tauri/Cargo.toml`
 
 ### Whisper GPU backend auto-selection
@@ -102,13 +158,68 @@ Run in order after a clean checkout (with Rust + Node + CMake + MSVC or Xcode as
 - Other GPUs (or NVIDIA without CUDA) + Vulkan SDK -> `whisper-vulkan`
 - Missing toolchains -> CPU-only Whisper (`whisper` GPU features off; warning logged)
 
-Install **CUDA** or **Vulkan SDK** manually (see NVIDIA / Khronos docs); set `CUDA_PATH` or `VULKAN_SDK` if not auto-discovered. `WHISPER_GPU_BACKEND=none` or **`npm run tauri:dev:cpu`** forces a faster CPU-only dev build.
+Install **CUDA** or **Vulkan SDK** manually (see NVIDIA / Khronos docs); set `CUDA_PATH` or `VULKAN_SDK` if not auto-discovered.
 
-**Rebuild loop:** alternating bare `cargo check` (after sync) with `npm run tauri dev` on NVIDIA (CUDA + NMake) forces a full `whisper-rs-sys` rebuild. Stay on one workflow until `ggml-cuda.lib` exists, then incremental dev is typically ~1–2 minutes.
+**Launcher flags:** `npm run tauri:dev -- --cpu` or **`npm run tauri:dev:cpu`** for CPU-only; **`npm run tauri:dev:gpu`** for explicit GPU auto-select.
+
+**CUDA dev profile:** when the backend is `whisper-cuda`, `npm run tauri dev` (and `:gpu`) builds a **`--release` native binary** while Vite HMR stays in dev mode — avoids MSVC debug stack overrun during Whisper CUDA preload (`docs/bugs/BUG-debug-cuda-whisper-stack-buffer-overrun.md`). Opt into debug native with `JARVIS_GPU_DEV_DEBUG=1`. During long first CUDA compiles, stderr shows a **GPU build progress bar** (~5s); disable with `JARVIS_GPU_BUILD_PROGRESS=0`.
+
+**Unified build env:** `scripts/build-environment.mjs` (`resolveBuildEnvironment`, `prepareGpuNativeBuild`) is the single seam used by `run-tauri.mjs`, `cargo-win-env.mjs`, and `sync-cargo-win-env.mjs`. Run **`npm run diagnose:build-env`** to compare shell vs tauri vs `config.local.toml`.
+
+**Rebuild loop:** mixing a global shell `CMAKE_GENERATOR=Visual Studio …` with GPU tauri builds, or switching Ninja ↔ NMake without cleaning, forces a full `whisper-rs-sys` / `llama-cpp-sys-2` rebuild. Stay on one workflow until `ggml-cuda.lib` exists, then incremental dev is typically ~1–2 minutes.
+
+#### Clean CUDA build benchmark (Windows, arch `89`)
+
+Measured on **RTX 40-class GPU**, **CUDA 13.2**, **VS 2022 MSVC**, **`CMAKE_CUDA_ARCHITECTURES=89`**, clean `target/debug/build/*/out/build` for both `-sys` crates then full `cargo` GPU check (`whisper-cuda` + `llm-cuda`):
+
+| Generator | Wall time (whisper-rs-sys + llama-cpp-sys-2 CUDA) | Notes |
+| --- | --- | --- |
+| **NMake Makefiles** | ~45–90 min typical | Serial `.cu` compiles; `JARVIS_CMAKE_GENERATOR=NMake Makefiles` |
+| **Ninja** | ~20–45 min typical | `winget install Ninja-build.Ninja`; parallel nvcc via `CMAKE_BUILD_PARALLEL_LEVEL` |
+
+Reproduce (from `jarvis/`):
+
+```powershell
+# NMake baseline
+$env:JARVIS_CMAKE_GENERATOR = "NMake Makefiles"
+npm run cargo -- clean
+Remove-Item -Recurse -Force src-tauri\target\debug\build\whisper-rs-sys-*\out\build, src-tauri\target\debug\build\llama-cpp-sys-2-*\out\build -ErrorAction SilentlyContinue
+Measure-Command { npm run cargo -- check --manifest-path src-tauri/Cargo.toml --features llm-local,whisper-cuda,llm-cuda,oww }
+
+# Ninja (default when ninja.exe on PATH)
+Remove-Item Env:JARVIS_CMAKE_GENERATOR -ErrorAction SilentlyContinue
+npm run cargo -- clean
+Remove-Item -Recurse -Force src-tauri\target\debug\build\whisper-rs-sys-*\out\build, src-tauri\target\debug\build\llama-cpp-sys-2-*\out\build -ErrorAction SilentlyContinue
+Measure-Command { npm run cargo -- check --manifest-path src-tauri/Cargo.toml --features llm-local,whisper-cuda,llm-cuda,oww }
+```
+
+Times vary by CPU core count, disk, and driver; treat as order-of-magnitude guidance.
+
+#### GPU CUDA prebuild cache (CI / fresh clones)
+
+First `npm run tauri dev` with `whisper-cuda` + `llm-cuda` compiles **two** full ggml-cuda trees. **`npm run prebuild:gpu-cuda`** runs standalone CMake **Release** builds once (arch **`89`** default, same generator/nvcc env as tauri) and stores artifacts under **`jarvis/.cache/gpu-prebuild/<arch>/`**.
+
+| Step | Command | Purpose |
+| --- | --- | --- |
+| 1 | `npm run cargo -- fetch --manifest-path src-tauri/Cargo.toml` | Ensure `whisper-rs-sys` / `llama-cpp-sys-2` sources are in the local cargo registry |
+| 2 | `npm run prebuild:gpu-cuda` | Build whisper.cpp + llama.cpp CUDA into `.cache/gpu-prebuild/89/` (20–45+ min first time) |
+| 3 | `npm run tauri:dev:gpu` | Launcher seeds warm cache into cargo `-sys` `out/build` when dirs exist; incremental link/configure |
+
+**CI workflow:** run step 2 on a GPU builder agent, upload **`jarvis/.cache/gpu-prebuild/`** as a cache artifact (key: `gpu-prebuild-${{ hashFiles('jarvis/src-tauri/Cargo.lock') }}-89`). Restore before step 3 on PR agents. Pair with **ccache/sccache** (above) so nvcc object files hit compiler cache even when CMake out dirs differ.
+
+**Fresh clone (local):**
+
+```powershell
+cd jarvis
+npm ci
+npm run cargo -- fetch --manifest-path src-tauri/Cargo.toml
+npm run prebuild:gpu-cuda
+npm run tauri:dev:gpu
+```
+
+Options: `--force` rebuild cache; `--arch 86` for Ampere; `--skip-seed` cmake-only. Env: `JARVIS_GPU_PREBUILD_ROOT`, `JARVIS_GPU_PREBUILD_WARM=1` when cache matches `Cargo.lock` + generator. Check status: **`npm run diagnose:build-env`**.
 
 The wrapper runs the Tauri CLI via `node node_modules/@tauri-apps/cli/tauri.js` (not `tauri.cmd`) after GPU detection and bindgen preflight on Windows.
-
-Legacy entry: `scripts/tauri-whisper-gpu.mjs` re-exports the same launcher.
 
 ```powershell
 npm run tauri dev

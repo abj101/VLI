@@ -31,6 +31,7 @@ pub enum RouterErrorCode {
     FeatureDisabled,
     Tier2Disabled,
     ModelMissing,
+    ModelLoading,
     InvalidJson,
     LowConfidence,
     UnknownTool,

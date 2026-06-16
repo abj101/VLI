@@ -14,10 +14,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-/// Warm-loaded router weights reused after warmup.
+pub const ROUTER_LOADING_STATUS: &str = "Router model loading…";
+
+/// Tracks background router warmup so Tier 2 can gate until the first load completes.
 pub struct RouterModelCache {
     pub path: Mutex<Option<String>>,
-    pub warmed: AtomicBool,
+    warmed: AtomicBool,
+    loading: AtomicBool,
 }
 
 impl RouterModelCache {
@@ -25,19 +28,113 @@ impl RouterModelCache {
         Self {
             path: Mutex::new(None),
             warmed: AtomicBool::new(false),
+            loading: AtomicBool::new(false),
         }
-    }
-
-    pub fn mark_warmed(&self, path: String) {
-        if let Ok(mut slot) = self.path.lock() {
-            *slot = Some(path);
-        }
-        self.warmed.store(true, Ordering::SeqCst);
     }
 
     pub fn is_warmed(&self) -> bool {
         self.warmed.load(Ordering::SeqCst)
     }
+
+    pub fn is_loading(&self) -> bool {
+        self.loading.load(Ordering::SeqCst)
+    }
+
+    /// Returns true when this caller should start the background load.
+    pub fn try_begin_loading(&self) -> bool {
+        if self.is_warmed() {
+            return false;
+        }
+        self.loading
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+
+    fn finish_loading(&self, warmed: bool, path: Option<String>) {
+        if warmed {
+            if let Some(p) = path {
+                if let Ok(mut slot) = self.path.lock() {
+                    *slot = Some(p);
+                }
+            }
+            self.warmed.store(true, Ordering::SeqCst);
+        }
+        self.loading.store(false, Ordering::SeqCst);
+    }
+
+    pub fn mark_warmed(&self, path: String) {
+        self.finish_loading(true, Some(path));
+    }
+}
+
+pub fn emit_router_loading_notice(app: &AppHandle) {
+    let _ = app.emit(
+        "action-status",
+        serde_json::json!({ "text": ROUTER_LOADING_STATUS }),
+    );
+}
+
+pub fn clear_router_loading_notice(app: &AppHandle) {
+    let _ = app.emit("action-status", serde_json::json!({ "text": "" }));
+}
+
+fn finish_router_warmup_emit(app: &AppHandle, payload: &RouterWarmupPayload) {
+    if payload.ready {
+        clear_router_loading_notice(app);
+    } else {
+        if let Some(cache) = app.try_state::<RouterModelCache>() {
+            cache.finish_loading(false, None);
+        }
+        let _ = app.emit(
+            "action-error",
+            serde_json::json!({ "message": payload.message }),
+        );
+    }
+    let _ = app.emit("router-warmup", payload);
+}
+
+/// Start background router warmup when Tier 2 is enabled and the GGUF is present.
+pub fn spawn_router_preload(app: &AppHandle) -> bool {
+    let status = router_status_inner(app);
+    if !status.feature_compiled || !status.model_present {
+        return false;
+    }
+    let Some(cache) = app.try_state::<RouterModelCache>() else {
+        return false;
+    };
+    if !cache.try_begin_loading() {
+        return false;
+    }
+    emit_router_loading_notice(app);
+    let app_bg = app.clone();
+    std::thread::spawn(move || {
+        let payload = warmup_router_blocking(app_bg.clone());
+        finish_router_warmup_emit(&app_bg, &payload);
+    });
+    true
+}
+
+/// Blocking router warmup for the launch coordinator (caller is already on a background thread).
+pub(crate) fn run_router_warmup_at_launch_blocking(app: &AppHandle) {
+    let status = router_status_inner(app);
+    if !status.feature_compiled || !status.model_present {
+        return;
+    }
+    let Some(cache) = app.try_state::<RouterModelCache>() else {
+        return;
+    };
+    if !cache.try_begin_loading() {
+        return;
+    }
+    emit_router_loading_notice(app);
+    let payload = warmup_router_blocking(app.clone());
+    finish_router_warmup_emit(app, &payload);
+}
+
+/// Tier 2 routing is allowed only after the first router warmup completed.
+pub fn router_model_ready(app: &AppHandle) -> bool {
+    app.try_state::<RouterModelCache>()
+        .is_some_and(|cache| cache.is_warmed())
 }
 
 impl Default for RouterModelCache {
@@ -156,9 +253,12 @@ pub fn router_status(app: AppHandle) -> RouterStatus {
     router_status_inner(&app)
 }
 
-fn warmup_router_blocking(app: AppHandle) -> RouterWarmupPayload {
+pub(crate) fn warmup_router_blocking(app: AppHandle) -> RouterWarmupPayload {
     let status = router_status_inner(&app);
     if !status.feature_compiled {
+        if let Some(cache) = app.try_state::<RouterModelCache>() {
+            cache.finish_loading(false, None);
+        }
         return RouterWarmupPayload {
             ready: false,
             message: "This build has no LLM router feature.".into(),
@@ -167,6 +267,9 @@ fn warmup_router_blocking(app: AppHandle) -> RouterWarmupPayload {
     let model_path = match status.model_path {
         Some(p) => p,
         None => {
+            if let Some(cache) = app.try_state::<RouterModelCache>() {
+                cache.finish_loading(false, None);
+            }
             return RouterWarmupPayload {
                 ready: false,
                 message: "Router model file is missing.".into(),
@@ -181,36 +284,27 @@ fn warmup_router_blocking(app: AppHandle) -> RouterWarmupPayload {
             }
             RouterWarmupPayload {
                 ready: true,
-                message: format!("Router model ready ({}).", llm_backend_label(&status.compile_backend)),
+                message: format!(
+                    "Router model ready ({}).",
+                    llm_backend_label(&status.compile_backend)
+                ),
             }
         }
-        Err(msg) => RouterWarmupPayload {
-            ready: false,
-            message: format!("Router warmup failed: {msg}"),
-        },
+        Err(msg) => {
+            if let Some(cache) = app.try_state::<RouterModelCache>() {
+                cache.finish_loading(false, None);
+            }
+            RouterWarmupPayload {
+                ready: false,
+                message: format!("Router warmup failed: {msg}"),
+            }
+        }
     }
 }
 
-/// Background warmup when Tier 2 and warmup-on-launch are enabled (app startup).
-pub fn spawn_router_warmup_on_launch(app: &AppHandle, settings: &crate::db::AppSettings) {
-    if !settings.llm_router_tier2_enabled || !settings.llm_router_warmup_on_launch {
-        return;
-    }
-    let status = router_status_inner(app);
-    if !status.feature_compiled || !status.model_present {
-        return;
-    }
-    if let Some(cache) = app.try_state::<RouterModelCache>() {
-        if cache.is_warmed() {
-            return;
-        }
-    }
-    let app_bg = app.clone();
-    std::thread::spawn(move || {
-        let payload = warmup_router_blocking(app_bg.clone());
-        let _ = app_bg.emit("router-warmup", &payload);
-    });
-}
+/// Background router warmup at startup when Tier 2 is enabled.
+/// Launch sequencing is handled by [`crate::gpu_startup::spawn_startup_sequence`].
+pub fn spawn_router_warmup_on_launch(_app: &AppHandle, _settings: &crate::db::AppSettings) {}
 
 #[tauri::command]
 pub fn router_warmup(app: AppHandle, cache: State<'_, RouterModelCache>) -> RouterWarmupPayload {
@@ -233,14 +327,21 @@ pub fn router_warmup(app: AppHandle, cache: State<'_, RouterModelCache>) -> Rout
             message: "Router model already warm.".into(),
         };
     }
-    let app_bg = app.clone();
-    std::thread::spawn(move || {
-        let payload = warmup_router_blocking(app_bg.clone());
-        let _ = app_bg.emit("router-warmup", &payload);
-    });
+    if cache.is_loading() {
+        return RouterWarmupPayload {
+            ready: false,
+            message: ROUTER_LOADING_STATUS.into(),
+        };
+    }
+    if !spawn_router_preload(&app) {
+        return RouterWarmupPayload {
+            ready: false,
+            message: "Router model file is missing.".into(),
+        };
+    }
     RouterWarmupPayload {
         ready: false,
-        message: "Loading router model in background…".into(),
+        message: ROUTER_LOADING_STATUS.into(),
     }
 }
 
@@ -263,6 +364,16 @@ pub fn route_transcript(app: AppHandle, transcript: String) -> Result<RouterRout
             RouterError {
                 code: RouterErrorCode::Tier2Disabled,
                 message: "Tier 2 LLM routing is disabled in settings.".into(),
+            }
+            .into_string(),
+        );
+    }
+    if !router_model_ready(&app) {
+        let _ = spawn_router_preload(&app);
+        return Err(
+            RouterError {
+                code: RouterErrorCode::ModelLoading,
+                message: ROUTER_LOADING_STATUS.into(),
             }
             .into_string(),
         );
