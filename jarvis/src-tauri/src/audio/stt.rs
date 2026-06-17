@@ -10,14 +10,32 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-const WHISPER_MODEL_FILE: &str = "ggml-tiny.en.bin";
+pub const DEFAULT_LOCAL_WHISPER_MODEL: &str = "tiny.en";
+pub const LOCAL_WHISPER_MODEL_IDS: &[&str] = &["tiny.en", "base.en", "small.en"];
+
+/// Normalize persisted `local_whisper_model` setting (`tiny.en` | `base.en` | `small.en`).
+pub fn parse_local_whisper_model_id(raw: Option<&str>) -> &'static str {
+    let s = raw.map(str::trim).unwrap_or("");
+    match s {
+        "tiny.en" => "tiny.en",
+        "base.en" => "base.en",
+        "small.en" => "small.en",
+        _ => DEFAULT_LOCAL_WHISPER_MODEL,
+    }
+}
+
+pub fn whisper_model_filename(model_id: &str) -> String {
+    format!("ggml-{}.bin", parse_local_whisper_model_id(Some(model_id)))
+}
 pub(crate) const TARGET_RATE: u32 = 16_000;
 /// Ring buffer cap (~4 s at 16 kHz) to bound work per `full` call.
 const MAX_BUFFER_SAMPLES: usize = TARGET_RATE as usize * 4;
-/// Partial transcript cadence.
-pub(crate) const INFER_EVERY: Duration = Duration::from_millis(750);
-/// Need some audio before first decode.
-pub(crate) const MIN_DECODE_SAMPLES: usize = TARGET_RATE as usize / 4;
+/// Partial transcript cadence after the first decode.
+pub(crate) const INFER_EVERY: Duration = Duration::from_millis(400);
+/// First partial decode runs sooner so wake → command feels responsive.
+const FIRST_INFER_AFTER: Duration = Duration::from_millis(120);
+/// Need some audio before first decode (~100 ms at 16 kHz).
+pub(crate) const MIN_DECODE_SAMPLES: usize = TARGET_RATE as usize / 10;
 /// Treat chunks below this peak as silence and eventually reset rolling transcript context.
 const SILENCE_PEAK_THRESHOLD: f32 = 0.01;
 /// Clear stale decode context after this much continuous silence.
@@ -43,17 +61,26 @@ pub struct TranscriptUpdate {
 }
 
 /// Tauri `resource_dir()` may not match `src-tauri/resources/` during `tauri dev`; keep a crate-relative fallback.
-fn whisper_model_candidates(app: &AppHandle) -> Vec<PathBuf> {
+fn whisper_model_candidates(app: &AppHandle, model_id: &str) -> Vec<PathBuf> {
+    let filename = whisper_model_filename(model_id);
     let mut out = Vec::new();
     if let Ok(dir) = app.path().resource_dir() {
-        out.push(dir.join(WHISPER_MODEL_FILE));
+        out.push(dir.join(&filename));
     }
     out.push(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("resources")
-            .join(WHISPER_MODEL_FILE),
+            .join(filename),
     );
     out
+}
+
+fn local_whisper_model_id_from_app(app: &AppHandle) -> String {
+    crate::open_db_connection(app)
+        .ok()
+        .and_then(|conn| crate::db::get_app_settings(&conn).ok())
+        .map(|s| s.local_whisper_model)
+        .unwrap_or_else(|| DEFAULT_LOCAL_WHISPER_MODEL.to_string())
 }
 
 static WHISPER_LOAD_GATE: Mutex<()> = Mutex::new(());
@@ -143,8 +170,13 @@ pub fn load_whisper_context_serialized(
     load_whisper_context(model_path, use_gpu)
 }
 
-pub fn resolve_whisper_model_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let candidates = whisper_model_candidates(app);
+pub fn resolve_whisper_model_path_for_id(
+    app: &AppHandle,
+    model_id: &str,
+) -> Result<PathBuf, String> {
+    let model_id = parse_local_whisper_model_id(Some(model_id));
+    let filename = whisper_model_filename(model_id);
+    let candidates = whisper_model_candidates(app, model_id);
     for path in &candidates {
         if path.is_file() {
             return Ok(path.clone());
@@ -156,9 +188,17 @@ pub fn resolve_whisper_model_path(app: &AppHandle) -> Result<PathBuf, String> {
         .collect::<Vec<_>>()
         .join(", ");
     Err(format!(
-        "Whisper model `{}` not found (tried: {}). Run `scripts/download-model.ps1` from the jarvis folder.",
-        WHISPER_MODEL_FILE, tried
+        "Whisper model `{filename}` not found (tried: {tried}). From the jarvis folder run `npm run fetch-whisper-models` or `.\\scripts\\download-model.ps1 -Model {model_id}`.",
     ))
+}
+
+pub fn resolve_whisper_model_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let model_id = local_whisper_model_id_from_app(app);
+    resolve_whisper_model_path_for_id(app, model_id.as_str())
+}
+
+pub fn is_whisper_model_available(app: &AppHandle, model_id: &str) -> bool {
+    resolve_whisper_model_path_for_id(app, model_id).is_ok()
 }
 
 /// Linear resample mono `f32` to 16 kHz (Whisper input).
@@ -323,6 +363,7 @@ pub fn spawn_stt_thread(
     input_sample_rate: u32,
     hud_session_id: u64,
     use_whisper_accelerator: bool,
+    initial_audio_16k: Vec<f32>,
 ) -> JoinHandle<()> {
     let app_err = app.clone();
     std::thread::spawn(move || {
@@ -333,6 +374,7 @@ pub fn spawn_stt_thread(
             input_sample_rate,
             hud_session_id,
             use_whisper_accelerator,
+            initial_audio_16k,
         ) {
             let _ = app_err.emit("audio-error", serde_json::json!({ "message": e }));
         }
@@ -346,44 +388,51 @@ fn stt_loop(
     input_sample_rate: u32,
     hud_session_id: u64,
     use_whisper_accelerator: bool,
+    initial_audio_16k: Vec<f32>,
 ) -> Result<(), String> {
-    let mut buffer_16k: Vec<f32> = Vec::new();
-    let mut last_decode = Instant::now() - INFER_EVERY;
+    let had_preroll = !initial_audio_16k.is_empty();
+    let mut buffer_16k: Vec<f32> = initial_audio_16k;
+    let mut last_decode = Instant::now();
     let mut last_text = String::new();
     let mut silence_reset = SilenceResetTracker::new();
+    let mut first_decode_pending = true;
+    if had_preroll {
+        last_decode = Instant::now() - FIRST_INFER_AFTER;
+    }
 
-    while let Ok(chunk) = pcm_rx.recv() {
-        let chunk_16k = resample_mono_to_16k(&chunk, input_sample_rate);
-        if silence_reset.push_and_should_reset(&chunk_16k) {
-            debug!("stt: silence gap reached; reset rolling decode context");
-            buffer_16k.clear();
-            last_text.clear();
-            continue;
+    let maybe_decode = |buffer_16k: &mut Vec<f32>,
+                            last_decode: &mut Instant,
+                            last_text: &mut String,
+                            first_decode_pending: &mut bool|
+     -> Result<(), String> {
+        let cadence = if *first_decode_pending {
+            FIRST_INFER_AFTER
+        } else {
+            INFER_EVERY
+        };
+        if last_decode.elapsed() < cadence {
+            return Ok(());
         }
-        push_ring(&mut buffer_16k, &chunk_16k);
+        *last_decode = Instant::now();
+        *first_decode_pending = false;
 
-        if last_decode.elapsed() < INFER_EVERY {
-            continue;
-        }
-        last_decode = Instant::now();
-
-        let text = match run_decode(&ctx, &buffer_16k, use_whisper_accelerator) {
+        let text = match run_decode(&ctx, buffer_16k, use_whisper_accelerator) {
             Ok(t) => t,
             Err(e) => {
                 let _ = app.emit(
                     "audio-error",
                     serde_json::json!({ "message": format!("whisper decode failed: {e}") }),
                 );
-                continue;
+                return Ok(());
             }
         };
         let text = normalize_transcript_candidate(&text);
 
         if let Some(text) = text {
-            if text == last_text {
-                continue;
+            if text == *last_text {
+                return Ok(());
             }
-            last_text = text.clone();
+            *last_text = text.clone();
             debug!(
                 "stt: emit transcript-update partial chars={} preview={:?}",
                 text.chars().count(),
@@ -409,6 +458,35 @@ fn stt_loop(
                 },
             );
         }
+        Ok(())
+    };
+
+    if !buffer_16k.is_empty() {
+        maybe_decode(
+            &mut buffer_16k,
+            &mut last_decode,
+            &mut last_text,
+            &mut first_decode_pending,
+        )?;
+    }
+
+    while let Ok(chunk) = pcm_rx.recv() {
+        let chunk_16k = resample_mono_to_16k(&chunk, input_sample_rate);
+        if silence_reset.push_and_should_reset(&chunk_16k) {
+            debug!("stt: silence gap reached; reset rolling decode context");
+            buffer_16k.clear();
+            last_text.clear();
+            first_decode_pending = true;
+            last_decode = Instant::now();
+            continue;
+        }
+        push_ring(&mut buffer_16k, &chunk_16k);
+        maybe_decode(
+            &mut buffer_16k,
+            &mut last_decode,
+            &mut last_text,
+            &mut first_decode_pending,
+        )?;
     }
 
     // Channel closed: final pass (best effort).
@@ -440,9 +518,22 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        normalize_peak_f32, normalize_transcript_candidate, resample_mono_to_16k,
-        SilenceResetTracker, TranscriptUpdate, TARGET_RATE,
+        normalize_peak_f32, normalize_transcript_candidate, parse_local_whisper_model_id,
+        resample_mono_to_16k, whisper_model_filename, SilenceResetTracker, TranscriptUpdate,
+        TARGET_RATE,
     };
+
+    #[test]
+    fn parse_local_whisper_model_id_normalizes() {
+        assert_eq!(parse_local_whisper_model_id(None), "tiny.en");
+        assert_eq!(parse_local_whisper_model_id(Some("base.en")), "base.en");
+        assert_eq!(parse_local_whisper_model_id(Some("bogus")), "tiny.en");
+    }
+
+    #[test]
+    fn whisper_model_filename_maps_ids() {
+        assert_eq!(whisper_model_filename("base.en"), "ggml-base.en.bin");
+    }
 
     #[test]
     fn resample_identity_16k() {
@@ -506,7 +597,7 @@ mod tests {
     fn manual_load_whisper_tiny_model_impl_on_loader_thread(use_gpu: bool) {
         let model = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("resources")
-            .join(super::WHISPER_MODEL_FILE);
+            .join(super::whisper_model_filename(super::DEFAULT_LOCAL_WHISPER_MODEL));
         assert!(
             model.is_file(),
             "missing {}; run scripts/download-model.ps1",
@@ -552,8 +643,8 @@ mod tests {
     fn manifest_dir_resources_points_at_bundled_filename() {
         let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("resources")
-            .join(super::WHISPER_MODEL_FILE);
-        assert!(p.ends_with(super::WHISPER_MODEL_FILE));
+            .join(super::whisper_model_filename(super::DEFAULT_LOCAL_WHISPER_MODEL));
+        assert!(p.ends_with(super::whisper_model_filename(super::DEFAULT_LOCAL_WHISPER_MODEL).as_str()));
     }
 
     #[test]

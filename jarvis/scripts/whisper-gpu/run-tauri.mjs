@@ -49,6 +49,21 @@ function resolveTauriCli() {
   return p;
 }
 
+/** Fetch wake + LLM GGUF into src-tauri/resources before Cargo needs bundle paths. */
+function ensureBundledModels() {
+  const script = path.join(JARVIS_ROOT, "scripts", "fetch-models.mjs");
+  console.log("whisper-gpu: ensuring bundled models (skip if already on disk)...");
+  const result = spawnSync(process.execPath, [script], {
+    cwd: JARVIS_ROOT,
+    stdio: "inherit",
+    env: process.env,
+  });
+  if (result.status !== 0) {
+    console.error("whisper-gpu: fetch-models failed");
+    process.exit(result.status ?? 1);
+  }
+}
+
 /**
  * @param {string[]} argv
  * @returns {{ extraArgs: string[], backendOverride: string | null }}
@@ -386,6 +401,10 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
   if (lock.blocked) {
     console.error(`whisper-gpu: ${lock.message}`);
     process.exit(1);
+  }
+
+  if (subcommand === "dev" || subcommand === "build") {
+    ensureBundledModels();
   }
 
   releaseWindowsDevJarvisExeLock(subcommand);

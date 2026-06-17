@@ -47,6 +47,52 @@ This writes `src-tauri/resources/ggml-tiny.en.bin`, which `tauri.conf.json` list
 
 Successful synth output is cached in app data under `tts-cache/` to avoid repeated synthesis for same text + voice.
 
+## On-device LLM models (router + composer)
+
+`npm run tauri:dev` / `npm run tauri:build` fetch models **before** Tauri starts (so Cargo can bundle GGUF paths and Vite is not blocked). First run downloads ~2.4 GB total; later runs skip existing files.
+
+| Role | Model file | Size | When it runs |
+| --- | --- | --- | --- |
+| **Voice router** (Tier 2 tool pick) | `qwen2.5-0.5b-instruct-q4_k_m.gguf` | ~400 MB | Hot path after wake / fuzzy match |
+| **Command composer** (Commands tab NL → draft) | `qwen2.5-3b-instruct-q4_k_m.gguf` | ~2 GB | Cold path — editor **+** draft row **Describe** → **Generate** |
+
+From the `jarvis` folder (first fetch only; skips files already on disk):
+
+```powershell
+npm run fetch-models
+```
+
+Or fetch LLM weights only: `npm run fetch-llm-models`. PowerShell wrappers `scripts/download-router-model.ps1` and `scripts/download-composer-model.ps1` call the same fetcher.
+
+The composer model is **not** interchangeable with the router: the 3B model emits full action chains and template variables; the 0.5B model only routes to a small builtin tool catalog. Opening the **editor** warms the composer model in the background (not at app launch). First **Generate** reuses the resident worker; GPU decode is strongly recommended — CPU works but can take tens of seconds per draft. Optional settings override: `llm_composer_model_path`, `llm_router_model_path` (stored in SQLite `settings`).
+
+### Command composer examples (Commands tab → **+** → **Describe** → **Generate**)
+
+Golden-path prompts to try after models are fetched:
+
+| You describe | Typical result |
+| --- | --- |
+| `When I say "open notepad", launch Notepad snapped to the left` | **Command** — phrase trigger + `open_target` with placement |
+| `When I say open notepad then open notepad` | **Command** — single `open_target` for Notepad (trigger echoed in speech must not duplicate the action) |
+| `When I say notepad, open notepad fullscreen, new note, paste Hello World, 30 second timer` | **Command** — `open_target` (maximize) → `^n` new note → clipboard + `^v` paste → `wait` 30s |
+| `Speak whatever text I give you` | **Tool** — parameterized `speak` with a `text` parameter (no voice trigger) |
+| `When I say fetch, http get the URL I say after the trigger` | **Command** (prefix) — `http_get` on `{{remainder}}` |
+
+Review the draft formula (or tool preview), edit if needed, then **Save** / **Create tool**. If validation fails after the automatic repair pass, use **Regenerate with fix** to try again with the same description.
+
+### Composer eval suite
+
+Fixture-driven regression tests live in `src-tauri/src/llm/composer_eval_cases.json`. Mock-infer cases run in CI without the GGUF model; live eval hits the real composer when wired.
+
+| Command | What it runs |
+| --- | --- |
+| `npm run test:composer` | `composer_eval` + `composer_expect` unit/fixture tests (skipped `#[ignore]` live test) |
+| `npm run test:composer:live` | `composer_live_eval` with `--ignored --nocapture` (needs `llm-local` + composer GGUF on disk) |
+| `npm run eval:composer` | Same live run as above, plus pass/fail summary table |
+| `npm run eval:composer -- --report` | Live eval + writes `composer-eval-report.json` (timestamp, pass count) |
+
+Fetch models first (`npm run fetch-llm-models`) before live eval. Mock suite is fast and safe for every PR.
+
 ## Commands (from `jarvis/`)
 
 Convention: clone the repo, then `**cd jarvis**` for every Node/npm/Tauri command below. Raw `cargo` commands use `**cd jarvis/src-tauri**`.
@@ -54,6 +100,8 @@ Convention: clone the repo, then `**cd jarvis**` for every Node/npm/Tauri comman
 - `npm install`
 - `npm run lint` — ESLint (TypeScript + React)
 - `npm test` — Vitest
+- `npm run test:composer` — composer fixture + expectation tests (mock infer, no GGUF)
+- `npm run test:composer:live` — ignored live composer eval against real model
 - `npm run build` — `tsc` + Vite production bundle
 - `npm run dev` — Vite only
 - `npm run tauri dev` — full app; **`dev` and `build` auto-select GPU** (`metal`/`cuda`/`vulkan`, CPU fallback if toolchains missing).
@@ -256,7 +304,7 @@ SQLite schema changes are **additive** migrations run at startup (e.g. `sort_ord
 
 ### Tests and coverage
 
-From `jarvis/`: `npm run test` runs Vitest. Coverage thresholds (**≥70%** lines on `editorStore`, `NodeForm.logic`, `ActionChain.logic`) are enforced when you run `npm run test:coverage`.
+From `jarvis/`: `npm run test` runs Vitest. Coverage thresholds (**≥70%** lines on `editorStore`, `NodeForm.logic`) are enforced when you run `npm run test:coverage`.
 
 ## Phase 2 manual verification (Windows)
 

@@ -19,7 +19,7 @@ tauri-build = { version = "2", features = [] }
 
 [features]
 # OpenWakeWord wake backend (ONNX via ort).
-default = ["oww"]
+default = ["oww", "llm-local"]
 oww = ["dep:ort", "dep:ndarray"]
 # Optional Whisper.cpp GPU backends (requires matching SDK/toolchain when building).
 # Example: `cargo build --features whisper-vulkan` (Vulkan SDK on PATH).
@@ -48,6 +48,10 @@ env_logger = "0.11"
 rapidfuzz = "0.5.0"
 keyring = "2.3"
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
+arboard = "3"
+regex = "1"
+sysinfo = "0.33"
+screenshots = "0.8"
 base64 = "0.22"
 png = "0.17"
 url = "2"

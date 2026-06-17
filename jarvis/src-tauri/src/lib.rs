@@ -6,6 +6,7 @@ mod gpu_startup;
 mod hud;
 mod llm;
 mod keychain;
+mod process;
 mod tray;
 mod window;
 #[cfg(windows)]
@@ -37,6 +38,7 @@ const SETTING_KEY_HOTKEY: &str = "hotkey";
 const SETTING_KEY_DEFAULT_THRESHOLD: &str = "default_fuzzy_threshold_pct";
 const DEFAULT_THRESHOLD_PCT: u16 = 80;
 const EDITOR_COMMANDS_CHANGED_EVENT: &str = "editor-commands-changed";
+const EDITOR_TOOLS_CHANGED_EVENT: &str = "editor-tools-changed";
 const APP_INDEX_READY_EVENT: &str = "app-index-ready";
 pub(crate) const OPEN_SETTINGS_EVENT: &str = "open-settings";
 /// Debounce partial STT updates so commands do not fire mid-sentence.
@@ -74,6 +76,19 @@ impl WhisperModelCache {
         if let Ok(mut slot) = self.0.lock() {
             *slot = Some(ctx);
         }
+    }
+
+    pub fn clear(&self) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = None;
+        }
+    }
+}
+
+pub(crate) fn clear_whisper_model_cache(app: &AppHandle) {
+    WHISPER_GPU_MODEL_WARMED.store(false, Ordering::SeqCst);
+    if let Some(cache) = app.try_state::<WhisperModelCache>() {
+        cache.clear();
     }
 }
 
@@ -450,7 +465,19 @@ fn load_stt_pipeline_choice(app: &AppHandle) -> audio::SttPipelineChoice {
     }
 }
 
-fn try_start_listening_audio(app: &AppHandle, slot: &SharedAudioPipeline, hud_session_id: u64) {
+fn try_start_listening_audio(
+    app: &AppHandle,
+    slot: &SharedAudioPipeline,
+    hud_session_id: u64,
+    use_wake_preroll: bool,
+) {
+    let wake_preroll_16k = if use_wake_preroll {
+        app.try_state::<audio::WakePreroll>()
+            .map(|p| p.take_snapshot())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     if let Some(suppressed) = app.try_state::<audio::WakeMicSuppressed>() {
         suppressed.0.store(true, Ordering::SeqCst);
     }
@@ -461,7 +488,7 @@ fn try_start_listening_audio(app: &AppHandle, slot: &SharedAudioPipeline, hud_se
     drop(old);
 
     let choice = load_stt_pipeline_choice(app);
-    match audio::AudioPipeline::start(app, hud_session_id, choice) {
+    match audio::AudioPipeline::start(app, hud_session_id, choice, wake_preroll_16k) {
         Ok(p) => {
             let mut g = slot.lock().unwrap();
             *g = Some(p);
@@ -567,6 +594,10 @@ fn refresh_command_cache(
 
 fn emit_editor_commands_changed(app: &AppHandle) {
     let _ = app.emit(EDITOR_COMMANDS_CHANGED_EVENT, serde_json::json!({}));
+}
+
+fn emit_editor_tools_changed(app: &AppHandle) {
+    let _ = app.emit(EDITOR_TOOLS_CHANGED_EVENT, serde_json::json!({}));
 }
 
 fn should_focus_existing_editor_window(window_exists: bool) -> bool {
@@ -964,7 +995,7 @@ pub(crate) fn await_follow_up_input(
     sync_hud_window(app, HudPhase::AwaitingInput)?;
     emit_hud_phase(app);
     let _ = app.emit("action-status", serde_json::json!({ "text": "follow up" }));
-    try_start_listening_audio(app, audio, expected_session_id);
+    try_start_listening_audio(app, audio, expected_session_id, false);
 
     let deadline = Instant::now() + FOLLOW_UP_TIMEOUT;
     const POLL: Duration = Duration::from_millis(50);
@@ -1118,24 +1149,18 @@ fn show_hud_from_hotkey(
     is_paused: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
-    let window = app
-        .get_webview_window(HUD_WINDOW_LABEL)
-        .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
 
     let mut listening_session_id: Option<u64> = None;
     let mut defer_hud_window_hide = false;
+    let mut opening_listen = false;
     if !s.visible {
         let sid = prepare_hud_listening_session(&mut s);
         listening_session_id = Some(sid);
-        window.center().map_err(|e| e.to_string())?;
-        window.show().map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
+        opening_listen = true;
     } else if reopen_listening_when_visible(s.phase) {
         let sid = prepare_hud_listening_session(&mut s);
         listening_session_id = Some(sid);
-        window.center().map_err(|e| e.to_string())?;
-        window.show().map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
+        opening_listen = true;
     } else {
         prepare_hud_close_session(&mut s);
         defer_hud_window_hide = true;
@@ -1144,6 +1169,25 @@ fn show_hud_from_hotkey(
     let phase = s.phase;
     let session_id = s.session_id;
     drop(s);
+
+    if opening_listen && tray::mic_start_allowed(is_paused, phase) {
+        try_start_listening_audio(app, audio, session_id, false);
+        if let Some(sid) = listening_session_id.or(Some(session_id)) {
+            spawn_no_match_watchdog(app.clone(), Arc::clone(rt), audio.clone(), sid);
+        }
+    }
+
+    let window = app
+        .get_webview_window(HUD_WINDOW_LABEL)
+        .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
+
+    if opening_listen {
+        window.center().map_err(|e| e.to_string())?;
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+    } else if defer_hud_window_hide {
+        // closed via hotkey toggle — window hide scheduled below
+    }
 
     if !defer_hud_window_hide {
         sync_hud_webview_background(app);
@@ -1156,12 +1200,7 @@ fn show_hud_from_hotkey(
         schedule_hud_window_hide_when_still_dismissed(app.clone(), Arc::clone(rt));
     }
 
-    if tray::mic_start_allowed(is_paused, phase) {
-        try_start_listening_audio(app, audio, session_id);
-        if let Some(sid) = listening_session_id.or(Some(session_id)) {
-            spawn_no_match_watchdog(app.clone(), Arc::clone(rt), audio.clone(), sid);
-        }
-    } else {
+    if !opening_listen {
         audio::stop_shared_pipeline(app, audio);
     }
 
@@ -1183,25 +1222,28 @@ fn wake_request_hud(
     if s.visible && !reopen_listening_when_visible(s.phase) {
         return Ok(());
     }
+
+    let session_id = prepare_hud_listening_session(&mut s);
+    drop(s);
+
+    // Open the listen mic before window show/focus so post-wake speech is not lost to handoff lag.
+    if tray::mic_start_allowed(is_paused, HudPhase::Listening) {
+        try_start_listening_audio(app, audio, session_id, true);
+        spawn_no_match_watchdog(app.clone(), Arc::clone(rt), audio.clone(), session_id);
+    }
+
     let window = app
         .get_webview_window(HUD_WINDOW_LABEL)
         .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
-
-    let session_id = prepare_hud_listening_session(&mut s);
     window.center().map_err(|e| e.to_string())?;
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
-    drop(s);
 
     sync_hud_webview_background(app);
 
     sync_hud_window(app, HudPhase::Listening)?;
     emit_hud_phase(app);
 
-    if tray::mic_start_allowed(is_paused, HudPhase::Listening) {
-        try_start_listening_audio(app, audio, session_id);
-        spawn_no_match_watchdog(app.clone(), Arc::clone(rt), audio.clone(), session_id);
-    }
     Ok(())
 }
 
@@ -1478,6 +1520,29 @@ fn delete_command(
 }
 
 #[tauri::command]
+fn test_command(
+    app: AppHandle,
+    command_id: i64,
+    test_input: Option<String>,
+    app_index: State<'_, AppIndexStore>,
+) -> Result<commands::TestCommandResult, String> {
+    let conn = open_db_connection(&app)?;
+    let node = db::get_command_by_id(&conn, command_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("command with id {command_id} was not found"))?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let runtime = commands::TauriActionRuntime::new(&app, cancel);
+    let index_guard = app_index.read().map_err(|e| e.to_string())?;
+    Ok(commands::test_command_actions(
+        &node,
+        &runtime,
+        Some(index_guard.as_slice()),
+        test_input.as_deref(),
+        Some(&conn),
+    ))
+}
+
+#[tauri::command]
 fn reorder_commands(
     app: AppHandle,
     payload: ReorderCommandsPayload,
@@ -1504,9 +1569,11 @@ fn create_tool(
     let conn = open_db_connection(&app)?;
     let row = tool.try_into_new_tool_definition()?;
     let id = db::insert_tool(&conn, &row).map_err(|e| e.to_string())?;
-    db::get_tool_by_id(&conn, id)
+    let created = db::get_tool_by_id(&conn, id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("created tool {id} was not found"))
+        .ok_or_else(|| format!("created tool {id} was not found"))?;
+    emit_editor_tools_changed(&app);
+    Ok(created)
 }
 
 #[tauri::command]
@@ -1521,15 +1588,21 @@ fn update_tool(
     if !changed {
         return Err(format!("tool with id {id} was not found"));
     }
-    db::get_tool_by_id(&conn, id)
+    let updated = db::get_tool_by_id(&conn, id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("updated tool {id} was not found"))
+        .ok_or_else(|| format!("updated tool {id} was not found"))?;
+    emit_editor_tools_changed(&app);
+    Ok(updated)
 }
 
 #[tauri::command]
 fn delete_tool(app: AppHandle, id: i64) -> Result<bool, String> {
     let conn = open_db_connection(&app)?;
-    db::delete_tool(&conn, id).map_err(|e| e.to_string())
+    let deleted = db::delete_tool(&conn, id).map_err(|e| e.to_string())?;
+    if deleted {
+        emit_editor_tools_changed(&app);
+    }
+    Ok(deleted)
 }
 
 #[derive(Debug, Serialize)]
@@ -1566,6 +1639,9 @@ fn preview_open_target(
                 *slot = Some(zone);
             }
             apps::resolve_target::ResolvedTarget::Ambiguous { placement: slot, .. } => {
+                *slot = Some(zone);
+            }
+            apps::resolve_target::ResolvedTarget::Unknown { placement: slot, .. } => {
                 *slot = Some(zone);
             }
         }
@@ -1918,6 +1994,22 @@ fn whisper_gpu_status() -> WhisperGpuStatus {
         .clone()
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WhisperModelStatusPayload {
+    model: String,
+    available: bool,
+}
+
+#[tauri::command]
+fn whisper_model_status(app: AppHandle) -> Result<WhisperModelStatusPayload, String> {
+    let conn = open_db_connection(&app)?;
+    let settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
+    let model = settings.local_whisper_model.clone();
+    let available = audio::stt::is_whisper_model_available(&app, model.as_str());
+    Ok(WhisperModelStatusPayload { model, available })
+}
+
 #[tauri::command]
 fn warmup_whisper_gpu(app: AppHandle) -> WhisperGpuWarmupPayload {
     let status = whisper_gpu_status();
@@ -2047,6 +2139,9 @@ fn update_settings(
     let conn = open_db_connection(&app)?;
     db::apply_settings_patch(&conn, &patch).map_err(|e| e.to_string())?;
     let settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
+    if patch.local_whisper_model.is_some() {
+        clear_whisper_model_cache(&app);
+    }
     if settings_patch_triggers_wake_reload(&patch, &settings) {
         let resource_dir =
             crate::audio::wake::resolve_wake_resource_root(&app, settings.wake_engine.as_str());
@@ -2093,8 +2188,10 @@ pub fn run() {
     let is_paused = Arc::new(AtomicBool::new(false));
     let hotkey_recording_suppressed = Arc::new(AtomicBool::new(false));
     let wake_mic_suppressed = audio::WakeMicSuppressed(Arc::new(AtomicBool::new(false)));
+    let wake_preroll = audio::WakePreroll::default();
     let whisper_model_cache = WhisperModelCache(Mutex::new(None));
     let router_model_cache = llm::RouterModelCache::default();
+    let composer_model_cache = llm::ComposerModelCache::default();
     let command_cache: CommandCache = Arc::new(RwLock::new(Vec::new()));
     let app_index_store: AppIndexStore = Arc::new(RwLock::new(Vec::new()));
     let app_icon_cache: AppIconCache = Arc::new(apps::IconCache::new());
@@ -2105,8 +2202,10 @@ pub fn run() {
         .manage(Arc::clone(&is_paused))
         .manage(HotkeyRecordingSuppressed(Arc::clone(&hotkey_recording_suppressed)))
         .manage(wake_mic_suppressed)
+        .manage(wake_preroll)
         .manage(whisper_model_cache)
         .manage(router_model_cache)
+        .manage(composer_model_cache)
         .manage(command_cache.clone())
         .manage(app_index_store.clone())
         .manage(app_icon_cache.clone())
@@ -2325,6 +2424,7 @@ pub fn run() {
             create_command,
             update_command,
             delete_command,
+            test_command,
             reorder_commands,
             list_tools,
             create_tool,
@@ -2345,10 +2445,15 @@ pub fn run() {
             rescan_app_index,
             whisper_gpu_compile_supported,
             whisper_gpu_status,
+            whisper_model_status,
             warmup_whisper_gpu,
             llm::tauri_cmds::router_status,
             llm::tauri_cmds::router_warmup,
             llm::tauri_cmds::route_transcript,
+            llm::tauri_cmds::composer_status,
+            llm::tauri_cmds::composer_warmup,
+            llm::tauri_cmds::generate_automation,
+            llm::tauri_cmds::cancel_generate_automation,
             update_settings,
             save_api_key,
             delete_api_key
@@ -2397,10 +2502,14 @@ mod tests {
             remote_stt_timeout_secs: 30,
             remote_stt_key_stored: false,
             local_whisper_use_gpu: false,
+            local_whisper_model: audio::stt::DEFAULT_LOCAL_WHISPER_MODEL.to_string(),
             llm_router_model_path: None,
             llm_router_confidence_threshold: db::settings::DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD,
             llm_router_tier2_enabled: false,
             llm_router_warmup_on_launch: false,
+            llm_composer_enabled: false,
+            llm_composer_model_path: None,
+            llm_composer_warmup_on_launch: false,
         }
     }
 
@@ -2436,10 +2545,14 @@ mod tests {
             remote_stt_model: None,
             remote_stt_timeout_secs: None,
             local_whisper_use_gpu: None,
+            local_whisper_model: None,
             llm_router_model_path: None,
             llm_router_confidence_threshold: None,
             llm_router_tier2_enabled: None,
             llm_router_warmup_on_launch: None,
+            llm_composer_enabled: None,
+            llm_composer_model_path: None,
+            llm_composer_warmup_on_launch: None,
         };
         assert!(settings_patch_triggers_wake_reload(
             &patch,
@@ -2457,10 +2570,14 @@ mod tests {
             remote_stt_model: None,
             remote_stt_timeout_secs: None,
             local_whisper_use_gpu: None,
+            local_whisper_model: None,
             llm_router_model_path: None,
             llm_router_confidence_threshold: None,
             llm_router_tier2_enabled: None,
             llm_router_warmup_on_launch: None,
+            llm_composer_enabled: None,
+            llm_composer_model_path: None,
+            llm_composer_warmup_on_launch: None,
         };
         assert!(!settings_patch_triggers_wake_reload(
             &patch,

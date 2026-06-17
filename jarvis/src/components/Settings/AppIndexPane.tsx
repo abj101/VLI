@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useState } from "react";
 import { useSettingsStore } from "../../store/settingsStore";
 import { formatUserError } from "../../utils/userErrors";
+import { EditorSpinner } from "../editor/EditorSpinner";
 
 type AppIndexPaneProps = {
   onNotice: (text: string) => void;
@@ -69,9 +70,7 @@ export function AppIndexPane({ onNotice }: AppIndexPaneProps) {
                   aria-hidden
                 />
                 <span className="editor-app-index-phase-label">{phaseLabel(phase)}</span>
-                {phase === "scanning" && (
-                  <span className="editor-settings-spinner" aria-hidden />
-                )}
+                {phase === "scanning" && <EditorSpinner />}
               </span>
             </div>
           </div>

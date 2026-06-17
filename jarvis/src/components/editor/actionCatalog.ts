@@ -29,6 +29,86 @@ export const ACTION_KIND_OPTIONS: ActionKindOption[] = [
     label: "Follow Up",
     haystack: "follow up sub prompt question ask input voice",
   },
+  {
+    id: "run_command",
+    label: "Run command",
+    haystack: "run command compose nested shortcut pipeline",
+  },
+  {
+    id: "get_clipboard",
+    label: "Get clipboard",
+    haystack: "get clipboard copy paste read text",
+  },
+  {
+    id: "http_get",
+    label: "HTTP GET",
+    haystack: "http get fetch web request api download url",
+  },
+  {
+    id: "read_file",
+    label: "Read file",
+    haystack: "read file text contents path open document",
+  },
+  {
+    id: "show_notification",
+    label: "Show notification",
+    haystack: "show notification toast alert message banner",
+  },
+  {
+    id: "text_trim",
+    label: "Trim text",
+    haystack: "trim text whitespace strip space",
+  },
+  {
+    id: "text_match",
+    label: "Match text",
+    haystack: "match text regex pattern find extract",
+  },
+  {
+    id: "text_split",
+    label: "Split text",
+    haystack: "split text delimiter separate list",
+  },
+  {
+    id: "text_combine",
+    label: "Combine text",
+    haystack: "combine text join merge list separator",
+  },
+  {
+    id: "set_clipboard",
+    label: "Set clipboard",
+    haystack: "set clipboard copy paste write text",
+  },
+  {
+    id: "list_folder",
+    label: "List folder",
+    haystack: "list folder directory entries files browse",
+  },
+  {
+    id: "write_file",
+    label: "Write file",
+    haystack: "write file save text document path",
+  },
+  {
+    id: "get_file_metadata",
+    label: "File metadata",
+    haystack: "get file metadata size modified directory stat",
+  },
+  {
+    id: "screenshot",
+    label: "Screenshot",
+    haystack: "screenshot capture screen display image png",
+  },
+  {
+    id: "device_info",
+    label: "Device info",
+    haystack: "device info cpu memory ram system stats",
+  },
+  {
+    id: "if_else",
+    label: "If/Else",
+    haystack: "if else condition branch logic contains regex empty",
+  },
 ];
 
 export function getActionKind(action: FormActionPayload): ActionKind {
@@ -41,6 +121,22 @@ export function getActionKind(action: FormActionPayload): ActionKind {
   if ("send_keys" in action) return "send_keys";
   if ("speak" in action) return "speak";
   if ("wait" in action) return "wait";
+  if ("run_command" in action) return "run_command";
+  if ("read_file" in action) return "read_file";
+  if ("http_get" in action) return "http_get";
+  if ("get_clipboard" in action) return "get_clipboard";
+  if ("show_notification" in action) return "show_notification";
+  if ("text_trim" in action) return "text_trim";
+  if ("text_match" in action) return "text_match";
+  if ("text_split" in action) return "text_split";
+  if ("text_combine" in action) return "text_combine";
+  if ("set_clipboard" in action) return "set_clipboard";
+  if ("list_folder" in action) return "list_folder";
+  if ("write_file" in action) return "write_file";
+  if ("get_file_metadata" in action) return "get_file_metadata";
+  if ("screenshot" in action) return "screenshot";
+  if ("device_info" in action) return "device_info";
+  if ("if_else" in action) return "if_else";
   return "sub_prompt";
 }
 

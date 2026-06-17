@@ -7,6 +7,8 @@ import {
   applyEditorTransparencyToDocument,
   applyHudTransparencyToDocument,
   normalizeSttProvider,
+  normalizeLocalWhisperModel,
+  LOCAL_WHISPER_MODEL_OPTIONS,
   normalizeThemePreference,
   parseEditorTransparencySettingValue,
   parseHudTransparencySettingValue,
@@ -33,6 +35,7 @@ import { AppIndexPane } from "./AppIndexPane";
 import { HotkeyChordDisplay } from "./HotkeyChordDisplay";
 import { SettingsLabelWithInfo } from "./SettingsInfoTip";
 import { EditorSelect } from "../ui/EditorSelect";
+import { EditorSpinner } from "../editor/EditorSpinner";
 
 const HOTKEY_KEY = "hotkey";
 const THEME_KEY = "theme";
@@ -51,6 +54,7 @@ type AppSettingsPayload = {
   remoteSttTimeoutSecs: number;
   remoteSttKeyStored: boolean;
   localWhisperUseGpu: boolean;
+  localWhisperModel: string;
   llmRouterModelPath: string | null;
   llmRouterConfidenceThreshold: number;
   llmRouterTier2Enabled: boolean;
@@ -71,6 +75,11 @@ type RouterStatusPayload = {
 type RouterWarmupPayload = {
   ready: boolean;
   message: string;
+};
+
+type WhisperModelStatusPayload = {
+  model: string;
+  available: boolean;
 };
 
 type WhisperGpuStatusPayload = {
@@ -130,6 +139,8 @@ export function SettingsPanel({
   const [remoteSttKeyInput, setRemoteSttKeyInput] = useState("");
   const [savingRemoteStt, setSavingRemoteStt] = useState(false);
   const [localWhisperUseGpu, setLocalWhisperUseGpu] = useState(false);
+  const [localWhisperModel, setLocalWhisperModel] = useState("tiny.en");
+  const [whisperModelAvailable, setWhisperModelAvailable] = useState(true);
   const [whisperGpuPreparing, setWhisperGpuPreparing] = useState(false);
   const [whisperGpuPrepMessage, setWhisperGpuPrepMessage] = useState<string | null>(null);
   const [whisperGpuStatus, setWhisperGpuStatus] = useState<WhisperGpuStatusPayload>({
@@ -233,6 +244,7 @@ export function SettingsPanel({
       savedEditorTransparency,
       app,
       gpuStatus,
+      whisperModelStatus,
       router,
     ] = await Promise.all([
         invoke<string | null>("get_setting", { key: HOTKEY_KEY }),
@@ -242,6 +254,7 @@ export function SettingsPanel({
         invoke<string | null>("get_setting", { key: EDITOR_TRANSPARENCY_KEY }),
         invoke<AppSettingsPayload>("get_settings"),
         invoke<WhisperGpuStatusPayload>("whisper_gpu_status"),
+        invoke<WhisperModelStatusPayload>("whisper_model_status"),
         invoke<RouterStatusPayload>("router_status"),
       ]);
     if (savedHotkey && savedHotkey.trim().length > 0) {
@@ -268,6 +281,8 @@ export function SettingsPanel({
     setRemoteSttTimeoutSecs(app.remoteSttTimeoutSecs);
     setRemoteSttKeyStored(app.remoteSttKeyStored);
     setLocalWhisperUseGpu(app.localWhisperUseGpu);
+    setLocalWhisperModel(normalizeLocalWhisperModel(app.localWhisperModel));
+    setWhisperModelAvailable(whisperModelStatus.available);
     setWhisperGpuStatus(gpuStatus);
     setLlmRouterTier2Enabled(app.llmRouterTier2Enabled);
     setLlmRouterWarmupOnLaunch(app.llmRouterWarmupOnLaunch);
@@ -288,7 +303,7 @@ export function SettingsPanel({
       (!routerFeatureCompiled
         ? "This build has no llm-local feature — rebuild with llm-local to route at runtime."
         : !routerModelPresent
-          ? "Router model missing — run scripts/download-router-model.ps1 from the jarvis folder."
+          ? "Router model missing — run npm run fetch-models from the jarvis folder."
           : routerStatus.message));
 
   useEffect(() => {
@@ -537,6 +552,9 @@ export function SettingsPanel({
       setRemoteSttTimeoutSecs(s.remoteSttTimeoutSecs);
       setRemoteSttKeyStored(s.remoteSttKeyStored);
       setLocalWhisperUseGpu(s.localWhisperUseGpu);
+      setLocalWhisperModel(normalizeLocalWhisperModel(s.localWhisperModel));
+      const whisperStatus = await invoke<WhisperModelStatusPayload>("whisper_model_status");
+      setWhisperModelAvailable(whisperStatus.available);
     } catch (err) {
       showSettingsNotice(formatUserError(err, "Could not save the transcription provider."));
     }
@@ -561,7 +579,7 @@ export function SettingsPanel({
         showSettingsNotice(
           !routerFeatureCompiled
             ? "Tier 2 saved. Rebuild Jarvis with the llm-local Cargo feature to activate routing."
-            : "Tier 2 saved. Download the router GGUF (scripts/download-router-model.ps1) to activate routing.",
+            : "Tier 2 saved. Run npm run fetch-models to download the router GGUF.",
         );
       }
       if (next && s.llmRouterTier2Enabled && routerRuntimeReady) {
@@ -632,6 +650,32 @@ export function SettingsPanel({
       showSettingsNotice("Router model path saved");
     } catch (err) {
       showSettingsNotice(formatUserError(err, "Could not save router model path."));
+    }
+  };
+
+  const persistLocalWhisperModel = async (next: string) => {
+    const normalized = normalizeLocalWhisperModel(next);
+    const prev = localWhisperModel;
+    setLocalWhisperModel(normalized);
+    try {
+      const s = await invoke<AppSettingsPayload>("update_settings", {
+        patch: { localWhisperModel: normalized },
+      });
+      setLocalWhisperModel(normalizeLocalWhisperModel(s.localWhisperModel));
+      const status = await invoke<WhisperModelStatusPayload>("whisper_model_status");
+      setWhisperModelAvailable(status.available);
+      if (status.available) {
+        showSettingsNotice(
+          `Whisper model set to ${LOCAL_WHISPER_MODEL_OPTIONS.find((o) => o.value === normalized)?.label ?? normalized}. Loads on next listen.`,
+        );
+      } else {
+        showSettingsNotice(
+          `Model file not found. From the jarvis folder run: npm run fetch-whisper-models`,
+        );
+      }
+    } catch (err) {
+      setLocalWhisperModel(prev);
+      showSettingsNotice(formatUserError(err, "Could not save the Whisper model."));
     }
   };
 
@@ -901,51 +945,82 @@ export function SettingsPanel({
                     </div>
 
                     {sttProvider === "local" && (
-                      <div className="editor-settings-row editor-settings-row--switch">
-                        <div className="editor-settings-row-label editor-settings-row-label--stack">
-                          <SettingsLabelWithInfo
-                            id="editor-whisper-gpu-label"
-                            tipId="tip-whisper-gpu"
-                            tip="Runs Whisper on your GPU when this build supports it. Uses CPU if unavailable or turned off."
+                      <>
+                        <div className="editor-settings-row">
+                          <span
+                            className="editor-settings-row-label"
+                            id="editor-whisper-model-label"
                           >
-                            GPU acceleration
-                          </SettingsLabelWithInfo>
-                          {(whisperGpuPreparing ||
-                            whisperGpuPrepMessage ||
-                            !whisperGpuCanEnable) && (
-                            <span
-                              className="editor-settings-switch-meta"
-                              role="status"
-                              aria-live="polite"
+                            <SettingsLabelWithInfo
+                              tipId="tip-whisper-model"
+                              tip="On-device speech recognition model. Larger models hear quiet speech better but use more disk and CPU/GPU time."
                             >
-                              {whisperGpuPreparing && (
-                                <span className="editor-settings-spinner" aria-hidden />
-                              )}
-                              {whisperGpuPreparing
-                                ? (whisperGpuPrepMessage ?? "Preparing model…")
-                                : (whisperGpuPrepMessage ??
-                                  whisperGpuStatus.message ??
-                                  (!whisperGpuCanEnable
-                                    ? "No GPU backend in this build"
-                                    : null))}
-                            </span>
-                          )}
+                              Model
+                            </SettingsLabelWithInfo>
+                          </span>
+                          <span className="editor-settings-row-control">
+                            <EditorSelect
+                              id="editor-whisper-model"
+                              labelledBy="editor-whisper-model-label"
+                              value={localWhisperModel}
+                              onChange={(v) => void persistLocalWhisperModel(v)}
+                              options={LOCAL_WHISPER_MODEL_OPTIONS.map((o) => ({
+                                value: o.value,
+                                label: o.label,
+                              }))}
+                            />
+                          </span>
                         </div>
-                        <div className="editor-settings-row-control editor-settings-row-control--switch">
-                          <button
-                            type="button"
-                            id="editor-whisper-gpu"
-                            className={`editor-switch${localWhisperUseGpu ? " is-on" : ""}`}
-                            role="switch"
-                            aria-labelledby="editor-whisper-gpu-label"
-                            aria-checked={localWhisperUseGpu}
-                            disabled={!whisperGpuCanEnable}
-                            onClick={() => void persistLocalWhisperUseGpu(!localWhisperUseGpu)}
-                          >
-                            <span className="editor-switch-knob" />
-                          </button>
+                        {!whisperModelAvailable && (
+                          <p className="editor-settings-hint" role="status">
+                            Model file missing on disk. Run{" "}
+                            <code>npm run fetch-whisper-models</code> from the jarvis folder.
+                          </p>
+                        )}
+                        <div className="editor-settings-row editor-settings-row--switch">
+                          <div className="editor-settings-row-label editor-settings-row-label--stack">
+                            <SettingsLabelWithInfo
+                              id="editor-whisper-gpu-label"
+                              tipId="tip-whisper-gpu"
+                              tip="Runs Whisper on your GPU when this build supports it. Uses CPU if unavailable or turned off."
+                            >
+                              GPU acceleration
+                            </SettingsLabelWithInfo>
+                            {(whisperGpuPreparing ||
+                              whisperGpuPrepMessage ||
+                              !whisperGpuCanEnable) && (
+                              <span
+                                className="editor-settings-switch-meta"
+                                role="status"
+                                aria-live="polite"
+                              >
+                                {whisperGpuPreparing && <EditorSpinner />}
+                                {whisperGpuPreparing
+                                  ? (whisperGpuPrepMessage ?? "Preparing model…")
+                                  : (whisperGpuPrepMessage ??
+                                    whisperGpuStatus.message ??
+                                    (!whisperGpuCanEnable
+                                      ? "No GPU backend in this build"
+                                      : null))}
+                              </span>
+                            )}
+                          </div>
+                          <div className="editor-settings-row-control editor-settings-row-control--switch">
+                            <button
+                              type="button"
+                              id="editor-whisper-gpu"
+                              className={`editor-switch${localWhisperUseGpu ? " is-on" : ""}`}
+                              role="switch"
+                              aria-labelledby="editor-whisper-gpu-label"
+                              aria-checked={localWhisperUseGpu}
+                              disabled={!whisperGpuCanEnable}
+                              onClick={() => void persistLocalWhisperUseGpu(!localWhisperUseGpu)}
+                            >
+                              <span className="editor-switch-knob" />
+                            </button>
+                          </div>
                         </div>
-                      </div>
+                      </>
                     )}
                   {sttProvider === "remote" && (
                     <>
@@ -1058,9 +1133,7 @@ export function SettingsPanel({
                             role="status"
                             aria-live="polite"
                           >
-                            {routerPreparing && (
-                              <span className="editor-settings-spinner" aria-hidden />
-                            )}
+                            {routerPreparing && <EditorSpinner />}
                             {routerTier2StatusMessage}
                           </span>
                         )}

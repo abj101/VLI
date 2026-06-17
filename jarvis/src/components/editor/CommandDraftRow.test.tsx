@@ -7,14 +7,14 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 describe("CommandDraftRow", () => {
-  it("uses ghost icon actions with accessible names", () => {
+  it("shows composer panel before formula row", () => {
     const html = renderToStaticMarkup(
       <CommandDraftRow onDiscard={() => {}} onCreated={() => {}} />,
     );
-    expect(html).toContain('aria-label="Cancel"');
-    expect(html).toContain('aria-label="Save"');
-    expect(html).toContain("editor-command-draft-icon-btn");
-    expect(html).not.toContain("editor-command-draft-icon-btn--accent");
-    expect(html).not.toContain("Create command");
+    expect(html).toContain("editor-composer-panel");
+    expect(html).toContain("Trigger");
+    expect(html).toContain("What should happen");
+    expect(html).toContain("Generate");
+    expect(html).not.toContain('aria-label="Save"');
   });
 });

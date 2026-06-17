@@ -30,7 +30,6 @@ export default defineConfig(async () => ({
       include: [
         "src/store/editorStore.ts",
         "src/components/editor/NodeForm.logic.ts",
-        "src/components/editor/ActionChain.logic.ts",
       ],
       thresholds: {
         lines: 70,

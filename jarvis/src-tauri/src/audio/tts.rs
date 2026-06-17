@@ -4,8 +4,9 @@ use std::ffi::OsString;
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
+use crate::process::hidden_command;
 use tauri::{AppHandle, Manager};
 
 const DEFAULT_PIPER_MODEL_FILE: &str = "en_US-amy-medium.onnx";
@@ -144,7 +145,7 @@ fn cache_key(model_path: &Path, text: &str) -> String {
 }
 
 fn synthesize_to_wav(cfg: &PiperConfig, text: &str, output_wav: &Path) -> Result<(), String> {
-    let mut child = Command::new(&cfg.binary_path)
+    let mut child = hidden_command(&cfg.binary_path)
         .arg("--model")
         .arg(&cfg.model_path)
         .arg("--output_file")
@@ -198,7 +199,7 @@ fn play_wav_blocking(wav_path: &Path) -> Result<(), String> {
         let command = format!(
             "$p = New-Object System.Media.SoundPlayer '{wav_escaped}'; $p.Load(); $p.PlaySync();"
         );
-        let output = Command::new("powershell")
+        let output = hidden_command("powershell")
             .arg("-NoProfile")
             .arg("-NonInteractive")
             .arg("-Command")

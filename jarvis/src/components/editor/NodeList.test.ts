@@ -16,7 +16,7 @@ function makeNode(id: number, enabled = true): CommandNodePayload {
 
 describe("editorStore", () => {
   beforeEach(() => {
-    useEditorStore.setState({ nodes: [], selectedId: null });
+    useEditorStore.setState({ nodes: [] });
   });
 
   it("setNodes replaces nodes list", () => {
@@ -26,28 +26,19 @@ describe("editorStore", () => {
     expect(useEditorStore.getState().nodes).toEqual(nodes);
   });
 
-  it("setSelected sets selectedId", () => {
-    useEditorStore.getState().setSelected(42);
-    expect(useEditorStore.getState().selectedId).toBe(42);
-  });
-
-  it("deleteNode removes matching node and clears selectedId when deleted", () => {
+  it("deleteNode removes matching node", () => {
     useEditorStore.setState({
       nodes: [makeNode(1), makeNode(2), makeNode(3)],
-      selectedId: 2,
     });
 
     useEditorStore.getState().deleteNode(2);
-    const state = useEditorStore.getState();
 
-    expect(state.nodes.map((n) => n.id)).toEqual([1, 3]);
-    expect(state.selectedId).toBeNull();
+    expect(useEditorStore.getState().nodes.map((n) => n.id)).toEqual([1, 3]);
   });
 
   it("toggleEnabled flips enabled value for matching node", () => {
     useEditorStore.setState({
       nodes: [makeNode(1, true), makeNode(2, false)],
-      selectedId: null,
     });
 
     useEditorStore.getState().toggleEnabled(1);
@@ -56,16 +47,5 @@ describe("editorStore", () => {
     const [first, second] = useEditorStore.getState().nodes;
     expect(first.enabled).toBe(false);
     expect(second.enabled).toBe(true);
-  });
-
-  it("reorderNodes applies provided id order", () => {
-    useEditorStore.setState({
-      nodes: [makeNode(11), makeNode(22), makeNode(33)],
-      selectedId: null,
-    });
-
-    useEditorStore.getState().reorderNodes([33, 11, 22]);
-
-    expect(useEditorStore.getState().nodes.map((node) => node.id)).toEqual([33, 11, 22]);
   });
 });

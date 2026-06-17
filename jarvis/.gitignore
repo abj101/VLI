@@ -26,12 +26,14 @@ coverage
 
 # Generated rust-analyzer bindgen env (see scripts/sync-cargo-win-env.mjs)
 rust-analyzer.toml
+src-tauri/.cargo/config.local.toml
 
 # OpenWakeWord ONNX (fetch via npm run fetch-wake-models)
 src-tauri/resources/oww/*.onnx
 
-# On-device router GGUF (fetch via scripts/download-router-model.ps1)
+# On-device LLM GGUF (fetch via npm run fetch-models / fetch-llm-models)
 src-tauri/resources/qwen2.5-0.5b-instruct-q4_k_m.gguf
+src-tauri/resources/qwen2.5-3b-instruct-q4_k_m.gguf
 
 # Legacy Picovoice Porcupine assets (wake engine removed; do not commit)
 src-tauri/resources/porcupine/

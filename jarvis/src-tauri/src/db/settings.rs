@@ -11,11 +11,15 @@ pub const SETTING_REMOTE_STT_MODEL: &str = "remote_stt_model";
 pub const SETTING_REMOTE_STT_TIMEOUT_SECS: &str = "remote_stt_timeout_secs";
 pub const SETTING_REMOTE_STT_KEY_STORED: &str = "remote_stt_key_stored";
 pub const SETTING_LOCAL_WHISPER_USE_GPU: &str = "local_whisper_use_gpu";
+pub const SETTING_LOCAL_WHISPER_MODEL: &str = "local_whisper_model";
 pub const SETTING_LLM_ROUTER_MODEL_PATH: &str = "llm_router_model_path";
 pub const SETTING_LLM_ROUTER_CONFIDENCE_THRESHOLD: &str = "llm_router_confidence_threshold";
 pub const DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD: f32 = 0.7;
 pub const SETTING_LLM_ROUTER_TIER2_ENABLED: &str = "llm_router_tier2_enabled";
 pub const SETTING_LLM_ROUTER_WARMUP_ON_LAUNCH: &str = "llm_router_warmup_on_launch";
+pub const SETTING_LLM_COMPOSER_ENABLED: &str = "llm_composer_enabled";
+pub const SETTING_LLM_COMPOSER_MODEL_PATH: &str = "llm_composer_model_path";
+pub const SETTING_LLM_COMPOSER_WARMUP_ON_LAUNCH: &str = "llm_composer_warmup_on_launch";
 
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>, DbError> {
     let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
@@ -88,10 +92,19 @@ fn parse_llm_router_confidence_threshold(raw: Option<String>) -> f32 {
         .unwrap_or(DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD)
 }
 
+fn parse_llm_composer_enabled(raw: Option<String>) -> bool {
+    raw.map(|v| v.trim() == "1")
+        .unwrap_or(cfg!(feature = "llm-local"))
+}
+
 fn parse_remote_stt_timeout_secs(raw: Option<String>) -> u32 {
     raw.and_then(|s| s.trim().parse::<u32>().ok())
         .filter(|&n| n > 0 && n <= 300)
         .unwrap_or(30)
+}
+
+fn parse_local_whisper_model_str(raw: Option<String>) -> String {
+    crate::audio::stt::parse_local_whisper_model_id(raw.as_deref()).to_string()
 }
 
 fn normalize_optional_trimmed(s: Option<String>) -> Option<String> {
@@ -113,6 +126,8 @@ pub struct AppSettings {
     pub remote_stt_key_stored: bool,
     /// When true and the binary includes a GPU backend, local Whisper uses GPU (see `whisper_gpu_compile_supported`).
     pub local_whisper_use_gpu: bool,
+    /// On-device Whisper model id: `tiny.en` | `base.en` | `small.en`.
+    pub local_whisper_model: String,
     /// Optional override path to the router GGUF model.
     pub llm_router_model_path: Option<String>,
     /// Reject LLM router output below this confidence (0–1).
@@ -121,6 +136,12 @@ pub struct AppSettings {
     pub llm_router_tier2_enabled: bool,
     /// When true, warm the router model at app startup (if Tier 2 is enabled).
     pub llm_router_warmup_on_launch: bool,
+    /// When true, the command composer (editor NL → draft) is allowed.
+    pub llm_composer_enabled: bool,
+    /// Optional override path to the composer GGUF model.
+    pub llm_composer_model_path: Option<String>,
+    /// When true, warm the composer model at app startup.
+    pub llm_composer_warmup_on_launch: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -133,10 +154,14 @@ pub struct SettingsPatch {
     pub remote_stt_model: Option<String>,
     pub remote_stt_timeout_secs: Option<u32>,
     pub local_whisper_use_gpu: Option<bool>,
+    pub local_whisper_model: Option<String>,
     pub llm_router_model_path: Option<String>,
     pub llm_router_confidence_threshold: Option<f32>,
     pub llm_router_tier2_enabled: Option<bool>,
     pub llm_router_warmup_on_launch: Option<bool>,
+    pub llm_composer_enabled: Option<bool>,
+    pub llm_composer_model_path: Option<String>,
+    pub llm_composer_warmup_on_launch: Option<bool>,
 }
 
 pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
@@ -157,6 +182,10 @@ pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
             conn,
             SETTING_LOCAL_WHISPER_USE_GPU,
         )?),
+        local_whisper_model: parse_local_whisper_model_str(get_setting(
+            conn,
+            SETTING_LOCAL_WHISPER_MODEL,
+        )?),
         llm_router_model_path: normalize_optional_trimmed(get_setting(
             conn,
             SETTING_LLM_ROUTER_MODEL_PATH,
@@ -172,6 +201,18 @@ pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
         llm_router_warmup_on_launch: bool_from_setting(get_setting(
             conn,
             SETTING_LLM_ROUTER_WARMUP_ON_LAUNCH,
+        )?),
+        llm_composer_enabled: parse_llm_composer_enabled(get_setting(
+            conn,
+            SETTING_LLM_COMPOSER_ENABLED,
+        )?),
+        llm_composer_model_path: normalize_optional_trimmed(get_setting(
+            conn,
+            SETTING_LLM_COMPOSER_MODEL_PATH,
+        )?),
+        llm_composer_warmup_on_launch: bool_from_setting(get_setting(
+            conn,
+            SETTING_LLM_COMPOSER_WARMUP_ON_LAUNCH,
         )?),
     })
 }
@@ -250,6 +291,18 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
             if on { "1" } else { "0" },
         )?;
     }
+    if let Some(ref raw) = patch.local_whisper_model {
+        let normalized = raw.trim();
+        if !crate::audio::stt::LOCAL_WHISPER_MODEL_IDS
+            .iter()
+            .any(|id| *id == normalized)
+        {
+            return Err(DbError::Validation(format!(
+                "invalid local_whisper_model `{normalized}`"
+            )));
+        }
+        set_setting(conn, SETTING_LOCAL_WHISPER_MODEL, normalized)?;
+    }
     if let Some(ref path) = patch.llm_router_model_path {
         let stored = path.trim();
         if stored.is_empty() {
@@ -281,6 +334,28 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
         set_setting(
             conn,
             SETTING_LLM_ROUTER_WARMUP_ON_LAUNCH,
+            if on { "1" } else { "0" },
+        )?;
+    }
+    if let Some(on) = patch.llm_composer_enabled {
+        set_setting(
+            conn,
+            SETTING_LLM_COMPOSER_ENABLED,
+            if on { "1" } else { "0" },
+        )?;
+    }
+    if let Some(ref path) = patch.llm_composer_model_path {
+        let stored = path.trim();
+        if stored.is_empty() {
+            set_setting(conn, SETTING_LLM_COMPOSER_MODEL_PATH, "")?;
+        } else {
+            set_setting(conn, SETTING_LLM_COMPOSER_MODEL_PATH, stored)?;
+        }
+    }
+    if let Some(on) = patch.llm_composer_warmup_on_launch {
+        set_setting(
+            conn,
+            SETTING_LLM_COMPOSER_WARMUP_ON_LAUNCH,
             if on { "1" } else { "0" },
         )?;
     }
@@ -357,6 +432,7 @@ mod tests {
         assert_eq!(s.remote_stt_timeout_secs, 30);
         assert!(!s.remote_stt_key_stored);
         assert!(!s.local_whisper_use_gpu);
+        assert_eq!(s.local_whisper_model, "tiny.en");
         assert_eq!(s.llm_router_model_path, None);
         assert!(
             (s.llm_router_confidence_threshold - DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD).abs()
@@ -364,6 +440,9 @@ mod tests {
         );
         assert!(!s.llm_router_tier2_enabled);
         assert!(!s.llm_router_warmup_on_launch);
+        assert_eq!(s.llm_composer_enabled, cfg!(feature = "llm-local"));
+        assert_eq!(s.llm_composer_model_path, None);
+        assert!(!s.llm_composer_warmup_on_launch);
     }
 
     #[test]
@@ -379,10 +458,14 @@ mod tests {
                 remote_stt_model: None,
                 remote_stt_timeout_secs: None,
                 local_whisper_use_gpu: None,
+                local_whisper_model: None,
                 llm_router_model_path: None,
                 llm_router_confidence_threshold: None,
                 llm_router_tier2_enabled: None,
                 llm_router_warmup_on_launch: None,
+                llm_composer_enabled: None,
+                llm_composer_model_path: None,
+                llm_composer_warmup_on_launch: None,
             },
         )
         .expect("patch");
@@ -404,10 +487,14 @@ mod tests {
                 remote_stt_model: None,
                 remote_stt_timeout_secs: None,
                 local_whisper_use_gpu: None,
+                local_whisper_model: None,
                 llm_router_model_path: None,
                 llm_router_confidence_threshold: None,
                 llm_router_tier2_enabled: None,
                 llm_router_warmup_on_launch: None,
+                llm_composer_enabled: None,
+                llm_composer_model_path: None,
+                llm_composer_warmup_on_launch: None,
             },
         )
         .expect_err("expected validation error");
@@ -430,10 +517,14 @@ mod tests {
                 remote_stt_model: Some("test-model".into()),
                 remote_stt_timeout_secs: Some(60),
                 local_whisper_use_gpu: None,
+                local_whisper_model: None,
                 llm_router_model_path: None,
                 llm_router_confidence_threshold: None,
                 llm_router_tier2_enabled: None,
                 llm_router_warmup_on_launch: None,
+                llm_composer_enabled: None,
+                llm_composer_model_path: None,
+                llm_composer_warmup_on_launch: None,
             },
         )
         .expect("patch");
@@ -457,10 +548,69 @@ mod tests {
                 remote_stt_model: None,
                 remote_stt_timeout_secs: None,
                 local_whisper_use_gpu: None,
+                local_whisper_model: None,
                 llm_router_model_path: None,
                 llm_router_confidence_threshold: None,
                 llm_router_tier2_enabled: None,
                 llm_router_warmup_on_launch: None,
+                llm_composer_enabled: None,
+                llm_composer_model_path: None,
+                llm_composer_warmup_on_launch: None,
+            },
+        )
+        .expect_err("expected validation error");
+        assert!(matches!(err, DbError::Validation(_)));
+    }
+
+    #[test]
+    fn apply_settings_patch_persists_local_whisper_model() {
+        let (_dir, conn) = open_temp();
+        apply_settings_patch(
+            &conn,
+            &SettingsPatch {
+                wake_engine: None,
+                oww_threshold: None,
+                stt_provider: None,
+                remote_stt_url: None,
+                remote_stt_model: None,
+                remote_stt_timeout_secs: None,
+                local_whisper_use_gpu: None,
+                local_whisper_model: Some("base.en".into()),
+                llm_router_model_path: None,
+                llm_router_confidence_threshold: None,
+                llm_router_tier2_enabled: None,
+                llm_router_warmup_on_launch: None,
+                llm_composer_enabled: None,
+                llm_composer_model_path: None,
+                llm_composer_warmup_on_launch: None,
+            },
+        )
+        .expect("patch");
+        let s = get_app_settings(&conn).expect("reload");
+        assert_eq!(s.local_whisper_model, "base.en");
+    }
+
+    #[test]
+    fn invalid_local_whisper_model_rejected() {
+        let (_dir, conn) = open_temp();
+        let err = apply_settings_patch(
+            &conn,
+            &SettingsPatch {
+                wake_engine: None,
+                oww_threshold: None,
+                stt_provider: None,
+                remote_stt_url: None,
+                remote_stt_model: None,
+                remote_stt_timeout_secs: None,
+                local_whisper_use_gpu: None,
+                local_whisper_model: Some("large-v3".into()),
+                llm_router_model_path: None,
+                llm_router_confidence_threshold: None,
+                llm_router_tier2_enabled: None,
+                llm_router_warmup_on_launch: None,
+                llm_composer_enabled: None,
+                llm_composer_model_path: None,
+                llm_composer_warmup_on_launch: None,
             },
         )
         .expect_err("expected validation error");
@@ -480,10 +630,14 @@ mod tests {
                 remote_stt_model: None,
                 remote_stt_timeout_secs: None,
                 local_whisper_use_gpu: Some(true),
+                local_whisper_model: None,
                 llm_router_model_path: None,
                 llm_router_confidence_threshold: None,
                 llm_router_tier2_enabled: None,
                 llm_router_warmup_on_launch: None,
+                llm_composer_enabled: None,
+                llm_composer_model_path: None,
+                llm_composer_warmup_on_launch: None,
             },
         )
         .expect("patch");
@@ -499,15 +653,20 @@ mod tests {
                 remote_stt_model: None,
                 remote_stt_timeout_secs: None,
                 local_whisper_use_gpu: Some(false),
+                local_whisper_model: None,
                 llm_router_model_path: None,
                 llm_router_confidence_threshold: None,
                 llm_router_tier2_enabled: None,
                 llm_router_warmup_on_launch: None,
+                llm_composer_enabled: None,
+                llm_composer_model_path: None,
+                llm_composer_warmup_on_launch: None,
             },
         )
         .expect("patch off");
         let s = get_app_settings(&conn).expect("reload");
         assert!(!s.local_whisper_use_gpu);
+        assert_eq!(s.local_whisper_model, "tiny.en");
     }
 
     #[test]
@@ -523,10 +682,14 @@ mod tests {
                 remote_stt_model: None,
                 remote_stt_timeout_secs: None,
                 local_whisper_use_gpu: None,
+                local_whisper_model: None,
                 llm_router_model_path: Some(r"C:\models\router.gguf".into()),
                 llm_router_confidence_threshold: Some(0.55),
                 llm_router_tier2_enabled: Some(true),
                 llm_router_warmup_on_launch: Some(true),
+                llm_composer_enabled: None,
+                llm_composer_model_path: None,
+                llm_composer_warmup_on_launch: None,
             },
         )
         .expect("patch");

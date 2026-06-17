@@ -1,8 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { createPortal } from "react-dom";
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -12,8 +14,16 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import type { CommandNodePayload, FormActionPayload } from "../../types";
-import { editorPendingAction } from "../../types";
+import type {
+  CommandNodePayload,
+  ComposerStatus,
+  FormActionPayload,
+  GenerateAutomationResult,
+  NewToolDefinitionPayload,
+  TestCommandResult,
+  ActionPayload,
+} from "../../types";
+import { editorPendingAction, isEditorPendingAction } from "../../types";
 import { formatUserError } from "../../utils/userErrors";
 import { useEditorStore } from "../../store/editorStore";
 import { useSettingsStore } from "../../store/settingsStore";
@@ -38,10 +48,24 @@ import {
 } from "./NodeForm.logic";
 import { searchAppIndexInvokeArgs } from "./appIndexInvoke";
 import { PlacementZoneSelect } from "./PlacementZoneSelect";
+import { EditorSelect } from "../ui/EditorSelect";
 import { CommandDeleteConfirm } from "./CommandDeleteConfirm";
+import { ifElseConditionNeedsPattern, type IfConditionKind } from "./ifElse.logic";
 import { EditorCheckIcon } from "./EditorCheckIcon";
 import { EditorCloseXIcon } from "./EditorCloseXIcon";
 import { EditorPlusIcon } from "./EditorPlusIcon";
+import {
+  canComposerGenerate,
+  composerTriggerPayload,
+  modelFromGeneratedResult,
+  parseComposerInvokeError,
+  shouldOfferRegenerateWithFix,
+  shouldShowFormulaAfterGenerate,
+  shouldShowToolPreview,
+  toCreateToolPayload,
+  toolDraftFromResult,
+} from "./composer.logic";
+import { EditorSpinner } from "./EditorSpinner";
 
 export type AppIndexEntry = {
   display_name: string;
@@ -113,6 +137,81 @@ function FormulaSuggestPortal({
       {children}
     </ul>,
     document.body,
+  );
+}
+
+const PREFIX_MODE_TOGGLE_TITLE =
+  "Trailing words after the trigger become input for actions";
+
+function PrefixModeToggle({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label
+      className={`editor-prefix-mode-toggle${checked ? " is-on" : ""}`}
+      title={PREFIX_MODE_TOGGLE_TITLE}
+    >
+      <input
+        type="checkbox"
+        className="editor-prefix-mode-input"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        aria-label={PREFIX_MODE_TOGGLE_TITLE}
+      />
+      <span className="editor-prefix-mode-chip" aria-hidden>
+        + input
+      </span>
+    </label>
+  );
+}
+
+type FormulaTriggerColumnProps = {
+  phrase: string;
+  onPhraseChange: (value: string) => void;
+  phrasePlaceholder?: string;
+  prefixMode: boolean;
+  onPrefixModeChange: (checked: boolean) => void;
+  testInput?: string;
+  onTestInputChange?: (value: string) => void;
+};
+
+function FormulaTriggerColumn({
+  phrase,
+  onPhraseChange,
+  phrasePlaceholder = "Trigger phrase",
+  prefixMode,
+  onPrefixModeChange,
+  testInput,
+  onTestInputChange,
+}: FormulaTriggerColumnProps) {
+  return (
+    <div className="editor-formula-trigger-wrap">
+      <div className="editor-formula-trigger-head">
+        <input
+          type="text"
+          className="editor-formula-input editor-formula-input--phrase"
+          value={phrase}
+          onChange={(e) => onPhraseChange(e.target.value)}
+          placeholder={phrasePlaceholder}
+          aria-label="Trigger phrase"
+        />
+        <PrefixModeToggle checked={prefixMode} onChange={onPrefixModeChange} />
+      </div>
+      {prefixMode && onTestInputChange ? (
+        <input
+          type="text"
+          className="editor-formula-input editor-formula-input--test"
+          value={testInput ?? ""}
+          onChange={(e) => onTestInputChange(e.target.value)}
+          placeholder="Test words…"
+          aria-label="Prefix remainder test input"
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -218,10 +317,31 @@ export function CommandFormulaRow({
     }));
   };
   const followUpVariableMeta = useMemo(() => deriveFollowUpVariableMap(model.actions), [model.actions]);
-  const formulaVariableLabels = useMemo(
-    () => deriveFormulaVariableLabels(model.actions, model.prefixMode),
-    [model.actions, model.prefixMode],
-  );
+  const [testInput, setTestInput] = useState("");
+  const [testRunning, setTestRunning] = useState(false);
+  const [testResult, setTestResult] = useState<TestCommandResult | null>(null);
+
+  const runTestCommand = useCallback(async () => {
+    if (!model.id || testRunning) return;
+    const errors = validateFormModel(model);
+    if (hasBlockingErrors(errors)) {
+      showToast("Fix validation errors before running.");
+      return;
+    }
+    setTestRunning(true);
+    setTestResult(null);
+    try {
+      const result = await invoke<TestCommandResult>("test_command", {
+        commandId: model.id,
+        testInput: model.prefixMode ? testInput : null,
+      });
+      setTestResult(result);
+    } catch (err: unknown) {
+      showToast(formatUserError(err, "Test run failed."));
+    } finally {
+      setTestRunning(false);
+    }
+  }, [model, showToast, testInput, testRunning]);
 
   const errors = validateFormModel(model);
 
@@ -259,26 +379,16 @@ export function CommandFormulaRow({
         )}
 
         <div className="editor-command-formula">
-          <div className="editor-formula-trigger-wrap">
-            <input
-              type="text"
-              className="editor-formula-input editor-formula-input--phrase"
-              value={primaryPhrase}
-              onChange={(e) => setPrimaryPhrase(e.target.value)}
-              placeholder="Trigger phrase"
-              aria-label="Trigger phrase"
-            />
-            <label className="editor-prefix-mode-toggle">
-              <input
-                type="checkbox"
-                checked={model.prefixMode}
-                onChange={(e) =>
-                  updateModel((prev) => ({ ...prev, prefixMode: e.target.checked }))
-                }
-              />
-              <span>Words after trigger are input</span>
-            </label>
-          </div>
+          <FormulaTriggerColumn
+            phrase={primaryPhrase}
+            onPhraseChange={setPrimaryPhrase}
+            prefixMode={model.prefixMode}
+            onPrefixModeChange={(checked) =>
+              updateModel((prev) => ({ ...prev, prefixMode: checked }))
+            }
+            testInput={testInput}
+            onTestInputChange={setTestInput}
+          />
           <span className="editor-formula-eq" aria-hidden>
             =
           </span>
@@ -298,7 +408,11 @@ export function CommandFormulaRow({
                     key={`${model.id ?? "draft"}-${index}-${getActionKind(action)}`}
                     action={action}
                     index={index}
-                    availableVariableLabels={formulaVariableLabels}
+                    availableVariableLabels={deriveFormulaVariableLabels(
+                      model.actions,
+                      model.prefixMode,
+                      index,
+                    )}
                     variableLabel={
                       followUpVariableMeta.byActionIndex.get(index)
                         ? `Variable ${followUpVariableMeta.byActionIndex.get(index)}`
@@ -307,6 +421,8 @@ export function CommandFormulaRow({
                     onChange={(next) => setActionAt(index, next)}
                     onRemove={() => removeActionAt(index)}
                     canRemove={computeInsetRemoveAllowed(model.actions)}
+                    prefixMode={model.prefixMode}
+                    formulaActions={model.actions}
                   />
                 </div>
               ))
@@ -324,6 +440,14 @@ export function CommandFormulaRow({
           </div>
 
           <div className="editor-command-trail">
+            <button
+              type="button"
+              className="editor-formula-run"
+              onClick={() => void runTestCommand()}
+              disabled={!model.id || testRunning}
+            >
+              {testRunning ? "Running…" : "Run"}
+            </button>
             <button
               type="button"
               className={`editor-switch${model.enabled ? " is-on" : ""}`}
@@ -354,6 +478,19 @@ export function CommandFormulaRow({
               .join(" ")}
           </p>
         )}
+        {testResult && testResult.steps.length > 0 && (
+          <div className="editor-formula-run-strip" role="status" aria-live="polite">
+            {testResult.steps.map((step) => (
+              <span
+                key={`run-${step.index}-${step.action_kind}`}
+                className={`editor-formula-run-chip${step.error ? " is-error" : ""}`}
+                title={step.error ?? step.status}
+              >
+                {step.action_kind}: {step.error ?? (step.output_preview || step.status)}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </li>
   );
@@ -380,8 +517,88 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
     triggerPhrases: [],
     actions: [editorPendingAction()],
   }));
+  const [composerTrigger, setComposerTrigger] = useState("");
+  const [description, setDescription] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [composerStatus, setComposerStatus] = useState<ComposerStatus | null>(null);
+  const [generateResult, setGenerateResult] = useState<GenerateAutomationResult | null>(null);
+  const [formulaVisible, setFormulaVisible] = useState(false);
+  const [toolPreviewVisible, setToolPreviewVisible] = useState(false);
   const [saving, setSaving] = useState(false);
   const [toastText, setToastText] = useState<string | null>(null);
+  const [showRegenerateFix, setShowRegenerateFix] = useState(false);
+
+  const refreshComposerStatus = useCallback(() => {
+    void invoke<ComposerStatus>("composer_status")
+      .then(setComposerStatus)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<ComposerStatus>("composer_status")
+      .then((status) => {
+        if (!cancelled) setComposerStatus(status);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen("composer-warmup", () => {
+      refreshComposerStatus();
+    }).then((off) => {
+      unlisten = off;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, [refreshComposerStatus]);
+
+  const onGenerate = async () => {
+    const text = description.trim();
+    if (!canComposerGenerate(composerTrigger, description) || generating) return;
+    setGenerating(true);
+    setToastText(null);
+    setShowRegenerateFix(false);
+    refreshComposerStatus();
+    try {
+      const result = await invoke<GenerateAutomationResult>("generate_automation", {
+        description: text,
+        trigger: composerTriggerPayload(composerTrigger),
+      });
+      setGenerateResult(result);
+      const nextModel = modelFromGeneratedResult(result);
+      if (nextModel) {
+        setModel(nextModel);
+      }
+      setFormulaVisible(shouldShowFormulaAfterGenerate(result));
+      setToolPreviewVisible(shouldShowToolPreview(result));
+      setShowRegenerateFix(false);
+    } catch (err: unknown) {
+      const parsed = parseComposerInvokeError(err);
+      setShowRegenerateFix(shouldOfferRegenerateWithFix(err));
+      setToastText(formatUserError(parsed.message, "Could not compose command."));
+    } finally {
+      setGenerating(false);
+      refreshComposerStatus();
+    }
+  };
+
+  const onCancelGenerate = () => {
+    void invoke("cancel_generate_automation");
+    setGenerating(false);
+  };
+
+  const composerBusy = generating || Boolean(composerStatus?.loading);
+  const statusMessage = generating
+    ? "Composing…"
+    : composerStatus?.loading
+      ? "Model loading…"
+      : null;
 
   const updateModel = (updater: (prev: FormModel) => FormModel) => setModel((p) => updater(p));
 
@@ -407,6 +624,13 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
       await invoke<CommandNodePayload>("create_command", {
         node: toCommandPayload(model),
       });
+      const toolDraft =
+        generateResult?.kind === "both" ? toolDraftFromResult(generateResult) : null;
+      if (toolDraft) {
+        await invoke<NewToolDefinitionPayload>("create_tool", {
+          tool: toCreateToolPayload(toolDraft),
+        });
+      }
       onCreated();
     } catch (err: unknown) {
       setToastText(formatUserError(err, "Could not create command."));
@@ -414,6 +638,28 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
       setSaving(false);
     }
   };
+
+  const onCreateTool = async () => {
+    if (!generateResult) return;
+    const toolDraft = toolDraftFromResult(generateResult);
+    if (!toolDraft) {
+      setToastText("No tool draft to save.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await invoke<NewToolDefinitionPayload>("create_tool", {
+        tool: toCreateToolPayload(toolDraft),
+      });
+      onCreated();
+    } catch (err: unknown) {
+      setToastText(formatUserError(err, "Could not create tool."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toolDraft = generateResult ? toolDraftFromResult(generateResult) : null;
 
   const addActionSegment = () =>
     updateModel((prev) => ({ ...prev, actions: [...prev.actions, editorPendingAction()] }));
@@ -433,10 +679,6 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
     }));
   };
   const followUpVariableMeta = useMemo(() => deriveFollowUpVariableMap(model.actions), [model.actions]);
-  const formulaVariableLabels = useMemo(
-    () => deriveFormulaVariableLabels(model.actions, model.prefixMode),
-    [model.actions, model.prefixMode],
-  );
 
   return (
     <li className="editor-command-item editor-command-item--draft">
@@ -446,27 +688,146 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
             {toastText}
           </div>
         )}
-        <div className="editor-command-formula">
-          <div className="editor-formula-trigger-wrap">
-            <input
-              type="text"
-              className="editor-formula-input editor-formula-input--phrase"
-              value={primaryPhrase}
-              onChange={(e) => setPrimaryPhrase(e.target.value)}
-              placeholder="Phrase"
-              aria-label="Trigger phrase"
-            />
-            <label className="editor-prefix-mode-toggle">
-              <input
-                type="checkbox"
-                checked={model.prefixMode}
-                onChange={(e) =>
-                  updateModel((prev) => ({ ...prev, prefixMode: e.target.checked }))
-                }
-              />
-              <span>Words after trigger are input</span>
-            </label>
+        <div
+          className="editor-composer-panel"
+          aria-busy={composerBusy}
+        >
+          <label className="editor-composer-label" htmlFor="command-composer-trigger">
+            Trigger
+          </label>
+          <input
+            id="command-composer-trigger"
+            type="text"
+            className="editor-composer-input"
+            value={composerTrigger}
+            onChange={(e) => setComposerTrigger(e.target.value)}
+            placeholder='e.g. open notepad'
+            disabled={generating}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <label className="editor-composer-label" htmlFor="command-composer-description">
+            What should happen
+          </label>
+          <textarea
+            id="command-composer-description"
+            className="editor-composer-textarea"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="e.g. launch Notepad snapped left"
+            rows={3}
+            disabled={generating}
+          />
+          <div className="editor-composer-actions">
+            {generating ? (
+              <button
+                type="button"
+                className="editor-composer-btn editor-composer-btn--ghost"
+                onClick={onCancelGenerate}
+              >
+                Cancel
+              </button>
+            ) : null}
+            {showRegenerateFix ? (
+              <button
+                type="button"
+                className="editor-composer-btn editor-composer-btn--ghost"
+                onClick={() => void onGenerate()}
+                disabled={generating || !canComposerGenerate(composerTrigger, description)}
+              >
+                Regenerate with fix
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="editor-composer-btn editor-composer-btn--secondary"
+              onClick={() => void onGenerate()}
+              disabled={generating || !canComposerGenerate(composerTrigger, description)}
+              aria-busy={generating}
+            >
+              {generating ? (
+                <>
+                  <EditorSpinner size={16} />
+                  <span>Composing…</span>
+                </>
+              ) : (
+                "Generate"
+              )}
+            </button>
           </div>
+          {(statusMessage || generateResult) && (
+            <div className="editor-composer-status" aria-live="polite">
+              {statusMessage ? (
+                <>
+                  <EditorSpinner size={14} />
+                  <span>{statusMessage}</span>
+                </>
+              ) : null}
+              {generateResult && !statusMessage ? (
+                <>
+                  <span className="editor-composer-summary">{generateResult.summary}</span>
+                  {generateResult.warnings.map((warning) => (
+                    <span key={warning} className="editor-composer-warning">
+                      {warning}
+                    </span>
+                  ))}
+                </>
+              ) : null}
+            </div>
+          )}
+          {composerStatus && !composerStatus.modelPresent && composerStatus.featureCompiled ? (
+            <p className="editor-composer-hint">
+              Composer model missing — run <code>npm run fetch-models</code> from the jarvis folder.
+            </p>
+          ) : null}
+        </div>
+        {toolPreviewVisible && !formulaVisible && toolDraft ? (
+          <div className="editor-composer-tool-only editor-command-formula--revealed">
+            <ComposerToolPreview tool={toolDraft} variant="card" />
+            <div className="editor-command-draft-actions">
+              <button
+                type="button"
+                className="editor-command-draft-icon-btn"
+                onClick={onDiscard}
+                aria-label="Cancel"
+              >
+                <span className="editor-command-draft-icon" aria-hidden>
+                  <EditorCloseXIcon className="editor-command-draft-icon-svg" />
+                </span>
+              </button>
+              <button
+                type="button"
+                className="editor-composer-btn editor-composer-btn--secondary"
+                onClick={() => void onCreateTool()}
+                disabled={saving}
+                aria-busy={saving}
+              >
+                {saving ? (
+                  <>
+                    <EditorSpinner size={14} />
+                    <span>Creating…</span>
+                  </>
+                ) : (
+                  "Create tool"
+                )}
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {formulaVisible ? (
+        <div className="editor-command-formula editor-command-formula--revealed">
+          {toolPreviewVisible && toolDraft ? (
+            <ComposerToolPreview tool={toolDraft} variant="callout" />
+          ) : null}
+          <FormulaTriggerColumn
+            phrase={primaryPhrase}
+            onPhraseChange={setPrimaryPhrase}
+            phrasePlaceholder="Phrase"
+            prefixMode={model.prefixMode}
+            onPrefixModeChange={(checked) =>
+              updateModel((prev) => ({ ...prev, prefixMode: checked }))
+            }
+          />
           <span className="editor-formula-eq" aria-hidden>
             =
           </span>
@@ -482,7 +843,11 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
                   key={`draft-${index}-${getActionKind(action)}`}
                   action={action}
                   index={index}
-                  availableVariableLabels={formulaVariableLabels}
+                  availableVariableLabels={deriveFormulaVariableLabels(
+                    model.actions,
+                    model.prefixMode,
+                    index,
+                  )}
                   variableLabel={
                     followUpVariableMeta.byActionIndex.get(index)
                       ? `Variable ${followUpVariableMeta.byActionIndex.get(index)}`
@@ -491,6 +856,8 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
                   onChange={(next) => setActionAt(index, next)}
                   onRemove={() => removeActionAt(index)}
                   canRemove={computeInsetRemoveAllowed(model.actions)}
+                  prefixMode={model.prefixMode}
+                  formulaActions={model.actions}
                 />
               </div>
             ))}
@@ -524,8 +891,38 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
             </button>
           </div>
         </div>
+        ) : null}
       </div>
     </li>
+  );
+}
+
+function ComposerToolPreview({
+  tool,
+  variant,
+}: {
+  tool: NewToolDefinitionPayload;
+  variant: "card" | "callout";
+}) {
+  const paramSummary =
+    tool.parameters.length > 0 ? tool.parameters.map((param) => param.name).join(", ") : "none";
+  const className =
+    variant === "card" ? "editor-composer-tool-preview" : "editor-composer-tool-callout";
+  return (
+    <div className={className}>
+      <p className="editor-composer-tool-title">{tool.display_name}</p>
+      <p className="editor-composer-tool-meta">
+        LLM tool <code>{tool.name}</code>
+        {" · "}
+        params: {paramSummary}
+      </p>
+      {tool.description ? (
+        <p className="editor-composer-tool-desc">{tool.description}</p>
+      ) : null}
+      {variant === "callout" ? (
+        <p className="editor-composer-tool-hint">Save also creates this tool.</p>
+      ) : null}
+    </div>
   );
 }
 
@@ -537,6 +934,10 @@ type SegmentProps = {
   onChange: (next: FormActionPayload) => void;
   onRemove: () => void;
   canRemove: boolean;
+  /** Hide kinds in nested If/Else branches (avoids deep nesting in v1). */
+  excludeActionKinds?: ConcreteActionKind[];
+  prefixMode?: boolean;
+  formulaActions?: FormActionPayload[];
 };
 
 type VariableTokenContext = {
@@ -562,11 +963,15 @@ export function deriveFollowUpVariableMap(actions: FormActionPayload[]) {
 export function deriveFormulaVariableLabels(
   actions: FormActionPayload[],
   prefixMode: boolean,
+  forActionIndex: number,
 ): string[] {
   const followUp = deriveFollowUpVariableMap(actions);
-  const labels = [...followUp.labels];
+  const labels = [...followUp.labels, "{{last_result}}"];
   if (prefixMode) {
-    labels.push("{{remainder}}");
+    labels.push("{{remainder}}", "{{shortcut_input}}");
+  }
+  for (let i = 0; i < forActionIndex; i += 1) {
+    labels.push(`{{step_${i + 1}}}`);
   }
   return labels;
 }
@@ -630,7 +1035,11 @@ function ActionSegmentEditor({
   onChange,
   onRemove,
   canRemove,
+  excludeActionKinds = [],
+  prefixMode = false,
+  formulaActions,
 }: SegmentProps) {
+  const commandOptions = useEditorStore((s) => s.nodes);
   const kindAnchorRef = useRef<HTMLDivElement>(null);
   const appAnchorRef = useRef<HTMLDivElement>(null);
   const appInputRef = useRef<HTMLInputElement>(null);
@@ -643,6 +1052,7 @@ function ActionSegmentEditor({
     input: HTMLInputElement;
   } | null>(null);
   const kind = getActionKind(action);
+  const fieldIds = useId();
   const [kindQuery, setKindQuery] = useState(() =>
     kind === "pending" ? "" : (ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind),
   );
@@ -811,14 +1221,15 @@ function ActionSegmentEditor({
 
   const kindHits = useMemo(() => {
     const q = kindQuery.trim().toLowerCase();
-    if (!q) return ACTION_KIND_OPTIONS;
-    return ACTION_KIND_OPTIONS.filter(
+    const pool = ACTION_KIND_OPTIONS.filter((opt) => !excludeActionKinds.includes(opt.id));
+    if (!q) return pool;
+    return pool.filter(
       (opt) =>
         opt.label.toLowerCase().includes(q) ||
         opt.haystack.includes(q) ||
         opt.id.split("_").join(" ").includes(q),
     );
-  }, [kindQuery]);
+  }, [kindQuery, excludeActionKinds]);
 
   const applyKindOption = (nextKind: ConcreteActionKind) => {
     onPickKind(nextKind);
@@ -1204,6 +1615,375 @@ function ActionSegmentEditor({
         </div>
       );
     }
+    if ("run_command" in action) {
+      return (
+        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
+          <EditorSelect
+            id={`${fieldIds}-run-command`}
+            value={action.run_command.command_id ? String(action.run_command.command_id) : ""}
+            onChange={(next) =>
+              onChange({
+                run_command: {
+                  ...action.run_command,
+                  command_id: Number(next) || 0,
+                },
+              })
+            }
+            options={commandOptions.map((node) => ({
+              value: String(node.id),
+              label: node.trigger_phrases[0] ?? node.name,
+            }))}
+            placeholder="Select command…"
+            ariaLabel={`Command to run for step ${index + 1}`}
+            className="editor-select-wrap--formula"
+          />
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.run_command.input ?? ""}
+            {...bindVariableSuggestInput(action.run_command.input ?? "", (value) =>
+              onChange({
+                run_command: {
+                  ...action.run_command,
+                  input: value,
+                },
+              }),
+            )}
+            placeholder="Input (optional)"
+            aria-label={`Run command input for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("read_file" in action) {
+      return (
+        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.read_file.path}
+            {...bindVariableSuggestInput(action.read_file.path, (value) =>
+              onChange({ read_file: { path: value } }),
+            )}
+            placeholder="File path"
+            aria-label={`File path for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("http_get" in action) {
+      return (
+        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
+          <input
+            type="url"
+            className={formulaArgInputClass()}
+            value={action.http_get.url}
+            {...bindVariableSuggestInput(action.http_get.url, (value) =>
+              onChange({ http_get: { url: value } }),
+            )}
+            placeholder="https://…"
+            aria-label={`HTTP GET URL for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("get_clipboard" in action) {
+      return (
+        <span className="editor-formula-muted" aria-label={`Clipboard read for step ${index + 1}`}>
+          System clipboard
+        </span>
+      );
+    }
+    if ("show_notification" in action) {
+      return (
+        <div
+          className="editor-formula-arg-wrap editor-formula-arg-wrap--stack"
+          ref={variableAnchorRef}
+        >
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.show_notification.title}
+            {...bindVariableSuggestInput(action.show_notification.title, (value) =>
+              onChange({
+                show_notification: { ...action.show_notification, title: value },
+              }),
+            )}
+            placeholder="Title"
+            aria-label={`Notification title for step ${index + 1}`}
+          />
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.show_notification.body}
+            {...bindVariableSuggestInput(action.show_notification.body, (value) =>
+              onChange({
+                show_notification: { ...action.show_notification, body: value },
+              }),
+            )}
+            placeholder="Body"
+            aria-label={`Notification body for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("text_trim" in action) {
+      return (
+        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.text_trim.text}
+            {...bindVariableSuggestInput(action.text_trim.text, (value) =>
+              onChange({ text_trim: { text: value } }),
+            )}
+            placeholder="Text (optional — uses prior output)"
+            aria-label={`Trim text input for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("text_match" in action) {
+      return (
+        <div
+          className="editor-formula-arg-wrap editor-formula-arg-wrap--stack"
+          ref={variableAnchorRef}
+        >
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.text_match.pattern}
+            {...bindVariableSuggestInput(action.text_match.pattern, (value) =>
+              onChange({
+                text_match: { ...action.text_match, pattern: value },
+              }),
+            )}
+            placeholder="Regex pattern"
+            aria-label={`Match pattern for step ${index + 1}`}
+          />
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.text_match.text}
+            {...bindVariableSuggestInput(action.text_match.text, (value) =>
+              onChange({
+                text_match: { ...action.text_match, text: value },
+              }),
+            )}
+            placeholder="Text (optional — uses prior output)"
+            aria-label={`Match text input for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("text_split" in action) {
+      return (
+        <div
+          className="editor-formula-arg-wrap editor-formula-arg-wrap--stack"
+          ref={variableAnchorRef}
+        >
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.text_split.delimiter}
+            {...bindVariableSuggestInput(action.text_split.delimiter, (value) =>
+              onChange({
+                text_split: { ...action.text_split, delimiter: value },
+              }),
+            )}
+            placeholder="Delimiter"
+            aria-label={`Split delimiter for step ${index + 1}`}
+          />
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.text_split.text}
+            {...bindVariableSuggestInput(action.text_split.text, (value) =>
+              onChange({
+                text_split: { ...action.text_split, text: value },
+              }),
+            )}
+            placeholder="Text (optional — uses prior output)"
+            aria-label={`Split text input for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("text_combine" in action) {
+      return (
+        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.text_combine.separator}
+            {...bindVariableSuggestInput(action.text_combine.separator, (value) =>
+              onChange({ text_combine: { separator: value } }),
+            )}
+            placeholder="Separator"
+            aria-label={`Combine separator for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("set_clipboard" in action) {
+      return (
+        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.set_clipboard.text}
+            {...bindVariableSuggestInput(action.set_clipboard.text, (value) =>
+              onChange({ set_clipboard: { text: value } }),
+            )}
+            placeholder="Text (optional — uses prior output)"
+            aria-label={`Set clipboard text for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("list_folder" in action) {
+      return (
+        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.list_folder.path}
+            {...bindVariableSuggestInput(action.list_folder.path, (value) =>
+              onChange({ list_folder: { path: value } }),
+            )}
+            placeholder="Folder path"
+            aria-label={`Folder path for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("write_file" in action) {
+      return (
+        <div
+          className="editor-formula-arg-wrap editor-formula-arg-wrap--stack"
+          ref={variableAnchorRef}
+        >
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.write_file.path}
+            {...bindVariableSuggestInput(action.write_file.path, (value) =>
+              onChange({
+                write_file: { ...action.write_file, path: value },
+              }),
+            )}
+            placeholder="File path"
+            aria-label={`Write file path for step ${index + 1}`}
+          />
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.write_file.content}
+            {...bindVariableSuggestInput(action.write_file.content, (value) =>
+              onChange({
+                write_file: { ...action.write_file, content: value },
+              }),
+            )}
+            placeholder="Content (optional — uses prior output)"
+            aria-label={`Write file content for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("get_file_metadata" in action) {
+      return (
+        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.get_file_metadata.path}
+            {...bindVariableSuggestInput(action.get_file_metadata.path, (value) =>
+              onChange({ get_file_metadata: { path: value } }),
+            )}
+            placeholder="File or folder path"
+            aria-label={`Metadata path for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("screenshot" in action) {
+      return (
+        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.screenshot.path ?? ""}
+            {...bindVariableSuggestInput(action.screenshot.path ?? "", (value) =>
+              onChange({ screenshot: { path: value } }),
+            )}
+            placeholder="Output path (optional — temp file)"
+            aria-label={`Screenshot output path for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("device_info" in action) {
+      return (
+        <span className="editor-formula-muted" aria-label={`Device info for step ${index + 1}`}>
+          CPU &amp; memory
+        </span>
+      );
+    }
+    if ("if_else" in action) {
+      const needsPattern = ifElseConditionNeedsPattern(action.if_else.condition);
+      return (
+        <div
+          className="editor-formula-arg-wrap editor-formula-arg-wrap--stack"
+          ref={variableAnchorRef}
+        >
+          <EditorSelect
+            id={`${fieldIds}-if-condition`}
+            value={action.if_else.condition}
+            onChange={(next) =>
+              onChange({
+                if_else: {
+                  ...action.if_else,
+                  condition: next as IfConditionKind,
+                },
+              })
+            }
+            options={[
+              { value: "text_contains", label: "Text contains" },
+              { value: "regex_match", label: "Matches regex" },
+              { value: "text_is_empty", label: "Is empty" },
+            ]}
+            ariaLabel={`If/Else condition for step ${index + 1}`}
+            className="editor-select-wrap--formula"
+          />
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.if_else.text}
+            {...bindVariableSuggestInput(action.if_else.text, (value) =>
+              onChange({
+                if_else: { ...action.if_else, text: value },
+              }),
+            )}
+            placeholder="Text (optional — uses prior output)"
+            aria-label={`If/Else text for step ${index + 1}`}
+          />
+          {needsPattern ? (
+            <input
+              type="text"
+              className={formulaArgInputClass()}
+              value={action.if_else.pattern}
+              {...bindVariableSuggestInput(action.if_else.pattern, (value) =>
+                onChange({
+                  if_else: { ...action.if_else, pattern: value },
+                }),
+              )}
+              placeholder={action.if_else.condition === "regex_match" ? "Regex" : "Contains"}
+              aria-label={`If/Else pattern for step ${index + 1}`}
+            />
+          ) : null}
+        </div>
+      );
+    }
     if ("sub_prompt" in action) {
       return (
         <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
@@ -1451,6 +2231,30 @@ function ActionSegmentEditor({
           </>
         )}
       </div>
+      {"if_else" in action ? (
+        <div className="editor-formula-ifelse-branches" role="group" aria-label="If/Else branches">
+          <IfElseBranchPanel
+            label="Then"
+            actions={action.if_else.then_actions}
+            onChange={(then_actions) =>
+              onChange({ if_else: { ...action.if_else, then_actions } })
+            }
+            parentStepIndex={index}
+            prefixMode={prefixMode}
+            formulaActions={formulaActions ?? []}
+          />
+          <IfElseBranchPanel
+            label="Else"
+            actions={action.if_else.else_actions}
+            onChange={(else_actions) =>
+              onChange({ if_else: { ...action.if_else, else_actions } })
+            }
+            parentStepIndex={index}
+            prefixMode={prefixMode}
+            formulaActions={formulaActions ?? []}
+          />
+        </div>
+      ) : null}
       {variableOpen && variableHits.length > 0 ? (
         <FormulaSuggestPortal anchorRef={variableAnchorRef}>
           {variableHits.map((label) => (
@@ -1468,6 +2272,92 @@ function ActionSegmentEditor({
           ))}
         </FormulaSuggestPortal>
       ) : null}
+    </div>
+  );
+}
+
+type IfElseBranchPanelProps = {
+  label: string;
+  actions: ActionPayload[];
+  onChange: (next: ActionPayload[]) => void;
+  parentStepIndex: number;
+  prefixMode: boolean;
+  formulaActions: FormActionPayload[];
+};
+
+function IfElseBranchPanel({
+  label,
+  actions,
+  onChange,
+  parentStepIndex,
+  prefixMode,
+  formulaActions,
+}: IfElseBranchPanelProps) {
+  const setBranchActionAt = (branchIndex: number, next: FormActionPayload) => {
+    if (isEditorPendingAction(next)) return;
+    const copy = [...actions];
+    copy[branchIndex] = next;
+    onChange(copy);
+  };
+
+  const removeBranchActionAt = (branchIndex: number) => {
+    onChange(actions.filter((_, i) => i !== branchIndex));
+  };
+
+  return (
+    <div className="editor-formula-branch">
+      <div className="editor-formula-branch-bridge" aria-hidden>
+        <svg className="editor-formula-variable-bracket-svg" viewBox="0 0 100 10" preserveAspectRatio="none">
+          <path
+            d="M 0 0 L 0 8 L 100 8 L 100 0"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.25"
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
+        <span className="editor-formula-variable-label">{label}</span>
+      </div>
+      <div className="editor-formula-branch-chain" role="group" aria-label={`${label} branch actions`}>
+        {actions.length === 0 ? (
+          <span className="editor-formula-muted">No actions</span>
+        ) : (
+          actions.map((branchAction, branchIndex) => (
+            <div key={`${label}-${branchIndex}`} className="editor-formula-branch-segment-wrap">
+              {branchIndex > 0 ? (
+                <span className="editor-formula-arrow" aria-hidden>
+                  +
+                </span>
+              ) : null}
+              <ActionSegmentEditor
+                action={branchAction}
+                index={branchIndex}
+                availableVariableLabels={deriveFormulaVariableLabels(
+                  formulaActions,
+                  prefixMode,
+                  parentStepIndex,
+                )}
+                onChange={(next) => setBranchActionAt(branchIndex, next)}
+                onRemove={() => removeBranchActionAt(branchIndex)}
+                canRemove
+                excludeActionKinds={["if_else"]}
+                prefixMode={prefixMode}
+                formulaActions={formulaActions}
+              />
+            </div>
+          ))
+        )}
+        <button
+          type="button"
+          className="editor-formula-plus editor-formula-plus--labeled"
+          onClick={() => onChange([...actions, { speak: { text: "" } }])}
+          aria-label={`Add ${label} action`}
+        >
+          <span className="editor-formula-plus-icon" aria-hidden>
+            <EditorPlusIcon className="editor-formula-plus-icon-svg" />
+          </span>
+        </button>
+      </div>
     </div>
   );
 }

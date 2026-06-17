@@ -9,7 +9,7 @@ use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 const WAKE_RECV_TICK: Duration = Duration::from_millis(100);
 
@@ -165,6 +165,10 @@ fn wake_thread_main(
         }
 
         let resampled = resample_mono_to_16k(&chunk, *sample_rate);
+
+        if let Some(preroll) = app.try_state::<crate::audio::WakePreroll>() {
+            preroll.push_resampled_16k(&resampled);
+        }
 
         match fixed {
             Some(len) => {

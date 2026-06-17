@@ -3,6 +3,7 @@
 #[cfg(windows)]
 mod scanner_windows;
 
+pub mod intent;
 pub mod resolve_target;
 
 use rapidfuzz::fuzz;
@@ -12,6 +13,24 @@ use std::sync::RwLock;
 
 /// Minimum [`fuzz::ratio`] (normalized 0..=1) for a display name / exe stem to count as a match (Phase 4: 0.75).
 pub const APP_RESOLVE_MIN_RATIO: f64 = 0.75;
+
+/// True for Explorer `shell:AppsFolder\...` URIs (UWP). Prefer a real `.exe` when both match.
+pub fn is_shell_apps_folder_path(path: &str) -> bool {
+    path.trim()
+        .to_ascii_lowercase()
+        .starts_with("shell:appsfolder\\")
+}
+
+/// Prefer Win32 `.exe` paths over `shell:AppsFolder` URIs for launch.
+pub fn prefer_launch_path(a: &str, b: &str) -> std::cmp::Ordering {
+    let a_shell = is_shell_apps_folder_path(a);
+    let b_shell = is_shell_apps_folder_path(b);
+    match (a_shell, b_shell) {
+        (true, false) => std::cmp::Ordering::Greater,
+        (false, true) => std::cmp::Ordering::Less,
+        _ => a.len().cmp(&b.len()),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct AppEntry {
@@ -36,7 +55,11 @@ pub fn resolve_app<'a>(query: &str, entries: &'a [AppEntry]) -> Option<&'a AppEn
         }
         let replace = match &best {
             None => true,
-            Some((score, _)) => r > *score + 1e-9,
+            Some((score, prev)) if r > *score + 1e-9 => true,
+            Some((score, prev)) if (r - score).abs() < 1e-9 => {
+                prefer_launch_path(&e.exe_path, &prev.exe_path) == std::cmp::Ordering::Less
+            }
+            _ => false,
         };
         if replace {
             best = Some((r, e));
@@ -190,6 +213,24 @@ impl IconCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_app_prefers_win32_exe_over_shell_uri_at_equal_score() {
+        let entries = vec![
+            AppEntry {
+                display_name: "Notepad".into(),
+                exe_path: "shell:AppsFolder\\Microsoft.WindowsNotepad_8wekyb3d8bbwe!App".into(),
+                icon_data_url: None,
+            },
+            AppEntry {
+                display_name: "Notepad".into(),
+                exe_path: r"C:\Windows\System32\notepad.exe".into(),
+                icon_data_url: None,
+            },
+        ];
+        let hit = resolve_app("notepad", &entries).expect("notepad match");
+        assert!(hit.exe_path.to_ascii_lowercase().ends_with("notepad.exe"));
+    }
 
     #[test]
     fn resolve_app_picks_over_threshold() {

@@ -1,0 +1,172 @@
+[
+  {
+    "id": "trigger_then_echo",
+    "description": "when I say open notepad then open notepad",
+    "mock_output": "{\"kind\":\"command\",\"confidence\":0.9,\"summary\":\"Open Notepad on the left\",\"command\":{\"trigger\":\"open notepad\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"notepad\",\"placement\":\"left_half\"}},{\"open_target\":{\"target\":\"notepad\",\"placement\":\"left_half\"}}]}}",
+    "expect": {
+      "kind": "command",
+      "trigger_phrases": ["open notepad"],
+      "match_mode": "phrase",
+      "action_checks": [
+        {"kind": "open_target", "target": "notepad", "placement": "left_half"}
+      ],
+      "max_actions": 1,
+      "forbid_duplicate_actions": true,
+      "warnings_contain": ["duplicate"]
+    }
+  },
+  {
+    "id": "trigger_quoted",
+    "description": "When I say \"open notepad\", launch notepad",
+    "mock_output": "{\"kind\":\"tool\",\"confidence\":0.8,\"summary\":\"Open notepad\",\"tool\":{\"name\":\"open_notepad\",\"display_name\":\"Open Notepad\",\"description\":\"Launch notepad\",\"parameters\":[],\"actions\":[{\"open_target\":{\"target\":\"notepad\"}}]}}",
+    "expect": {
+      "kind": "command",
+      "trigger_phrases": ["open notepad"],
+      "match_mode": "phrase",
+      "action_checks": [
+        {"kind": "open_target", "target": "notepad"}
+      ],
+      "tool_absent": true
+    }
+  },
+  {
+    "id": "multistep_notepad_paste",
+    "description": "When I say notepad, open notepad in fullscreen and paste \"Hello World\" into a new note.",
+    "mock_output": "{\"kind\":\"command\",\"confidence\":0.9,\"summary\":\"Open Notepad fullscreen and paste Hello World\",\"command\":{\"trigger\":\"notepad\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"notepad\",\"placement\":\"maximize\"}},{\"set_clipboard\":{\"text\":\"Hello World\"}},{\"send_keys\":{\"keys\":\"^v\"}}]}}",
+    "expect": {
+      "kind": "command",
+      "trigger_phrases": ["notepad"],
+      "match_mode": "phrase",
+      "action_checks": [
+        {"kind": "open_target", "target": "notepad", "placement": "maximize"},
+        {"kind": "set_clipboard", "text": "Hello World"},
+        {"kind": "send_keys", "keys": "^v"}
+      ],
+      "max_actions": 3
+    }
+  },
+  {
+    "id": "multistep_new_note",
+    "description": "When I say note, open notepad and create a new note with the text Meeting notes",
+    "mock_output": "{\"kind\":\"command\",\"confidence\":0.88,\"summary\":\"Open Notepad and paste into a new note\",\"command\":{\"trigger\":\"note\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"notepad\"}},{\"send_keys\":{\"keys\":\"^n\"}},{\"set_clipboard\":{\"text\":\"Meeting notes\"}},{\"send_keys\":{\"keys\":\"^v\"}}]}}",
+    "expect": {
+      "kind": "command",
+      "trigger_phrases": ["note"],
+      "match_mode": "phrase",
+      "action_checks": [
+        {"kind": "open_target", "target": "notepad"},
+        {"kind": "send_keys", "keys": "^n"},
+        {"kind": "set_clipboard", "text": "Meeting notes"},
+        {"kind": "send_keys", "keys": "^v"}
+      ],
+      "max_actions": 4
+    }
+  },
+  {
+    "id": "multistep_timer",
+    "description": "When I say timer, open notepad and wait 30 seconds then speak done",
+    "mock_output": "{\"kind\":\"command\",\"confidence\":0.87,\"summary\":\"Open Notepad, pause, speak done\",\"command\":{\"trigger\":\"timer\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"notepad\"}},{\"wait\":{\"ms\":30000}},{\"speak\":{\"text\":\"done\"}}]}}",
+    "expect": {
+      "kind": "command",
+      "trigger_phrases": ["timer"],
+      "match_mode": "phrase",
+      "action_checks": [
+        {"kind": "open_target", "target": "notepad"},
+        {"kind": "wait", "ms": 30000},
+        {"kind": "speak", "text": "done"}
+      ],
+      "max_actions": 3
+    }
+  },
+  {
+    "id": "full_combo",
+    "description": "When I say demo, open notepad fullscreen, create a new note, paste Demo text, wait 2 seconds, then speak finished",
+    "mock_output": "{\"kind\":\"command\",\"confidence\":0.91,\"summary\":\"Full Notepad demo chain\",\"command\":{\"trigger\":\"demo\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"notepad\",\"placement\":\"maximize\"}},{\"send_keys\":{\"keys\":\"^n\"}},{\"set_clipboard\":{\"text\":\"Demo text\"}},{\"send_keys\":{\"keys\":\"^v\"}},{\"wait\":{\"ms\":2000}},{\"speak\":{\"text\":\"finished\"}}]}}",
+    "expect": {
+      "kind": "command",
+      "trigger_phrases": ["demo"],
+      "match_mode": "phrase",
+      "action_checks": [
+        {"kind": "open_target", "target": "notepad", "placement": "maximize"},
+        {"kind": "send_keys", "keys": "^n"},
+        {"kind": "set_clipboard", "text": "Demo text"},
+        {"kind": "send_keys", "keys": "^v"},
+        {"kind": "wait", "ms": 2000},
+        {"kind": "speak", "text": "finished"}
+      ],
+      "max_actions": 6
+    }
+  },
+  {
+    "id": "prefix_remainder",
+    "description": "When I say fetch, get the URL from what I say and open it",
+    "mock_output": "{\"kind\":\"command\",\"confidence\":0.85,\"summary\":\"Fetch URL from speech then open it\",\"command\":{\"trigger\":\"fetch\",\"match_mode\":\"prefix\",\"actions\":[{\"http_get\":{\"url\":\"{{remainder}}\"}},{\"open_target\":{\"target\":\"{{last_result}}\"}}]}}",
+    "expect": {
+      "kind": "command",
+      "trigger_phrases": ["fetch"],
+      "match_mode": "prefix",
+      "action_checks": [
+        {"kind": "http_get", "url": "{{remainder}}"},
+        {"kind": "open_target", "target": "{{last_result}}"}
+      ],
+      "max_actions": 2
+    }
+  },
+  {
+    "id": "no_trigger_tool",
+    "description": "speak whatever I type",
+    "mock_output": "{\"kind\":\"tool\",\"confidence\":0.85,\"summary\":\"Speak arbitrary text\",\"tool\":{\"name\":\"speak_text\",\"display_name\":\"Speak text\",\"description\":\"Speak what the user says\",\"parameters\":[{\"name\":\"text\",\"param_type\":\"string\",\"required\":true}],\"actions\":[{\"speak\":{\"text\":\"{{text}}\"}}]}}",
+    "expect": {
+      "kind": "tool",
+      "tool_name": "speak_text",
+      "tool_display_name": "Speak text",
+      "command_absent": true
+    }
+  },
+  {
+    "id": "wait_chain",
+    "description": "Open Chrome and wait two seconds then speak done",
+    "mock_output": "{\"kind\":\"command\",\"confidence\":0.88,\"summary\":\"Open Chrome, pause, speak\",\"command\":{\"trigger\":\"open chrome\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"chrome\"}},{\"wait\":{\"ms\":2000}},{\"speak\":{\"text\":\"done\"}}]}}",
+    "expect": {
+      "kind": "command",
+      "trigger_phrases": ["open chrome"],
+      "match_mode": "phrase",
+      "action_checks": [
+        {"kind": "open_target", "target": "chrome"},
+        {"kind": "wait", "ms": 2000},
+        {"kind": "speak", "text": "done"}
+      ],
+      "max_actions": 3
+    }
+  },
+  {
+    "id": "placement_from_text",
+    "description": "When I say notepad open notepad in fullscreen",
+    "mock_output": "{\"kind\":\"command\",\"confidence\":0.9,\"summary\":\"Open Notepad fullscreen\",\"command\":{\"trigger\":\"notepad\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"notepad\"}}]}}",
+    "expect": {
+      "kind": "command",
+      "trigger_phrases": ["notepad"],
+      "match_mode": "phrase",
+      "action_checks": [
+        {"kind": "open_target", "target": "notepad", "placement": "maximize"}
+      ],
+      "max_actions": 1
+    }
+  },
+  {
+    "id": "duplicate_guard",
+    "description": "When I say ping, speak hello and speak hello again",
+    "mock_output": "{\"kind\":\"command\",\"confidence\":0.82,\"summary\":\"Speak hello twice\",\"command\":{\"trigger\":\"ping\",\"match_mode\":\"phrase\",\"actions\":[{\"speak\":{\"text\":\"hello\"}},{\"speak\":{\"text\":\"hello\"}}]}}",
+    "expect": {
+      "kind": "command",
+      "trigger_phrases": ["ping"],
+      "match_mode": "phrase",
+      "action_checks": [
+        {"kind": "speak", "text": "hello"}
+      ],
+      "max_actions": 1,
+      "forbid_duplicate_actions": true,
+      "warnings_contain": ["duplicate"]
+    }
+  }
+]

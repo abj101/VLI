@@ -44,9 +44,45 @@ export type CommandAction =
   | { send_keys: { keys: string } }
   | { wait: { ms: number } }
   | { speak: { text: string } }
-  | { sub_prompt: { prompt: string } };
+  | { sub_prompt: { prompt: string } }
+  | { run_command: { command_id: number; input?: string } }
+  | { read_file: { path: string } }
+  | { http_get: { url: string } }
+  | { get_clipboard: Record<string, never> }
+  | { show_notification: { title: string; body: string } }
+  | { text_trim: { text: string } }
+  | { text_match: { pattern: string; text: string } }
+  | { text_split: { delimiter: string; text: string } }
+  | { text_combine: { separator: string } }
+  | { set_clipboard: { text: string } }
+  | { list_folder: { path: string } }
+  | { write_file: { path: string; content: string } }
+  | { get_file_metadata: { path: string } }
+  | { screenshot: { path?: string } }
+  | { device_info: Record<string, never> }
+  | {
+      if_else: {
+        condition: "text_contains" | "regex_match" | "text_is_empty";
+        text: string;
+        pattern: string;
+        then_actions: ActionPayload[];
+        else_actions: ActionPayload[];
+      };
+    };
 
 export type ActionPayload = CommandAction;
+
+export interface TestStepResult {
+  index: number;
+  action_kind: string;
+  status: string;
+  output_preview: string;
+  error?: string | null;
+}
+
+export interface TestCommandResult {
+  steps: TestStepResult[];
+}
 
 /** Editor-only row until the user picks a type; never sent to the backend. */
 export type EditorPendingAction = { editor_pending: Record<string, never> };
@@ -103,6 +139,31 @@ export interface NewToolDefinitionPayload {
   actions: ActionPayload[];
   enabled: boolean;
   builtin?: boolean;
+}
+
+export type ComposerKind = "command" | "tool" | "both";
+
+/** Result of `generate_automation` (command composer). */
+export interface GenerateAutomationResult {
+  kind: ComposerKind;
+  command?: Omit<CommandNodePayload, "id" | "created_at">;
+  tool?: NewToolDefinitionPayload;
+  confidence: number;
+  summary: string;
+  warnings: string[];
+}
+
+/** Status from `composer_status`. */
+export interface ComposerStatus {
+  featureCompiled: boolean;
+  compileBackend: string;
+  runtimeAvailable: boolean;
+  modelPresent: boolean;
+  modelPath: string | null;
+  composerEnabled: boolean;
+  ready: boolean;
+  loading: boolean;
+  message: string | null;
 }
 
 export type ResolvedTargetPreview =

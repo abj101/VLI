@@ -9,8 +9,8 @@ mod tools;
 
 pub use app_index::{load_app_index, replace_app_index};
 pub use models::{
-    Action, CommandNode, MatchMode, NewCommandNode, NewToolDefinition, ToolDefinition,
-    ToolParameter,
+    Action, CommandNode, IfConditionKind, MatchMode, NewCommandNode, NewToolDefinition,
+    ToolDefinition, ToolParameter,
 };
 pub use registered_scripts::{
     get_registered_script, verify_registered_script_file,

@@ -6,6 +6,26 @@ export type ResolvedEditorTheme = "dark" | "light";
 /** Matches `stt_provider` in SQLite / `AppSettings.stt_provider`. */
 export type SttProvider = "local" | "os" | "remote";
 
+/** Matches `local_whisper_model` in SQLite / `AppSettings.localWhisperModel`. */
+export type LocalWhisperModelId = "tiny.en" | "base.en" | "small.en";
+
+export const LOCAL_WHISPER_MODEL_OPTIONS: ReadonlyArray<{
+  value: LocalWhisperModelId;
+  label: string;
+}> = [
+  { value: "tiny.en", label: "Tiny — fastest, least accurate" },
+  { value: "base.en", label: "Base — balanced (recommended)" },
+  { value: "small.en", label: "Small — most accurate, slowest" },
+] as const;
+
+export function normalizeLocalWhisperModel(
+  raw: string | null | undefined,
+): LocalWhisperModelId {
+  const s = (raw ?? "").trim();
+  if (s === "base.en" || s === "small.en") return s;
+  return "tiny.en";
+}
+
 export function normalizeSttProvider(raw: string | null | undefined): SttProvider {
   const s = (raw ?? "").trim().toLowerCase();
   if (s === "os" || s === "remote") return s;

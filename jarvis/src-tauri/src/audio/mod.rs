@@ -1,6 +1,7 @@
 //! Mic capture (cpal) + STT pipeline (Whisper local / OS stub / remote HTTP) (Phase 4).
 
 pub mod capture;
+pub mod preroll;
 pub mod stt;
 pub mod transcription;
 pub mod tts;
@@ -21,6 +22,7 @@ use capture::CaptureSession;
 use stt::{load_whisper_context_serialized, resolve_whisper_model_path, spawn_stt_thread};
 use transcription::{spawn_os_stt_thread, spawn_remote_stt_thread};
 
+pub use preroll::WakePreroll;
 pub use transcription::RemoteSttParams;
 
 /// When true, the wake thread releases the default mic so the listen pipeline can open it.
@@ -48,10 +50,12 @@ pub struct AudioPipeline {
 
 impl AudioPipeline {
     /// Starts default input → PCM channel. STT worker depends on `choice`; mic + amplitude run if capture succeeds.
+    /// `wake_preroll_16k` — recent wake-mic audio at 16 kHz (mono f32) to seed Whisper after wake word.
     pub fn start(
         app: &AppHandle,
         hud_session_id: u64,
         choice: SttPipelineChoice,
+        wake_preroll_16k: Vec<f32>,
     ) -> Result<Self, String> {
         let (pcm_tx, pcm_rx) = std::sync::mpsc::channel();
         let (capture, sample_rate) = capture::start_capture(app.clone(), pcm_tx)?;
@@ -104,6 +108,7 @@ impl AudioPipeline {
                                     sample_rate,
                                     hud_session_id,
                                     effective_gpu,
+                                    wake_preroll_16k,
                                 );
                                 std::mem::forget(inner);
                             }

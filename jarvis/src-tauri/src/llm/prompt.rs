@@ -74,7 +74,11 @@ Rules:
 - Each "args" object must match that tool's parameter schema.
 - "confidence" is how sure you are about the whole plan (0.0–1.0).
 - Omit optional args when not needed.
-- If nothing matches, use the closest tool with low confidence."#;
+- If nothing matches, use the closest tool with low confidence.
+- Use `open_target` for app names and generic "open X" intents (installed apps, programs).
+- Use `open_url` only when the transcript contains an explicit URL or domain (e.g. contains `.com`, `http://`, `https://`, `www.`).
+- Never invent URLs from app names (do not guess `https://{name}.com`).
+- When unsure between app and site, prefer `open_target` with lower confidence rather than guessing a URL."#;
 
 /// Full prompt text for local inference (chat template applied separately when available).
 pub fn build_router_prompt(transcript: &str, tools: &[ToolDefinition]) -> String {

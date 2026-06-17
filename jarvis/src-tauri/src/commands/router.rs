@@ -7,16 +7,18 @@ use crate::{
     commands::{
         executor::{ActionRuntime, TauriActionRuntime},
         execute_command_with_context, execute_tool, match_command, matcher::MatchResult,
+        open_target::execute_open_target_with_aliases,
         ToolCallContext,
     },
-    db::{self, get_all_tools, get_app_settings, CommandNode},
+    apps::intent::{classify_open_target, parse_open_intent, OpenIntent},
+    db::{self, get_all_tools, get_app_settings, get_all_target_aliases, CommandNode},
     finalize_command_run,
     hide_hud_window,
     hud::HudPhase,
     llm::{
         infer_router_completion, llm_compile_backend, llm_gpu_runtime_available,
-        resolve_router_model_path, route_transcript_with_infer, RouterError, RouterErrorCode,
-        RouterInfer, RouterRouteResult,
+        normalize_router_tool_calls, resolve_router_model_path, route_transcript_with_infer,
+        RouterError, RouterErrorCode, RouterInfer, RouterRouteResult,
     },
     load_default_fuzzy_threshold_pct,
     open_db_connection,
@@ -320,6 +322,26 @@ fn execute_tier2_route(
     route: RouterRouteResult,
 ) -> Result<(), String> {
     route_commit_gate(rt)?;
+    let app_index_snapshot = {
+        let st = app.state::<AppIndexStore>();
+        let guard = st
+            .read()
+            .map_err(|_| "app index lock poisoned".to_string())?;
+        guard.clone()
+    };
+    let aliases = open_db_connection(app)
+        .ok()
+        .and_then(|conn| get_all_target_aliases(&conn).ok())
+        .unwrap_or_default();
+    let route = RouterRouteResult {
+        tool_calls: normalize_router_tool_calls(
+            route.tool_calls,
+            app_index_snapshot.as_slice(),
+            &aliases,
+        )
+        .map_err(|e| e.message)?,
+        confidence: route.confidence,
+    };
     info!(
         "flow: ROUTE steps={} confidence={:.2}",
         route.tool_calls.len(),
@@ -333,13 +355,6 @@ fn execute_tier2_route(
         }),
     );
     let (executing_session_id, cancel_flag) = begin_execution_session(app, rt, audio, true)?;
-    let app_index_snapshot = {
-        let st = app.state::<AppIndexStore>();
-        let guard = st
-            .read()
-            .map_err(|_| "app index lock poisoned".to_string())?;
-        guard.clone()
-    };
     let app_h = app.clone();
     let rt_h = Arc::clone(rt);
     let audio_h = audio.clone();
@@ -404,13 +419,111 @@ fn begin_tier2_routing(
     Ok(routing_session_id)
 }
 
-/// Tier 1 trigger match → Tier 2 LLM router → tool execution (Tier 3 clarify inside `open_target`).
+/// Tier 0: deterministic `open {target}` preflight before phrase match / LLM.
+pub(crate) fn tier0_open_classification(
+    text: &str,
+    app_index: &[crate::apps::AppEntry],
+    aliases: &[db::TargetAlias],
+) -> Option<Result<OpenIntent, String>> {
+    let (target, placement) = parse_open_intent(text)?;
+    let intent = classify_open_target(&target, placement, app_index, aliases);
+    Some(match intent {
+        OpenIntent::Unknown { target } => Err(format!("Couldn't find {target}")),
+        other => Ok(other),
+    })
+}
+
+fn try_tier0_open_intent(
+    app: &AppHandle,
+    rt: &SharedHud,
+    audio: &SharedAudioPipeline,
+    text: &str,
+) -> Option<Result<(), String>> {
+    let app_index_snapshot = {
+        let st = app.state::<AppIndexStore>();
+        let guard = st.read().ok()?;
+        guard.clone()
+    };
+    let aliases = open_db_connection(app)
+        .ok()
+        .and_then(|conn| get_all_target_aliases(&conn).ok())
+        .unwrap_or_default();
+    let classification = tier0_open_classification(text, app_index_snapshot.as_slice(), &aliases)?;
+
+    listening_gate(rt).ok()?;
+    info!("flow: TIER0 open intent");
+
+    if let Err(message) = &classification {
+        let _ = set_phase(app, rt, HudPhase::Matched).ok()?;
+        let _ = app.emit("action-error", serde_json::json!({ "message": message }));
+        finalize_command_run(app, rt, audio);
+        return Some(Ok(()));
+    }
+    let intent = classification.expect("checked Err branch above");
+
+    let _ = set_phase(app, rt, HudPhase::Matched).ok()?;
+
+    let (executing_session_id, cancel_flag) = begin_execution_session(app, rt, audio, false).ok()?;
+    let app_h = app.clone();
+    let rt_h = Arc::clone(rt);
+    let audio_h = audio.clone();
+    let index = app_index_snapshot;
+    let alias_snapshot = aliases;
+
+    spawn_action_run(&app_h.clone(), &rt_h.clone(), &audio_h.clone(), move || {
+        let runtime = follow_up_runtime(
+            &app_h,
+            &rt_h,
+            &audio_h,
+            executing_session_id,
+            cancel_flag,
+        );
+        let conn = match open_db_connection(&app_h) {
+            Ok(c) => c,
+            Err(err) => {
+                runtime.emit_error(&err);
+                return;
+            }
+        };
+        let result = match intent {
+            OpenIntent::App { target, placement, .. } => execute_open_target_with_aliases(
+                &target,
+                placement.as_deref(),
+                &alias_snapshot,
+                &runtime,
+                Some(index.as_slice()),
+            ),
+            OpenIntent::Url { url, placement } => {
+                use std::collections::HashMap;
+                let mut args = HashMap::from([("url".to_string(), url)]);
+                if let Some(p) = placement.filter(|z| !z.trim().is_empty()) {
+                    args.insert("placement".to_string(), p);
+                }
+                execute_tool(&conn, "open_url", &args, &runtime, Some(index.as_slice()))
+                    .map(|_| "Opening URL…".to_string())
+            }
+            OpenIntent::Unknown { .. } => unreachable!("tier0 rejects Unknown before execution"),
+        };
+        if let Err(err) = result {
+            if err != ACTION_RUN_CANCELLED_MSG {
+                runtime.emit_error(&err);
+            }
+        }
+    });
+    Some(Ok(()))
+}
+
+/// Tier 0 open preflight → Tier 1 trigger match → Tier 2 LLM router → tool execution (Tier 3 clarify inside `open_target`).
 pub fn try_route_and_execute(
     app: &AppHandle,
     rt: &SharedHud,
     audio: &SharedAudioPipeline,
     text: &str,
 ) -> Result<(), String> {
+    if let Some(tier0) = try_tier0_open_intent(app, rt, audio, text) {
+        return tier0;
+    }
+
     let command_cache = app.state::<CommandCache>();
     let nodes = read_command_cache(&command_cache)?;
     let default_threshold_pct = load_default_fuzzy_threshold_pct(app);
@@ -485,7 +598,10 @@ pub fn try_route_and_execute(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::executor::ActionRuntime;
+    use crate::apps::intent::OpenIntent;
+    use crate::apps::AppEntry;
+    use crate::commands::router::tier0_open_classification;
+    use crate::llm::intent_validate::normalize_router_tool_calls;
     use crate::db::{init_db, Action, MatchMode};
     use crate::llm::router::RouterInfer;
     use rusqlite::Connection;
@@ -625,14 +741,57 @@ mod tests {
     }
 
     #[test]
+    fn tier0_open_brave_resolves_to_app_intent() {
+        let index = vec![AppEntry {
+            display_name: "Brave".into(),
+            exe_path: r"C:\Brave\brave.exe".into(),
+            icon_data_url: None,
+        }];
+        let result = tier0_open_classification("open brave", &index, &[]).expect("tier0 hit");
+        assert!(matches!(result, Ok(OpenIntent::App { .. })));
+    }
+
+    #[test]
+    fn tier0_open_unknown_fails_fast() {
+        let result = tier0_open_classification("open foobar", &[], &[]).expect("tier0 hit");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("foobar"));
+    }
+
+    #[test]
+    fn tier0_skips_non_open_phrasing() {
+        assert!(tier0_open_classification("put slack on the left", &[], &[]).is_none());
+    }
+
+    #[test]
+    fn tier2_post_validate_rewrites_open_url_app_name() {
+        let index = vec![AppEntry {
+            display_name: "Brave".into(),
+            exe_path: r"C:\Brave\brave.exe".into(),
+            icon_data_url: None,
+        }];
+        let calls = vec![crate::llm::router::RouterToolCall {
+            tool: "open_url".into(),
+            args: HashMap::from([("url".into(), "brave".into())]),
+        }];
+        let normalized = normalize_router_tool_calls(calls, &index, &[]).expect("normalized");
+        assert_eq!(normalized[0].tool, "open_target");
+    }
+
+    #[test]
     fn execute_tool_open_target_from_router_args() {
         let (_dir, conn) = test_conn();
         let runtime = MockRuntime::default();
+        let index = vec![AppEntry {
+            display_name: "GitHub".into(),
+            exe_path: "GitHubDesktop.exe".into(),
+            icon_data_url: None,
+        }];
         let args = HashMap::from([
             ("target".to_string(), "github".to_string()),
             ("placement".to_string(), "right_half".to_string()),
         ]);
-        execute_tool(&conn, "open_target", &args, &runtime, None).expect("tool run");
+        execute_tool(&conn, "open_target", &args, &runtime, Some(index.as_slice())).expect("tool run");
         assert!(runtime.state.lock().unwrap().errors.is_empty());
     }
 }

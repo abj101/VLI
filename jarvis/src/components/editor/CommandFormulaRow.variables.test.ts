@@ -27,8 +27,17 @@ describe("CommandFormulaRow variable helpers", () => {
   });
 
   it("includes remainder token when prefix mode is enabled", () => {
-    const labels = deriveFormulaVariableLabels([], true);
-    expect(labels).toEqual(["{{remainder}}"]);
+    const labels = deriveFormulaVariableLabels([], true, 0);
+    expect(labels).toEqual(["{{last_result}}", "{{remainder}}", "{{shortcut_input}}"]);
+  });
+
+  it("lists prior step refs for later actions", () => {
+    const actions: FormActionPayload[] = [
+      { speak: { text: "one" } },
+      { open_url: { url: "" } },
+    ];
+    const labels = deriveFormulaVariableLabels(actions, false, 1);
+    expect(labels).toEqual(["{{last_result}}", "{{step_1}}"]);
   });
 
   it("extracts template token context at caret", () => {

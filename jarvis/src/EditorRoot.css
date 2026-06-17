@@ -1087,6 +1087,48 @@ html[data-theme="dark"] .editor-select-menu {
   color: var(--editor-text);
 }
 
+/* Formula / tools inline: match glass chip controls, not full-width settings rows */
+.editor-select-wrap--formula {
+  width: auto;
+  max-width: 100%;
+  flex: 0 1 auto;
+  align-self: center;
+}
+
+.editor-select-wrap--formula .editor-select-trigger {
+  width: auto;
+  min-width: 0;
+  max-width: min(28ch, 100%);
+  height: auto;
+  min-height: var(--editor-control-size);
+  border: 1px solid color-mix(in oklch, var(--glass-text) 14%, transparent);
+  background: color-mix(in oklch, var(--glass-surface) 35%, transparent);
+  box-shadow: inset 0 1px 3px oklch(0 0 0 / 0.08);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.editor-select-wrap--formula .editor-select-value {
+  text-align: center;
+}
+
+.editor-select-wrap--formula .editor-select-trigger:focus-visible,
+.editor-select-wrap--formula .editor-select-trigger.is-open {
+  outline: none;
+  border-color: color-mix(in oklch, var(--glass-text) 30%, transparent);
+  box-shadow:
+    inset 0 1px 3px oklch(0 0 0 / 0.08),
+    0 0 0 2px color-mix(in oklch, var(--glass-text) 14%, transparent);
+}
+
+html[data-theme="dark"] .editor-select-wrap--formula .editor-select-trigger:focus-visible,
+html[data-theme="dark"] .editor-select-wrap--formula .editor-select-trigger.is-open {
+  border-color: color-mix(in oklch, var(--color-accent) 38%, var(--editor-control-border));
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, var(--glass-text) 8%, transparent),
+    0 0 0 2px color-mix(in oklch, var(--color-accent) 22%, transparent);
+}
+
 .editor-form-grid .editor-select-trigger,
 .editor-action-card .editor-select-trigger,
 .editor-subprompt-panel .editor-select-trigger {
@@ -1870,6 +1912,17 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   color: var(--editor-settings-help);
 }
 
+.editor-settings-hint {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--editor-settings-help);
+}
+
+.editor-settings-hint code {
+  font-size: 10px;
+}
+
 .editor-settings-embedded .editor-settings-pane--solo:has(.editor-settings-content--recognition),
 .editor-settings-embedded .editor-settings-pane--solo:has(.editor-settings-content--hotkeys) {
   padding-block: 10px;
@@ -2221,7 +2274,8 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   min-height: 20px;
 }
 
-.editor-settings-spinner {
+/* Shared ring spinner — use via EditorSpinner (.editor-spinner). */
+.editor-spinner {
   width: 14px;
   height: 14px;
   flex-shrink: 0;
@@ -2229,6 +2283,13 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   border: 2px solid color-mix(in oklch, var(--editor-settings-help) 25%, transparent);
   border-top-color: color-mix(in oklch, var(--editor-accent) 68%, var(--editor-settings-help));
   animation: editor-settings-spin 720ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-spinner {
+    animation: none;
+    opacity: 0.85;
+  }
 }
 
 @keyframes editor-settings-spin {
@@ -2537,6 +2598,8 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  container-type: inline-size;
+  container-name: command-card;
 }
 
 .editor-command-card:hover {
@@ -2548,10 +2611,87 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
 }
 
 .editor-command-formula {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, max-content) auto minmax(0, 1fr) auto;
+  align-items: start;
   gap: 8px 10px;
+}
+
+.editor-formula-trigger-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  max-width: min(22ch, 100%);
+}
+
+.editor-formula-trigger-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.editor-formula-trigger-head .editor-formula-input--phrase {
+  flex: 1 1 auto;
+  min-width: 4.5ch;
+  max-width: 14ch;
+}
+
+.editor-prefix-mode-toggle {
+  position: relative;
+  flex: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.editor-prefix-mode-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.editor-prefix-mode-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: var(--radius-chip-pill);
+  border: 1px solid var(--editor-control-border);
+  background: color-mix(in oklch, var(--editor-control-bg) 72%, transparent);
+  color: var(--editor-label-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.editor-prefix-mode-toggle:hover .editor-prefix-mode-chip {
+  border-color: color-mix(in oklch, var(--editor-accent) 38%, var(--editor-control-border));
+  color: var(--editor-control-text);
+}
+
+.editor-prefix-mode-toggle.is-on .editor-prefix-mode-chip {
+  border-color: color-mix(in oklch, var(--editor-accent) 52%, var(--editor-control-border));
+  background: color-mix(in oklch, var(--editor-accent-soft) 58%, var(--editor-control-bg));
+  color: var(--editor-control-text);
+}
+
+.editor-prefix-mode-input:focus-visible + .editor-prefix-mode-chip {
+  outline: 2px solid var(--editor-focus-ring);
+  outline-offset: 2px;
 }
 
 .editor-formula-input:not(.editor-commands-search) {
@@ -2687,6 +2827,8 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   color: var(--editor-muted);
   line-height: var(--editor-control-leading);
   padding: 0 2px;
+  align-self: start;
+  margin-top: calc((var(--editor-control-size) - 1em * var(--editor-control-leading)) / 2);
 }
 
 .editor-formula-muted {
@@ -2699,16 +2841,19 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  align-content: flex-start;
   gap: 6px 8px;
-  flex: 1 1 240px;
   min-width: 0;
+  align-self: start;
+  margin-top: calc((var(--editor-control-size) - 1em * var(--editor-control-leading)) / 2);
 }
 
 .editor-formula-segment-wrap {
-  display: flex;
-  flex-wrap: wrap;
+  display: inline-flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
+  max-width: 100%;
 }
 
 .editor-formula-arrow {
@@ -2780,6 +2925,50 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   white-space: nowrap;
   width: 100%;
   text-align: center;
+}
+
+.editor-formula-ifelse-branches {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  margin-top: 6px;
+  padding-left: 12px;
+  border-left: 2px solid color-mix(in oklch, var(--editor-muted) 28%, transparent);
+}
+
+.editor-formula-branch {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.editor-formula-branch-bridge {
+  width: 100%;
+  max-width: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  pointer-events: none;
+}
+
+.editor-formula-branch-chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding-left: 4px;
+}
+
+.editor-formula-branch-segment-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .editor-formula-kind-wrap,
@@ -3166,7 +3355,60 @@ html[data-theme="dark"] .editor-formula-suggest {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
+  align-self: start;
+  margin-top: calc((var(--editor-control-size) - 26px) / 2);
+}
+
+.editor-formula-input--test {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  min-height: 30px;
+  padding-block: 5px;
+  text-align: start;
+  font-size: 12px;
+}
+
+.editor-formula-run {
+  box-sizing: border-box;
+  min-height: var(--editor-control-size);
+  padding: 0 10px;
+  border: 1px solid var(--editor-border);
+  border-radius: var(--radius-control);
+  background: var(--editor-surface-raised);
+  color: var(--editor-text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.editor-formula-run:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.editor-formula-run-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.editor-formula-run-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--editor-surface-raised);
+  color: var(--editor-muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-formula-run-chip.is-error {
+  color: var(--editor-error-text);
 }
 
 .editor-command-delete {
@@ -3305,6 +3547,8 @@ html[data-theme="dark"] .editor-formula-suggest {
   gap: 4px;
   align-items: center;
   flex-wrap: wrap;
+  align-self: start;
+  margin-top: calc((var(--editor-control-size) - 26px) / 2);
 }
 
 .editor-command-draft-actions .editor-command-draft-icon-btn,
@@ -3354,8 +3598,220 @@ html[data-theme="dark"] .editor-formula-suggest {
   cursor: not-allowed;
 }
 
-.editor-command-item--draft .editor-command-formula {
+.editor-command-item--draft .editor-composer-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  border-radius: var(--editor-radius-md, 10px);
+  background: color-mix(in oklch, var(--color-surface-elevated) 92%, var(--editor-accent) 8%);
+  border: 1px solid color-mix(in oklch, var(--editor-control-border) 70%, transparent);
+}
+
+.editor-composer-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--editor-control-text);
+}
+
+.editor-composer-input,
+.editor-composer-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--editor-control-text);
+  background: color-mix(in oklch, var(--editor-control-bg) 88%, var(--color-surface-main));
+  border: 1px solid var(--editor-control-border);
+  border-radius: 8px;
+}
+
+.editor-composer-input {
+  min-height: 0;
+}
+
+.editor-composer-input:focus,
+.editor-composer-textarea:focus {
+  outline: none;
+  border-color: color-mix(in oklch, var(--editor-accent) 55%, var(--editor-control-border));
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--editor-accent) 22%, transparent);
+}
+
+.editor-composer-textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.editor-composer-actions {
+  display: flex;
   align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.editor-composer-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.editor-composer-btn--secondary {
+  color: var(--editor-control-text);
+  background: color-mix(in oklch, var(--editor-control-bg) 90%, transparent);
+  border-color: var(--editor-control-border);
+}
+
+.editor-composer-btn--secondary:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--editor-control-text) 6%, var(--editor-control-bg));
+}
+
+.editor-composer-btn--ghost {
+  color: var(--editor-settings-help);
+  background: transparent;
+  border-color: transparent;
+}
+
+.editor-composer-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.editor-composer-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 20px;
+  font-size: 12px;
+  color: var(--editor-settings-help);
+}
+
+.editor-composer-summary {
+  color: var(--editor-control-text);
+  font-weight: 500;
+}
+
+.editor-composer-warning {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: color-mix(in oklch, var(--color-accent-soft-hex, var(--editor-accent)) 18%, transparent);
+  color: var(--editor-control-text);
+}
+
+.editor-composer-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--editor-settings-help);
+}
+
+.editor-composer-tool-only {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px 14px;
+}
+
+.editor-composer-tool-preview,
+.editor-composer-tool-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: color-mix(in oklch, var(--color-accent-soft-hex, var(--editor-accent)) 14%, transparent);
+  border: 1px solid color-mix(in oklch, var(--editor-accent) 18%, transparent);
+}
+
+.editor-composer-tool-callout {
+  margin-bottom: 10px;
+  grid-column: 1 / -1;
+}
+
+@container command-card (max-width: 520px) {
+  .editor-command-formula {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "trigger trigger"
+      "eq chain"
+      "trail trail";
+  }
+
+  .editor-command-formula > .editor-formula-trigger-wrap {
+    grid-area: trigger;
+    max-width: none;
+  }
+
+  .editor-command-formula > .editor-formula-eq {
+    grid-area: eq;
+    margin-top: 0;
+    align-self: center;
+  }
+
+  .editor-command-formula > .editor-formula-chain {
+    grid-area: chain;
+    margin-top: 0;
+  }
+
+  .editor-command-formula > .editor-command-trail,
+  .editor-command-formula > .editor-command-draft-actions {
+    grid-area: trail;
+    justify-self: end;
+    margin-top: 0;
+  }
+}
+
+.editor-composer-tool-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--editor-settings-label);
+}
+
+.editor-composer-tool-meta,
+.editor-composer-tool-desc,
+.editor-composer-tool-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--editor-settings-help);
+  line-height: 1.45;
+}
+
+.editor-composer-tool-meta code {
+  font-size: 11px;
+}
+
+.editor-command-formula--revealed {
+  animation: editor-composer-reveal 280ms ease both;
+}
+
+@keyframes editor-composer-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-command-formula--revealed {
+    animation: none;
+  }
+}
+
+.editor-command-item--draft .editor-command-formula {
+  align-items: start;
 }
 
 /* macOS-style switch */
@@ -3401,203 +3857,6 @@ html[data-theme="dark"] .editor-switch:not(.is-on) .editor-switch-knob {
   transform: translateX(18px);
 }
 
-/* --- Tools tab --- */
-
-.editor-tools-tab {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.editor-tools-toolbar {
-  align-items: center;
-}
-
-.editor-tools-title {
-  margin: 0;
-  flex: 1;
-  font-size: 0.95rem;
-  font-weight: 600;
-}
-
-.editor-tools-layout {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
-  overflow: hidden;
-}
-
-.editor-tools-list {
-  list-style: none;
-  margin: 0;
-  padding: 8px;
-  border-right: 1px solid color-mix(in oklch, var(--editor-header-border) 65%, transparent);
-  overflow: auto;
-}
-
-.editor-tools-list-btn {
-  width: 100%;
-  text-align: start;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  padding: 8px 10px;
-  cursor: pointer;
-}
-
-.editor-tools-list-btn.is-active,
-.editor-tools-list-btn:hover {
-  background: color-mix(in oklch, var(--color-surface-elevated) 80%, transparent);
-  border-color: color-mix(in oklch, var(--editor-header-border) 55%, transparent);
-}
-
-.editor-tools-list-name {
-  display: block;
-  font-weight: 600;
-  font-size: 0.88rem;
-}
-
-.editor-tools-list-meta {
-  display: block;
-  margin-top: 2px;
-  font-size: 0.75rem;
-  opacity: 0.72;
-}
-
-.editor-tools-editor {
-  padding: 12px 14px 16px;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.editor-tools-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 0.82rem;
-}
-
-.editor-tools-textarea {
-  min-height: 72px;
-  resize: vertical;
-}
-
-.editor-tools-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.editor-tools-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.editor-tools-section-head h3,
-.editor-tools-test-panel h3 {
-  margin: 0;
-  font-size: 0.88rem;
-}
-
-.editor-tools-param-row {
-  display: grid;
-  grid-template-columns: 1fr 100px auto;
-  gap: 8px;
-  align-items: center;
-}
-
-.editor-tools-param-enum {
-  grid-column: 1 / -1;
-}
-
-.editor-tools-param-required {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.78rem;
-  white-space: nowrap;
-}
-
-.editor-tools-param-remove,
-.editor-tools-inline-btn {
-  border: 1px solid color-mix(in oklch, var(--editor-header-border) 70%, transparent);
-  border-radius: 6px;
-  background: transparent;
-  color: inherit;
-  padding: 6px 10px;
-  cursor: pointer;
-  font-size: 0.8rem;
-}
-
-.editor-tools-actions-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.editor-tools-hint {
-  margin: 0;
-  font-size: 0.8rem;
-  opacity: 0.78;
-}
-
-.editor-tools-test-panel {
-  margin-top: 8px;
-  padding-top: 12px;
-  border-top: 1px solid color-mix(in oklch, var(--editor-header-border) 65%, transparent);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.editor-tools-test-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.editor-tools-test-row .editor-formula-input {
-  flex: 1;
-}
-
-.editor-tools-preview {
-  margin: 0;
-  display: grid;
-  gap: 6px;
-  font-size: 0.84rem;
-}
-
-.editor-tools-preview div {
-  display: grid;
-  grid-template-columns: 88px 1fr;
-  gap: 8px;
-}
-
-.editor-tools-preview dt {
-  margin: 0;
-  opacity: 0.72;
-}
-
-.editor-tools-preview dd {
-  margin: 0;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  word-break: break-word;
-}
-
-.editor-tools-preview-error {
-  margin: 0;
-  color: var(--color-danger, #c44);
-  font-size: 0.82rem;
-}
-
 .editor-formula-arg-wrap--with-placement {
   display: flex;
   flex-wrap: wrap;
@@ -3606,7 +3865,17 @@ html[data-theme="dark"] .editor-switch:not(.is-on) .editor-switch-knob {
   min-width: 0;
 }
 
-.editor-tools-placement-select {
+.editor-placement-select {
+  min-width: 132px;
+  max-width: 180px;
+}
+
+.editor-select-wrap--formula.editor-placement-select {
+  width: auto;
+}
+
+.editor-select-wrap--formula.editor-placement-select .editor-select-trigger {
+  width: 100%;
   min-width: 132px;
   max-width: 180px;
 }

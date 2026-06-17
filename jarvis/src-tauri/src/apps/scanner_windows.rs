@@ -12,7 +12,7 @@
 //!   9. Windows accessories seed  (Notepad, Paint, …)
 //!  10. Recursive exe scan — Program Files + LocalAppData\Programs (depth ≤ 6)
 
-use super::AppEntry;
+use super::{prefer_launch_path, AppEntry};
 use base64::Engine;
 use std::collections::HashMap;
 use std::os::windows::ffi::OsStrExt;
@@ -2216,6 +2216,10 @@ fn dedupe_by_display_name(map: &mut HashMap<String, MapEntry>) {
     }
     for group in groups.into_values() {
         let best = group.into_iter().min_by(|(_, a), (_, b)| {
+            let path_cmp = prefer_launch_path(&a.inner.exe_path, &b.inner.exe_path);
+            if path_cmp != std::cmp::Ordering::Equal {
+                return path_cmp;
+            }
             match a.priority.cmp(&b.priority) {
                 std::cmp::Ordering::Equal => path_dedupe_score(&b.inner.exe_path)
                     .cmp(&path_dedupe_score(&a.inner.exe_path)),

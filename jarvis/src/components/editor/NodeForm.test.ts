@@ -123,5 +123,58 @@ describe("NodeForm logic", () => {
     expect(defaultActionForKind("speak")).toEqual({ speak: { text: "" } });
     expect(defaultActionForKind("wait")).toEqual({ wait: { ms: 0 } });
     expect(defaultActionForKind("sub_prompt")).toEqual({ sub_prompt: { prompt: "" } });
+    expect(defaultActionForKind("text_match")).toEqual({
+      text_match: { pattern: "", text: "" },
+    });
+    expect(defaultActionForKind("text_combine")).toEqual({ text_combine: { separator: "" } });
+    expect(defaultActionForKind("list_folder")).toEqual({ list_folder: { path: "" } });
+    expect(defaultActionForKind("write_file")).toEqual({
+      write_file: { path: "", content: "" },
+    });
+    expect(defaultActionForKind("device_info")).toEqual({ device_info: {} });
+  });
+
+  it("requires folder path on list_folder actions", () => {
+    const errors = validateFormModel({
+      id: null,
+      triggerPhrases: ["browse"],
+      enabled: true,
+      actions: [{ list_folder: { path: "  " } }],
+    });
+    expect(errors.actionErrors[0]).toBe("Folder path is required.");
+    expect(hasBlockingErrors(errors)).toBe(true);
+  });
+
+  it("requires file path on write_file actions", () => {
+    const errors = validateFormModel({
+      id: null,
+      triggerPhrases: ["save"],
+      enabled: true,
+      actions: [{ write_file: { path: "", content: "{{last_result}}" } }],
+    });
+    expect(errors.actionErrors[0]).toBe("File path is required.");
+    expect(hasBlockingErrors(errors)).toBe(true);
+  });
+
+  it("requires regex pattern on text_match actions", () => {
+    const errors = validateFormModel({
+      id: null,
+      triggerPhrases: ["parse"],
+      enabled: true,
+      actions: [{ text_match: { pattern: "  ", text: "" } }],
+    });
+    expect(errors.actionErrors[0]).toBe("Regex pattern is required.");
+    expect(hasBlockingErrors(errors)).toBe(true);
+  });
+
+  it("requires delimiter on text_split actions", () => {
+    const errors = validateFormModel({
+      id: null,
+      triggerPhrases: ["split"],
+      enabled: true,
+      actions: [{ text_split: { delimiter: "", text: "{{last_result}}" } }],
+    });
+    expect(errors.actionErrors[0]).toBe("Delimiter is required.");
+    expect(hasBlockingErrors(errors)).toBe(true);
   });
 });

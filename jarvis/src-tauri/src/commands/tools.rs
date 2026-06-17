@@ -3,6 +3,7 @@
 use crate::{
     apps::AppEntry,
     commands::{
+        execution_context::ExecutionContext,
         executor::{execute_resolved_actions, resolve_action_templates, ToolCallContext},
         open_target::execute_open_target_tool,
     },
@@ -18,9 +19,10 @@ use std::collections::HashMap;
 /// Replace `{{param_name}}` placeholders in each action using the supplied argument map.
 pub fn substitute_tool_args(actions: &[Action], args: &HashMap<String, String>) -> Vec<Action> {
     let ctx = ToolCallContext::from_args(args);
+    let exec_ctx = ExecutionContext::from_tool_context(Some(&ctx));
     actions
         .iter()
-        .map(|action| resolve_action_templates(action, &[], Some(&ctx)))
+        .map(|action| resolve_action_templates(action, &exec_ctx, Some(&ctx)))
         .collect()
 }
 

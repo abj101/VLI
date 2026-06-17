@@ -106,6 +106,63 @@ pub enum Action {
     Wait { ms: u64 },
     Speak { text: String },
     SubPrompt { prompt: String },
+    /// Run another command's action chain; `input` becomes nested `shortcut_input`.
+    RunCommand {
+        command_id: i64,
+        #[serde(default)]
+        input: Option<String>,
+    },
+    /// Read a text file from disk; output is file contents.
+    ReadFile { path: String },
+    /// HTTP GET request; output is response body text.
+    HttpGet { url: String },
+    /// Read plain text from the system clipboard.
+    GetClipboard {},
+    /// Show a desktop notification; output is Nothing.
+    ShowNotification { title: String, body: String },
+    /// Trim leading/trailing whitespace from text.
+    TextTrim { text: String },
+    /// Regex match; output is first capture group or full match.
+    TextMatch { pattern: String, text: String },
+    /// Split text by delimiter; output is a list of text segments.
+    TextSplit { delimiter: String, text: String },
+    /// Join prior list (or pass through text) with a separator.
+    TextCombine { separator: String },
+    /// Write plain text to the system clipboard; output is Nothing.
+    SetClipboard { text: String },
+    /// List entries in a directory; output is a List of entry names.
+    ListFolder { path: String },
+    /// Write text to a file; output is Nothing.
+    WriteFile { path: String, content: String },
+    /// Read file metadata; output is a Dict.
+    GetFileMetadata { path: String },
+    /// Capture the primary display; output is a FilePath to a PNG.
+    Screenshot {
+        #[serde(default)]
+        path: Option<String>,
+    },
+    /// CPU and memory snapshot; output is a Dict.
+    DeviceInfo {},
+    /// Branch on a text condition; runs `then_actions` or `else_actions`.
+    IfElse {
+        condition: IfConditionKind,
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        pattern: String,
+        then_actions: Vec<Action>,
+        #[serde(default)]
+        else_actions: Vec<Action>,
+    },
+}
+
+/// Condition kinds for [`Action::IfElse`] (v1 logic).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IfConditionKind {
+    TextContains,
+    RegexMatch,
+    TextIsEmpty,
 }
 
 #[cfg(test)]
@@ -161,6 +218,24 @@ mod tests {
     }
 
     #[test]
+    fn if_else_action_round_trip() {
+        let a = Action::IfElse {
+            condition: IfConditionKind::TextContains,
+            text: "{{last_result}}".into(),
+            pattern: "go".into(),
+            then_actions: vec![Action::Speak {
+                text: "yes".into(),
+            }],
+            else_actions: vec![Action::Speak {
+                text: "no".into(),
+            }],
+        };
+        let j = serde_json::to_string(&a).unwrap();
+        let back: Action = serde_json::from_str(&j).unwrap();
+        assert_eq!(a, back);
+    }
+
+    #[test]
     fn action_open_url_round_trip() {
         let a = Action::OpenUrl {
             url: "https://github.com".into(),
@@ -168,5 +243,18 @@ mod tests {
         let j = serde_json::to_string(&a).unwrap();
         let back: Action = serde_json::from_str(&j).unwrap();
         assert_eq!(a, back);
+    }
+
+    #[test]
+    fn unit_action_accepts_empty_object_json() {
+        for json in [r#"{"get_clipboard":{}}"#, r#"{"device_info":{}}"#] {
+            let parsed: Action = serde_json::from_str(json).unwrap_or_else(|e| {
+                panic!("failed to parse {json}: {e}");
+            });
+            match parsed {
+                Action::GetClipboard {} | Action::DeviceInfo {} => {}
+                other => panic!("unexpected variant for {json}: {other:?}"),
+            }
+        }
     }
 }

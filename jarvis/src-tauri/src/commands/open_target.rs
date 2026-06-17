@@ -2,6 +2,7 @@
 
 use crate::{
     apps::{
+        prefer_launch_path,
         resolve_target::{
             ambiguous_to_choice, interpret_clarify_choice, resolve_target, strip_placement_suffix,
             ResolvedTarget,
@@ -34,6 +35,9 @@ pub fn execute_open_target(
     let final_target = match resolved {
         ResolvedTarget::Ambiguous { .. } => {
             clarify_and_resolve(&resolved, runtime, app_index.unwrap_or(&[]))?
+        }
+        ResolvedTarget::Unknown { query, .. } => {
+            return Err(format!("Couldn't find {query}"));
         }
         other => other,
     };
@@ -70,6 +74,9 @@ pub fn execute_open_target_with_aliases(
     let resolved = resolve_open_target_input(target, placement, entries, aliases);
     let final_target = match &resolved {
         ResolvedTarget::Ambiguous { .. } => clarify_and_resolve(&resolved, runtime, entries)?,
+        ResolvedTarget::Unknown { query, .. } => {
+            return Err(format!("Couldn't find {query}"));
+        }
         _ => resolved,
     };
     let status = status_message_for(&final_target);
@@ -86,7 +93,7 @@ fn resolve_open_target_input(
     let explicit_placement = placement
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(str::to_string);
+        .and_then(|z| crate::apps::resolve_target::normalize_placement_zone(z));
     let (clean_target, suffix_placement) = strip_placement_suffix(target);
     let zone = explicit_placement.or(suffix_placement);
     let mut resolved = resolve_target(&clean_target, app_entries, aliases);
@@ -101,6 +108,7 @@ fn attach_placement(resolved: &mut ResolvedTarget, placement: String) {
         ResolvedTarget::App { placement: slot, .. } => *slot = Some(placement),
         ResolvedTarget::Url { placement: slot, .. } => *slot = Some(placement),
         ResolvedTarget::Ambiguous { placement: slot, .. } => *slot = Some(placement),
+        ResolvedTarget::Unknown { placement: slot, .. } => *slot = Some(placement),
     }
 }
 
@@ -117,15 +125,14 @@ fn clarify_and_resolve(
     let response = runtime.request_follow_up(CLARIFY_PROMPT)?;
     runtime.emit_status(&response);
     let choose_app = interpret_clarify_choice(&response, ambiguous).unwrap_or_else(|| {
-        // Default: prefer URL when an app candidate is below threshold.
-        let app_weak = match ambiguous {
-            ResolvedTarget::Ambiguous { app_candidates, .. } => {
-                app_candidates.first().map(|c| c.score).unwrap_or(0.0)
-                    < crate::apps::APP_RESOLVE_MIN_RATIO
-            }
-            _ => true,
+        let app_strong = match ambiguous {
+            ResolvedTarget::Ambiguous { app_candidates, .. } => app_candidates
+                .first()
+                .map(|c| c.score >= crate::apps::APP_RESOLVE_MIN_RATIO)
+                .unwrap_or(false),
+            _ => false,
         };
-        !app_weak
+        app_strong
     });
     let resolved = ambiguous_to_choice(ambiguous, choose_app).ok_or_else(|| {
         format!("Could not interpret follow-up for `{response}`")
@@ -235,6 +242,7 @@ fn launch_resolved(
         ResolvedTarget::Ambiguous { query, .. } => Err(format!(
             "target `{query}` is still ambiguous after clarification"
         )),
+        ResolvedTarget::Unknown { query, .. } => Err(format!("Couldn't find {query}")),
     }
 }
 
@@ -265,6 +273,13 @@ fn resolve_app_launch_path(
     app_index: Option<&[AppEntry]>,
 ) -> Result<String, String> {
     let trimmed = exe_path.trim();
+    if is_shell_apps_folder_path(trimmed) {
+        if let Some(entries) = app_index {
+            if let Some(win32) = find_win32_launch_path(display_name, entries) {
+                return Ok(win32);
+            }
+        }
+    }
     if trimmed.contains('\\') || trimmed.contains('/') || trimmed.ends_with(".exe") {
         return Ok(trimmed.to_string());
     }
@@ -277,6 +292,28 @@ fn resolve_app_launch_path(
         }
     }
     Ok(trimmed.to_string())
+}
+
+fn is_shell_apps_folder_path(path: &str) -> bool {
+    crate::apps::is_shell_apps_folder_path(path)
+}
+
+fn find_win32_launch_path(display_name: &str, entries: &[AppEntry]) -> Option<String> {
+    let name_lower = display_name.trim().to_lowercase();
+    let mut candidates: Vec<&AppEntry> = entries
+        .iter()
+        .filter(|e| {
+            !is_shell_apps_folder_path(&e.exe_path)
+                && e.exe_path.to_ascii_lowercase().ends_with(".exe")
+                && (e.display_name.eq_ignore_ascii_case(display_name)
+                    || e.display_name.to_lowercase() == name_lower)
+        })
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    candidates.sort_by(|a, b| prefer_launch_path(a.exe_path.as_str(), b.exe_path.as_str()));
+    Some(candidates.first()?.exe_path.clone())
 }
 
 fn validate_https_url(url: &str) -> Result<(), String> {
@@ -301,6 +338,7 @@ fn status_message_for(resolved: &ResolvedTarget) -> String {
             format_opening_status(url, placement.as_deref())
         }
         ResolvedTarget::Ambiguous { query, .. } => format!("Ambiguous target `{query}`"),
+        ResolvedTarget::Unknown { query, .. } => format!("Couldn't find {query}"),
     }
 }
 
@@ -401,6 +439,29 @@ mod tests {
     }
 
     #[test]
+    fn execute_open_target_prefers_win32_notepad_over_shell_uri() {
+        let runtime = MockRuntime::default();
+        let index = vec![
+            AppEntry {
+                display_name: "Notepad".into(),
+                exe_path: "shell:AppsFolder\\Microsoft.WindowsNotepad_8wekyb3d8bbwe!App".into(),
+                icon_data_url: None,
+            },
+            AppEntry {
+                display_name: "Notepad".into(),
+                exe_path: r"C:\Windows\System32\notepad.exe".into(),
+                icon_data_url: None,
+            },
+        ];
+        execute_open_target_with_aliases("notepad", None, &[], &runtime, Some(&index))
+            .expect("open notepad");
+        assert_eq!(
+            runtime.state.lock().unwrap().app_calls,
+            vec![r"C:\Windows\System32\notepad.exe".to_string()]
+        );
+    }
+
+    #[test]
     fn execute_open_target_launches_resolved_app() {
         let runtime = MockRuntime::default();
         let index = vec![brave_entry()];
@@ -443,17 +504,17 @@ mod tests {
             })),
         };
         let index = vec![AppEntry {
-            display_name: "GitHub".into(),
-            exe_path: "gh.exe".into(),
+            display_name: "DSC Voice".into(),
+            exe_path: "dsc.exe".into(),
             icon_data_url: None,
         }];
-        execute_open_target_with_aliases("github", None, &[], &runtime, Some(&index))
+        execute_open_target_with_aliases("discord", None, &[], &runtime, Some(&index))
             .expect("clarified");
         let learned = &runtime.state.lock().unwrap().learned_aliases;
         assert_eq!(learned.len(), 1);
-        assert_eq!(learned[0].spoken, "github");
+        assert_eq!(learned[0].spoken, "discord");
         assert_eq!(learned[0].kind, TargetAliasKind::Url);
-        assert_eq!(learned[0].value, "https://github.com");
+        assert_eq!(learned[0].value, "https://discord.com");
     }
 
     #[test]
@@ -465,19 +526,29 @@ mod tests {
             })),
         };
         let index = vec![AppEntry {
-            display_name: "GitHub".into(),
-            exe_path: "gh.exe".into(),
+            display_name: "DSC Voice".into(),
+            exe_path: "dsc.exe".into(),
             icon_data_url: None,
         }];
-        execute_open_target_with_aliases("github", None, &[], &runtime, Some(&index))
+        execute_open_target_with_aliases("discord", None, &[], &runtime, Some(&index))
             .expect("clarified url");
         assert_eq!(
             runtime.state.lock().unwrap().url_calls,
-            vec!["https://github.com".to_string()]
+            vec!["https://discord.com".to_string()]
         );
         assert_eq!(
             runtime.state.lock().unwrap().follow_up_prompts,
             vec![CLARIFY_PROMPT.to_string()]
         );
+    }
+
+    #[test]
+    fn execute_open_target_unknown_fails_fast() {
+        let runtime = MockRuntime::default();
+        let err = execute_open_target_with_aliases("foobar", None, &[], &runtime, Some(&[]))
+            .unwrap_err();
+        assert!(err.contains("foobar"));
+        assert!(runtime.state.lock().unwrap().url_calls.is_empty());
+        assert!(runtime.state.lock().unwrap().app_calls.is_empty());
     }
 }

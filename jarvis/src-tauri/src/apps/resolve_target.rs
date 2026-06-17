@@ -5,9 +5,6 @@ use crate::db::TargetAlias;
 use rapidfuzz::fuzz;
 use serde::Serialize;
 
-/// Minimum score gap between the top app and URL candidates to pick a single winner.
-pub const RESOLVE_SCORE_GAP: f64 = 0.15;
-
 /// How many app index entries to retain for ambiguous clarify flows.
 pub const TOP_APP_CANDIDATES: usize = 5;
 
@@ -52,6 +49,11 @@ pub enum ResolvedTarget {
         query: String,
         app_candidates: Vec<AppCandidate>,
         url_candidate: UrlCandidate,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        placement: Option<String>,
+    },
+    Unknown {
+        query: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         placement: Option<String>,
     },
@@ -112,6 +114,23 @@ const PLACEMENT_SUFFIXES: &[(&str, &str)] = &[
     ("maximize", "maximize"),
 ];
 
+/// Map composer / spoken placement labels to executor zone ids.
+pub fn normalize_placement_zone(zone: &str) -> Option<String> {
+    match zone.trim().to_lowercase().as_str() {
+        "" => None,
+        "left" | "left_half" | "left half" | "on the left" | "snap left" => {
+            Some("left_half".into())
+        }
+        "right" | "right_half" | "right half" | "on the right" | "snap right" => {
+            Some("right_half".into())
+        }
+        "fullscreen" | "full screen" | "full_screen" | "maximize" | "maximized" => {
+            Some("maximize".into())
+        }
+        other => Some(other.to_string()),
+    }
+}
+
 /// Known spoken names → canonical HTTPS URLs (checked before the `.com` heuristic).
 const KNOWN_SITES: &[(&str, &str)] = &[
     ("github", "https://github.com"),
@@ -160,19 +179,8 @@ pub fn resolve_target(
 
     let app_candidates = top_app_candidates(query, app_entries, TOP_APP_CANDIDATES);
     let app_score = app_candidates.first().map(|c| c.score).unwrap_or(0.0);
-    let url_candidate = score_url_candidate(query);
-    let url_score = url_candidate.as_ref().map(|u| u.score).unwrap_or(0.0);
 
-    let url_is_dot_com_heuristic = url_candidate
-        .as_ref()
-        .map(|u| u.score <= 0.76)
-        .unwrap_or(true);
-    // Strong app match beats the generic `https://{name}.com` guess (score 0.75).
-    let app_wins = app_score >= APP_RESOLVE_MIN_RATIO
-        && (url_candidate.is_none()
-            || app_score - url_score >= RESOLVE_SCORE_GAP
-            || (app_score >= 0.92 && url_is_dot_com_heuristic));
-    if app_wins {
+    if app_score >= APP_RESOLVE_MIN_RATIO {
         let top = app_candidates.first().expect("app_wins implies candidate");
         return ResolvedTarget::App {
             display_name: top.display_name.clone(),
@@ -181,23 +189,28 @@ pub fn resolve_target(
         };
     }
 
-    let url_wins = url_candidate.is_some()
-        && (app_score < APP_RESOLVE_MIN_RATIO || url_score - app_score >= RESOLVE_SCORE_GAP);
-    if url_wins {
-        let url = url_candidate.expect("url_wins implies candidate");
+    if is_explicit_url(query) {
         return ResolvedTarget::Url {
-            url: url.url,
+            url: canonicalize_explicit_url(query),
             placement,
         };
     }
 
-    ResolvedTarget::Ambiguous {
+    if !app_candidates.is_empty() {
+        let url_candidate = score_url_candidate_for_clarify(query);
+        return ResolvedTarget::Ambiguous {
+            query: query.to_string(),
+            app_candidates,
+            url_candidate: url_candidate.unwrap_or(UrlCandidate {
+                url: String::new(),
+                score: 0.0,
+            }),
+            placement,
+        };
+    }
+
+    ResolvedTarget::Unknown {
         query: query.to_string(),
-        app_candidates,
-        url_candidate: url_candidate.unwrap_or(UrlCandidate {
-            url: format!("https://{}.com", spoken_key),
-            score: 0.75,
-        }),
         placement,
     }
 }
@@ -231,9 +244,16 @@ pub fn top_app_candidates(
         .filter(|c| c.score > 0.0)
         .collect();
     scored.sort_by(|a, b| {
-        b.score
+        match b
+            .score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
+        {
+            std::cmp::Ordering::Equal => {
+                super::prefer_launch_path(&a.exe_path, &b.exe_path)
+            }
+            ord => ord,
+        }
     });
     scored.truncate(limit);
     scored
@@ -252,7 +272,60 @@ fn score_entry(query_lower: &str, e: &AppEntry) -> f64 {
     name.max(stem)
 }
 
-fn score_url_candidate(target: &str) -> Option<UrlCandidate> {
+/// True when `text` looks like an explicit URL or spoken domain (not a bare app name).
+pub fn is_explicit_url(text: &str) -> bool {
+    let normalized = normalize_spoken_url(text);
+    let t = normalized.trim().to_lowercase();
+    if t.is_empty() {
+        return false;
+    }
+    if t.contains("http://") || t.contains("https://") || t.contains("www.") {
+        return true;
+    }
+    has_domain_tld_pattern(&t)
+}
+
+pub(crate) fn canonicalize_explicit_url(text: &str) -> String {
+    let normalized = normalize_spoken_url(text);
+    let t = normalized.trim().to_lowercase();
+    if t.starts_with("http://") || t.starts_with("https://") {
+        t
+    } else {
+        format!("https://{t}")
+    }
+}
+
+fn normalize_spoken_url(text: &str) -> String {
+    let mut s = text.to_lowercase();
+    for (spoken, dot) in [
+        (" dot com", ".com"),
+        (" dot org", ".org"),
+        (" dot net", ".net"),
+        (" dot edu", ".edu"),
+        (" dot io", ".io"),
+        (" dot co uk", ".co.uk"),
+        (" dot co", ".co"),
+        (" dot uk", ".uk"),
+    ] {
+        s = s.replace(spoken, dot);
+    }
+    s
+}
+
+fn has_domain_tld_pattern(t: &str) -> bool {
+    if !t.contains('.') {
+        return false;
+    }
+    let host = t.split('/').next().unwrap_or(t).trim();
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() < 2 {
+        return false;
+    }
+    let tld = parts.last().unwrap_or(&"");
+    tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic()) && !parts[0].is_empty()
+}
+
+fn score_url_candidate_for_clarify(target: &str) -> Option<UrlCandidate> {
     let t = target.trim().to_lowercase();
     if t.is_empty() {
         return None;
@@ -280,21 +353,10 @@ fn score_url_candidate(target: &str) -> Option<UrlCandidate> {
         return best;
     }
 
-    if t.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
-        && !t.contains(' ')
-    {
-        let url = if t.contains('.') {
-            if t.starts_with("http://") || t.starts_with("https://") {
-                t.clone()
-            } else {
-                format!("https://{t}")
-            }
-        } else {
-            format!("https://{t}.com")
-        };
+    if is_explicit_url(target) {
         return Some(UrlCandidate {
-            url,
-            score: 0.75,
+            url: canonicalize_explicit_url(target),
+            score: 0.9,
         });
     }
 
@@ -394,6 +456,18 @@ mod tests {
     }
 
     #[test]
+    fn normalize_placement_zone_maps_fullscreen() {
+        assert_eq!(
+            normalize_placement_zone("fullscreen").as_deref(),
+            Some("maximize")
+        );
+        assert_eq!(
+            normalize_placement_zone("full screen").as_deref(),
+            Some("maximize")
+        );
+    }
+
+    #[test]
     fn strip_placement_suffix_removes_trailing_left_phrase() {
         let (clean, placement) = strip_placement_suffix("brave on the left");
         assert_eq!(clean, "brave");
@@ -454,21 +528,41 @@ mod tests {
     }
 
     #[test]
-    fn resolve_target_github_is_ambiguous_without_alias() {
+    fn resolve_target_github_prefers_app_without_alias() {
         let entries = vec![github_app_entry()];
         let resolved = resolve_target("github", &entries, &[]);
-        assert!(matches!(resolved, ResolvedTarget::Ambiguous { .. }));
-        if let ResolvedTarget::Ambiguous {
-            app_candidates,
-            url_candidate,
-            ..
-        } = resolved
-        {
-            assert!(!app_candidates.is_empty());
-            assert_eq!(url_candidate.url, "https://github.com");
-        } else {
-            panic!("expected ambiguous");
-        }
+        assert_eq!(
+            resolved,
+            ResolvedTarget::App {
+                display_name: "GitHub".into(),
+                exe_path: github_app_entry().exe_path,
+                placement: None,
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_target_foobar_unknown_without_com_guess() {
+        let resolved = resolve_target("foobar", &[], &[]);
+        assert_eq!(
+            resolved,
+            ResolvedTarget::Unknown {
+                query: "foobar".into(),
+                placement: None,
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_target_google_dot_com_is_url() {
+        let resolved = resolve_target("google.com", &[], &[]);
+        assert_eq!(
+            resolved,
+            ResolvedTarget::Url {
+                url: "https://google.com".into(),
+                placement: None,
+            }
+        );
     }
 
     #[test]
@@ -480,7 +574,7 @@ mod tests {
             value: "https://github.com".into(),
         }];
         let first = resolve_target("github", &entries, &[]);
-        assert!(matches!(first, ResolvedTarget::Ambiguous { .. }));
+        assert!(matches!(first, ResolvedTarget::App { .. }));
         let second = resolve_target("github", &entries, &aliases);
         assert_eq!(
             second,

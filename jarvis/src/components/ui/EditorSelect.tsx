@@ -25,6 +25,8 @@ export type EditorSelectProps = {
   className?: string;
   /** Id of external label element (do not wrap trigger in `<label htmlFor>`). */
   labelledBy?: string;
+  /** When no external label — e.g. inline formula controls. */
+  ariaLabel?: string;
 };
 
 type MenuPos = { top: number; left: number; width: number; maxHeight: number };
@@ -38,6 +40,7 @@ export function EditorSelect({
   disabled,
   className,
   labelledBy,
+  ariaLabel,
 }: EditorSelectProps) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<MenuPos | null>(null);
@@ -179,6 +182,7 @@ export function EditorSelect({
         aria-expanded={open}
         aria-controls={`${id}-listbox`}
         aria-labelledby={labelledBy}
+        aria-label={ariaLabel}
         onClick={toggle}
         onKeyDown={(e: ReactKeyEvent) => {
           if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {

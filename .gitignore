@@ -1,3 +1,14 @@
+# Cursor IDE (local)
+.cursor/
+
+# Reference notes (local)
+references/
+
+# Markdown docs (local notes; regenerate or keep outside git)
+*.md
+!README.md
+!**/README.md
+
 # CodeGraph local index (regenerate with `codegraph index`)
 .codegraph/
 

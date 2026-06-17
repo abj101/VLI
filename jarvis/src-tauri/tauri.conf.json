@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.jarvis.app",
   "build": {
-    "beforeDevCommand": "npm run fetch-wake-models && npm run dev",
+    "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
@@ -59,7 +59,9 @@
       "resources/ggml-tiny.en.bin",
       "resources/oww/melspectrogram.onnx",
       "resources/oww/embedding_model.onnx",
-      "resources/oww/hey_jarvis_v0.1.onnx"
+      "resources/oww/hey_jarvis_v0.1.onnx",
+      "resources/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+      "resources/qwen2.5-3b-instruct-q4_k_m.gguf"
     ],
     "icon": [
       "icons/32x32.png",
