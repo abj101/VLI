@@ -4,7 +4,9 @@ import type {
   ActionErrorPayload,
   ActionStatus,
   AudioErrorPayload,
+  HudOverlayMode,
   HudPhase,
+  HudPhaseSnapshot,
   MatchResult,
   TranscriptUpdate,
   WakeDetectedPayload,
@@ -32,12 +34,22 @@ function isHudPhase(x: string): x is HudPhase {
   return (HUD_PHASES as readonly string[]).includes(x);
 }
 
+function isHudOverlayMode(x: string): x is HudOverlayMode {
+  return x === "command" || x === "dictation";
+}
+
 /** Pull authoritative phase after listeners attach (catches events emitted during webview load). */
 async function applyHudPhaseFromRust(): Promise<void> {
   try {
-    const p = await invoke<HudPhase>("hud_get_phase");
-    if (isHudPhase(p)) {
-      useHudStore.getState().applyIpc("hud-phase", { phase: p });
+    const snapshot = await invoke<HudPhaseSnapshot>("hud_get_phase");
+    if (isHudPhase(snapshot.phase)) {
+      useHudStore.getState().applyIpc("hud-phase", {
+        phase: snapshot.phase,
+        session_id: snapshot.sessionId,
+        overlay_mode: isHudOverlayMode(snapshot.overlayMode)
+          ? snapshot.overlayMode
+          : "command",
+      });
     }
   } catch {
     /* Web-only / tests without Tauri */
@@ -56,13 +68,20 @@ export async function subscribeHudIpc(): Promise<() => void> {
     uAmp,
     uAudErr,
   ] = await Promise.all([
-    listen<{ phase: string; session_id?: number }>("hud-phase", (e) => {
+    listen<{ phase: string; session_id?: number; overlay_mode?: string }>(
+      "hud-phase",
+      (e) => {
       ipcLog("hud-phase", e.payload);
       const p = e.payload.phase;
       if (isHudPhase(p)) {
+        const overlayMode = e.payload.overlay_mode;
         useHudStore.getState().applyIpc("hud-phase", {
           phase: p,
           session_id: e.payload.session_id,
+          overlay_mode:
+            overlayMode != null && isHudOverlayMode(overlayMode)
+              ? overlayMode
+              : undefined,
         });
       }
     }),

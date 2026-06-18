@@ -239,6 +239,8 @@ mod tests {
             llm_composer_enabled: false,
             llm_composer_model_path: None,
             llm_composer_warmup_on_launch: false,
+            dictation_hotkey: crate::db::settings::DEFAULT_DICTATION_HOTKEY.to_string(),
+            dictation_hotkey_mode: crate::db::settings::DEFAULT_DICTATION_HOTKEY_MODE.to_string(),
         };
         let r = build_wake_detector("hotkey", tmp.path(), &s);
         assert!(r.is_err());

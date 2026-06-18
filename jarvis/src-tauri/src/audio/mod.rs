@@ -3,9 +3,11 @@
 pub mod capture;
 pub mod preroll;
 pub mod stt;
+pub mod transcript_event;
 pub mod transcription;
 pub mod tts;
 pub mod wake;
+pub mod whisper_models;
 
 use log::debug;
 
@@ -19,7 +21,7 @@ use tauri::Emitter;
 use tauri::Manager;
 
 use capture::CaptureSession;
-use stt::{load_whisper_context_serialized, resolve_whisper_model_path, spawn_stt_thread};
+use stt::{load_whisper_context_serialized, spawn_stt_thread};
 use transcription::{spawn_os_stt_thread, spawn_remote_stt_thread};
 
 pub use preroll::WakePreroll;
@@ -56,6 +58,7 @@ impl AudioPipeline {
         hud_session_id: u64,
         choice: SttPipelineChoice,
         wake_preroll_16k: Vec<f32>,
+        for_dictation: bool,
     ) -> Result<Self, String> {
         let (pcm_tx, pcm_rx) = std::sync::mpsc::channel();
         let (capture, sample_rate) = capture::start_capture(app.clone(), pcm_tx)?;
@@ -76,57 +79,72 @@ impl AudioPipeline {
                         pcm_rx,
                         sample_rate,
                         hud_session_id,
+                        for_dictation,
                     ))
                 }
             }
-            SttPipelineChoice::Local { use_gpu } => match resolve_whisper_model_path(app) {
-                Ok(model_path) => {
+            SttPipelineChoice::Local { use_gpu } => {
+                let model_id = crate::open_db_connection(app)
+                    .ok()
+                    .and_then(|conn| crate::db::get_app_settings(&conn).ok())
+                    .map(|s| s.local_whisper_model)
+                    .unwrap_or_else(|| stt::DEFAULT_LOCAL_WHISPER_MODEL.to_string());
+                let app_load = app.clone();
+                let app_emit = app.clone();
+                let warmed = app
+                    .try_state::<crate::WhisperModelCache>()
+                    .and_then(|c| c.take_context());
+                Some(crate::gpu_startup::spawn_whisper_loader_thread("whisper-loader", move || {
+                    let model_path = match whisper_models::ensure_whisper_model(
+                        &app_emit,
+                        model_id.as_str(),
+                    ) {
+                        Ok(path) => path,
+                        Err(msg) => {
+                            let _ = app_emit.emit(
+                                "audio-error",
+                                serde_json::json!({ "message": msg }),
+                            );
+                            std::mem::forget(spawn_pcm_drain(pcm_rx));
+                            return;
+                        }
+                    };
                     let model_path_text = model_path.to_string_lossy().to_string();
-                    let app_load = app.clone();
-                    let app_emit = app.clone();
-                    let warmed = app
-                        .try_state::<crate::WhisperModelCache>()
-                        .and_then(|c| c.take_context());
-                    Some(crate::gpu_startup::spawn_whisper_loader_thread("whisper-loader", move || {
-                        let load_result = warmed
-                            .map(|ctx| Ok((ctx, use_gpu)))
-                            .unwrap_or_else(|| {
-                                load_whisper_context_serialized(model_path_text.as_str(), use_gpu)
-                            });
-                        match load_result {
-                            Ok((ctx, effective_gpu)) => {
-                                if use_gpu && !effective_gpu {
-                                    let _ = app_emit.emit(
-                                        "audio-error",
-                                        serde_json::json!({ "message": "Whisper GPU init failed; using CPU instead." }),
-                                    );
-                                }
-                                let inner = spawn_stt_thread(
-                                    app_load,
-                                    ctx,
-                                    pcm_rx,
-                                    sample_rate,
-                                    hud_session_id,
-                                    effective_gpu,
-                                    wake_preroll_16k,
-                                );
-                                std::mem::forget(inner);
-                            }
-                            Err(msg) => {
+                    let load_result = warmed
+                        .map(|ctx| Ok((ctx, use_gpu)))
+                        .unwrap_or_else(|| {
+                            load_whisper_context_serialized(model_path_text.as_str(), use_gpu)
+                        });
+                    match load_result {
+                        Ok((ctx, effective_gpu)) => {
+                            if use_gpu && !effective_gpu {
                                 let _ = app_emit.emit(
                                     "audio-error",
-                                    serde_json::json!({ "message": msg }),
+                                    serde_json::json!({ "message": "Whisper GPU init failed; using CPU instead." }),
                                 );
-                                std::mem::forget(spawn_pcm_drain(pcm_rx));
                             }
+                            let inner = spawn_stt_thread(
+                                app_load,
+                                ctx,
+                                pcm_rx,
+                                sample_rate,
+                                hud_session_id,
+                                effective_gpu,
+                                wake_preroll_16k,
+                                for_dictation,
+                            );
+                            std::mem::forget(inner);
                         }
-                    }).map_err(|e| e.to_string())?)
-                }
-                Err(msg) => {
-                    let _ = app.emit("audio-error", serde_json::json!({ "message": msg }));
-                    Some(spawn_pcm_drain(pcm_rx))
-                }
-            },
+                        Err(msg) => {
+                            let _ = app_emit.emit(
+                                "audio-error",
+                                serde_json::json!({ "message": msg }),
+                            );
+                            std::mem::forget(spawn_pcm_drain(pcm_rx));
+                        }
+                    }
+                }).map_err(|e| e.to_string())?)
+            }
         };
 
         Ok(Self { capture, stt })

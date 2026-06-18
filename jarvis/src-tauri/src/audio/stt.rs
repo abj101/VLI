@@ -1,5 +1,8 @@
 //! Whisper inference thread: PCM → 16 kHz → rolling buffer → `transcript-update` (Task 4b).
 
+use crate::audio::transcript_event::{
+    classify_partial, audio_has_speech, normalize_transcript_candidate, TranscriptPartialKind,
+};
 use log::debug;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -10,7 +13,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-pub const DEFAULT_LOCAL_WHISPER_MODEL: &str = "tiny.en";
+pub const DEFAULT_LOCAL_WHISPER_MODEL: &str = "base.en";
 pub const LOCAL_WHISPER_MODEL_IDS: &[&str] = &["tiny.en", "base.en", "small.en"];
 
 /// Normalize persisted `local_whisper_model` setting (`tiny.en` | `base.en` | `small.en`).
@@ -38,8 +41,10 @@ const FIRST_INFER_AFTER: Duration = Duration::from_millis(120);
 pub(crate) const MIN_DECODE_SAMPLES: usize = TARGET_RATE as usize / 10;
 /// Treat chunks below this peak as silence and eventually reset rolling transcript context.
 const SILENCE_PEAK_THRESHOLD: f32 = 0.01;
-/// Clear stale decode context after this much continuous silence.
+/// Clear stale decode context after this much continuous silence (command HUD).
 const SILENCE_RESET_AFTER: Duration = Duration::from_millis(900);
+/// Longer silence window while dictating so slow speech does not reset rolling decode.
+pub(crate) const SILENCE_RESET_DICTATION: Duration = Duration::from_millis(1800);
 
 /// Whisper `full` thread count: GPU/Vulkan backends already offload heavy ops; keep CPU threads low
 /// to avoid oversubscription vs the STT worker thread and system audio.
@@ -53,34 +58,14 @@ fn whisper_decode_thread_count(use_accelerator: bool) -> i32 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptUpdate {
-    pub text: String,
     pub is_final: bool,
     /// Must match the HUD `session_id` when the mic pipeline for this listen was started.
     /// Ignores emissions from detached STT threads after pipeline teardown (`mem::forget` join handle).
     pub hud_session_id: u64,
-}
-
-/// Tauri `resource_dir()` may not match `src-tauri/resources/` during `tauri dev`; keep a crate-relative fallback.
-fn whisper_model_candidates(app: &AppHandle, model_id: &str) -> Vec<PathBuf> {
-    let filename = whisper_model_filename(model_id);
-    let mut out = Vec::new();
-    if let Ok(dir) = app.path().resource_dir() {
-        out.push(dir.join(&filename));
-    }
-    out.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join(filename),
-    );
-    out
-}
-
-fn local_whisper_model_id_from_app(app: &AppHandle) -> String {
-    crate::open_db_connection(app)
-        .ok()
-        .and_then(|conn| crate::db::get_app_settings(&conn).ok())
-        .map(|s| s.local_whisper_model)
-        .unwrap_or_else(|| DEFAULT_LOCAL_WHISPER_MODEL.to_string())
+    pub text: String,
+    /// Partial semantics; see [`crate::audio::transcript_event`]. Omitted JSON → `growth`.
+    #[serde(default)]
+    pub kind: TranscriptPartialKind,
 }
 
 static WHISPER_LOAD_GATE: Mutex<()> = Mutex::new(());
@@ -174,31 +159,20 @@ pub fn resolve_whisper_model_path_for_id(
     app: &AppHandle,
     model_id: &str,
 ) -> Result<PathBuf, String> {
-    let model_id = parse_local_whisper_model_id(Some(model_id));
-    let filename = whisper_model_filename(model_id);
-    let candidates = whisper_model_candidates(app, model_id);
-    for path in &candidates {
-        if path.is_file() {
-            return Ok(path.clone());
-        }
-    }
-    let tried = candidates
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    Err(format!(
-        "Whisper model `{filename}` not found (tried: {tried}). From the jarvis folder run `npm run fetch-whisper-models` or `.\\scripts\\download-model.ps1 -Model {model_id}`.",
-    ))
+    crate::audio::whisper_models::resolve_whisper_model_path_for_id(app, model_id)
 }
 
 pub fn resolve_whisper_model_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let model_id = local_whisper_model_id_from_app(app);
+    let model_id = crate::open_db_connection(app)
+        .ok()
+        .and_then(|conn| crate::db::get_app_settings(&conn).ok())
+        .map(|s| s.local_whisper_model)
+        .unwrap_or_else(|| DEFAULT_LOCAL_WHISPER_MODEL.to_string());
     resolve_whisper_model_path_for_id(app, model_id.as_str())
 }
 
 pub fn is_whisper_model_available(app: &AppHandle, model_id: &str) -> bool {
-    resolve_whisper_model_path_for_id(app, model_id).is_ok()
+    crate::audio::whisper_models::is_whisper_model_installed(app, model_id)
 }
 
 /// Linear resample mono `f32` to 16 kHz (Whisper input).
@@ -230,8 +204,13 @@ pub fn resample_mono_to_16k(input: &[f32], input_rate: u32) -> Vec<f32> {
 }
 
 /// Boost quiet mic levels toward ~0.5 peak so Whisper gets usable SNR (WASAPI f32 can sit very low).
+/// Does not amplify below [`crate::audio::transcript_event::MIN_SPEECH_PEAK_FOR_DECODE`] — that
+/// audio is treated as silence and should not be decoded.
 fn normalize_peak_f32(samples: &[f32]) -> Vec<f32> {
     let peak = samples.iter().fold(0.0f32, |a, &s| a.max(s.abs()));
+    if peak < crate::audio::transcript_event::MIN_SPEECH_PEAK_FOR_DECODE {
+        return samples.to_vec();
+    }
     if peak < 1e-8 {
         return samples.to_vec();
     }
@@ -250,6 +229,9 @@ fn run_decode(
     use_accelerator: bool,
 ) -> Result<String, whisper_rs::WhisperError> {
     if audio_16k.len() < MIN_DECODE_SAMPLES {
+        return Ok(String::new());
+    }
+    if !audio_has_speech(audio_16k) {
         return Ok(String::new());
     }
     let audio = normalize_peak_f32(audio_16k);
@@ -288,49 +270,31 @@ fn push_ring(buffer: &mut Vec<f32>, chunk: &[f32]) {
     }
 }
 
-fn is_word_like_token(token: &str) -> bool {
-    let mut letters = 0usize;
-    let mut digits = 0usize;
-    let mut total = 0usize;
-    for ch in token.chars() {
-        if ch.is_whitespace() {
-            continue;
-        }
-        total += 1;
-        if ch.is_alphabetic() {
-            letters += 1;
-        } else if ch.is_ascii_digit() {
-            digits += 1;
-        }
-    }
-    if total == 0 {
-        return false;
-    }
-    letters >= 2 || (letters >= 1 && digits >= 1 && total <= 8)
-}
-
-/// Keep only plausible word output from Whisper and normalize whitespace.
-/// Returns `None` for silence/noise-like decode output.
-fn normalize_transcript_candidate(raw: &str) -> Option<String> {
-    let normalized = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.is_empty() {
-        return None;
-    }
-    let has_word_like = normalized.split_whitespace().any(is_word_like_token);
-    if !has_word_like {
-        return None;
-    }
-    Some(normalized)
-}
-
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct SilenceResetTracker {
     silent_samples: usize,
+    reset_after_samples: usize,
+}
+
+impl Default for SilenceResetTracker {
+    fn default() -> Self {
+        Self::for_mode(false)
+    }
 }
 
 impl SilenceResetTracker {
-    fn new() -> Self {
-        Self::default()
+    pub(crate) fn for_mode(dictation: bool) -> Self {
+        let reset_after = if dictation {
+            SILENCE_RESET_DICTATION
+        } else {
+            SILENCE_RESET_AFTER
+        };
+        let reset_after_samples =
+            ((TARGET_RATE as f64) * reset_after.as_secs_f64()).round() as usize;
+        Self {
+            silent_samples: 0,
+            reset_after_samples,
+        }
     }
 
     pub(crate) fn push_and_should_reset(&mut self, chunk_16k: &[f32]) -> bool {
@@ -346,9 +310,7 @@ impl SilenceResetTracker {
             self.silent_samples = 0;
         }
 
-        let reset_after_samples =
-            ((TARGET_RATE as f64) * SILENCE_RESET_AFTER.as_secs_f64()).round() as usize;
-        if self.silent_samples >= reset_after_samples {
+        if self.silent_samples >= self.reset_after_samples {
             self.silent_samples = 0;
             return true;
         }
@@ -364,6 +326,7 @@ pub fn spawn_stt_thread(
     hud_session_id: u64,
     use_whisper_accelerator: bool,
     initial_audio_16k: Vec<f32>,
+    for_dictation: bool,
 ) -> JoinHandle<()> {
     let app_err = app.clone();
     std::thread::spawn(move || {
@@ -375,6 +338,7 @@ pub fn spawn_stt_thread(
             hud_session_id,
             use_whisper_accelerator,
             initial_audio_16k,
+            for_dictation,
         ) {
             let _ = app_err.emit("audio-error", serde_json::json!({ "message": e }));
         }
@@ -389,12 +353,13 @@ fn stt_loop(
     hud_session_id: u64,
     use_whisper_accelerator: bool,
     initial_audio_16k: Vec<f32>,
+    for_dictation: bool,
 ) -> Result<(), String> {
     let had_preroll = !initial_audio_16k.is_empty();
     let mut buffer_16k: Vec<f32> = initial_audio_16k;
     let mut last_decode = Instant::now();
     let mut last_text = String::new();
-    let mut silence_reset = SilenceResetTracker::new();
+    let mut silence_reset = SilenceResetTracker::for_mode(for_dictation);
     let mut first_decode_pending = true;
     if had_preroll {
         last_decode = Instant::now() - FIRST_INFER_AFTER;
@@ -429,12 +394,12 @@ fn stt_loop(
         let text = normalize_transcript_candidate(&text);
 
         if let Some(text) = text {
-            if text == *last_text {
+            let Some(kind) = classify_partial(last_text, &text) else {
                 return Ok(());
-            }
+            };
             *last_text = text.clone();
             debug!(
-                "stt: emit transcript-update partial chars={} preview={:?}",
+                "stt: emit transcript-update partial kind={kind:?} chars={} preview={:?}",
                 text.chars().count(),
                 text.chars().take(48).collect::<String>()
             );
@@ -444,6 +409,7 @@ fn stt_loop(
                     text,
                     is_final: false,
                     hud_session_id,
+                    kind,
                 },
             );
         } else if !last_text.is_empty() {
@@ -455,6 +421,7 @@ fn stt_loop(
                     text: String::new(),
                     is_final: false,
                     hud_session_id,
+                    kind: TranscriptPartialKind::SilenceReset,
                 },
             );
         }
@@ -475,7 +442,20 @@ fn stt_loop(
         if silence_reset.push_and_should_reset(&chunk_16k) {
             debug!("stt: silence gap reached; reset rolling decode context");
             buffer_16k.clear();
-            last_text.clear();
+            if !last_text.is_empty() {
+                last_text.clear();
+                let _ = app.emit(
+                    "transcript-update",
+                    TranscriptUpdate {
+                        text: String::new(),
+                        is_final: false,
+                        hud_session_id,
+                        kind: TranscriptPartialKind::SilenceReset,
+                    },
+                );
+            } else {
+                last_text.clear();
+            }
             first_decode_pending = true;
             last_decode = Instant::now();
             continue;
@@ -504,6 +484,7 @@ fn stt_loop(
                         text,
                         is_final: true,
                         hud_session_id,
+                        kind: TranscriptPartialKind::Growth,
                     },
                 );
             }
@@ -518,16 +499,16 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        normalize_peak_f32, normalize_transcript_candidate, parse_local_whisper_model_id,
-        resample_mono_to_16k, whisper_model_filename, SilenceResetTracker, TranscriptUpdate,
+        normalize_peak_f32, parse_local_whisper_model_id, resample_mono_to_16k,
+        whisper_model_filename, SilenceResetTracker, TranscriptPartialKind, TranscriptUpdate,
         TARGET_RATE,
     };
 
     #[test]
     fn parse_local_whisper_model_id_normalizes() {
-        assert_eq!(parse_local_whisper_model_id(None), "tiny.en");
+        assert_eq!(parse_local_whisper_model_id(None), "base.en");
         assert_eq!(parse_local_whisper_model_id(Some("base.en")), "base.en");
-        assert_eq!(parse_local_whisper_model_id(Some("bogus")), "tiny.en");
+        assert_eq!(parse_local_whisper_model_id(Some("bogus")), "base.en");
     }
 
     #[test]
@@ -550,8 +531,9 @@ mod tests {
     }
 
     #[test]
-    fn normalize_peak_boosts_quiet_audio() {
-        let v = vec![0.01f32, -0.01];
+    fn normalize_peak_boosts_quiet_speech() {
+        // Above MIN_SPEECH_PEAK_FOR_DECODE (0.02) but still quiet — should boost toward 0.5.
+        let v = vec![0.03f32, -0.03];
         let n = normalize_peak_f32(&v);
         assert!((n[0] - 0.5).abs() < 0.05);
         assert!((n[1] + 0.5).abs() < 0.05);
@@ -563,11 +545,22 @@ mod tests {
             text: "hello".into(),
             is_final: true,
             hud_session_id: 42,
+            kind: TranscriptPartialKind::Growth,
         };
         let j = serde_json::to_value(&u).expect("serialize");
         assert_eq!(j["text"], "hello");
         assert_eq!(j["is_final"], true);
         assert_eq!(j["hud_session_id"], 42);
+        assert_eq!(j["kind"], "growth");
+    }
+
+    #[test]
+    fn transcript_update_kind_defaults_when_omitted() {
+        let v: TranscriptUpdate = serde_json::from_str(
+            r#"{"text":"hi","is_final":false,"hud_session_id":1}"#,
+        )
+        .expect("deserialize");
+        assert_eq!(v.kind, TranscriptPartialKind::Growth);
     }
 
     /// Manual: `cargo test manual_load_whisper_tiny_model -- --ignored --nocapture`
@@ -648,35 +641,41 @@ mod tests {
     }
 
     #[test]
+    fn normalize_peak_does_not_boost_sub_speech_floor() {
+        let quiet = vec![0.005f32; 100];
+        let n = normalize_peak_f32(&quiet);
+        assert_eq!(n, quiet);
+    }
+
+    #[test]
     fn silence_tracker_resets_after_long_silence() {
-        let mut t = SilenceResetTracker::new();
+        let mut t = SilenceResetTracker::for_mode(false);
         let silence = vec![0.0f32; (TARGET_RATE as usize) / 2];
         assert!(!t.push_and_should_reset(&silence));
         assert!(t.push_and_should_reset(&silence));
     }
 
     #[test]
+    fn silence_tracker_dictation_waits_longer() {
+        let mut cmd = SilenceResetTracker::for_mode(false);
+        let mut dict = SilenceResetTracker::for_mode(true);
+        let silence = vec![0.0f32; (TARGET_RATE as usize) / 2];
+        assert!(!cmd.push_and_should_reset(&silence));
+        assert!(!dict.push_and_should_reset(&silence));
+        assert!(cmd.push_and_should_reset(&silence));
+        assert!(!dict.push_and_should_reset(&silence));
+        assert!(!dict.push_and_should_reset(&silence));
+        assert!(dict.push_and_should_reset(&silence));
+    }
+
+    #[test]
     fn silence_tracker_clears_after_loud_chunk() {
-        let mut t = SilenceResetTracker::new();
+        let mut t = SilenceResetTracker::for_mode(false);
         let silence = vec![0.0f32; (TARGET_RATE as usize) / 2];
         let loud = vec![0.5f32; (TARGET_RATE as usize) / 20];
         assert!(!t.push_and_should_reset(&silence));
         assert!(!t.push_and_should_reset(&loud));
         assert!(!t.push_and_should_reset(&silence));
         assert!(t.push_and_should_reset(&silence));
-    }
-
-    #[test]
-    fn transcript_candidate_rejects_noise_only_text() {
-        assert_eq!(normalize_transcript_candidate("... --- !!!"), None);
-        assert_eq!(normalize_transcript_candidate("   "), None);
-    }
-
-    #[test]
-    fn transcript_candidate_accepts_word_like_text() {
-        assert_eq!(
-            normalize_transcript_candidate("  open   notepad now  "),
-            Some("open notepad now".into())
-        );
     }
 }

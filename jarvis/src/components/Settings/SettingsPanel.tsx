@@ -7,6 +7,8 @@ import {
   applyEditorTransparencyToDocument,
   applyHudTransparencyToDocument,
   normalizeSttProvider,
+  normalizeDictationHotkeyMode,
+  DEFAULT_LOCAL_WHISPER_MODEL,
   normalizeLocalWhisperModel,
   LOCAL_WHISPER_MODEL_OPTIONS,
   normalizeThemePreference,
@@ -28,10 +30,13 @@ import {
   type HotkeyRecordingState,
   type EditorThemePreference,
   type SttProvider,
+  type DictationHotkeyMode,
+  type LocalWhisperModelId,
 } from "../editor/SettingsPanel.logic";
 import { formatUserError } from "../../utils/userErrors";
 import { EDITOR_SETTINGS_NAV, type EditorSettingsNavId } from "./settingsNav";
 import { AppIndexPane } from "./AppIndexPane";
+import { WhisperModelsPane } from "./WhisperModelsPane";
 import { HotkeyChordDisplay } from "./HotkeyChordDisplay";
 import { SettingsLabelWithInfo } from "./SettingsInfoTip";
 import { EditorSelect } from "../ui/EditorSelect";
@@ -59,6 +64,8 @@ type AppSettingsPayload = {
   llmRouterConfidenceThreshold: number;
   llmRouterTier2Enabled: boolean;
   llmRouterWarmupOnLaunch: boolean;
+  dictationHotkey: string;
+  dictationHotkeyMode: string;
 };
 
 type RouterStatusPayload = {
@@ -128,6 +135,14 @@ export function SettingsPanel({
   const [hotkeyRecording, setHotkeyRecording] = useState(false);
   const [hotkeyCapturedThisSession, setHotkeyCapturedThisSession] = useState(false);
 
+  const [dictationHotkey, setDictationHotkey] = useState("ctrl+shift+d");
+  const [dictationHotkeyMode, setDictationHotkeyMode] = useState<DictationHotkeyMode>("toggle");
+  const [dictationHotkeyError, setDictationHotkeyError] = useState<string | null>(null);
+  const [savingDictationHotkey, setSavingDictationHotkey] = useState(false);
+  const [dictationHotkeyRecording, setDictationHotkeyRecording] = useState(false);
+  const [dictationHotkeyCapturedThisSession, setDictationHotkeyCapturedThisSession] =
+    useState(false);
+
   const [wakeEngine, setWakeEngine] = useState("oww");
   const [owwThreshold, setOwwThreshold] = useState(0.7);
 
@@ -139,8 +154,7 @@ export function SettingsPanel({
   const [remoteSttKeyInput, setRemoteSttKeyInput] = useState("");
   const [savingRemoteStt, setSavingRemoteStt] = useState(false);
   const [localWhisperUseGpu, setLocalWhisperUseGpu] = useState(false);
-  const [localWhisperModel, setLocalWhisperModel] = useState("tiny.en");
-  const [whisperModelAvailable, setWhisperModelAvailable] = useState(true);
+  const [localWhisperModel, setLocalWhisperModel] = useState(DEFAULT_LOCAL_WHISPER_MODEL);
   const [whisperGpuPreparing, setWhisperGpuPreparing] = useState(false);
   const [whisperGpuPrepMessage, setWhisperGpuPrepMessage] = useState<string | null>(null);
   const [whisperGpuStatus, setWhisperGpuStatus] = useState<WhisperGpuStatusPayload>({
@@ -168,6 +182,8 @@ export function SettingsPanel({
   const panelRef = useRef<HTMLElement | null>(null);
   const hotkeyRecordingStateRef = useRef<HotkeyRecordingState>(createHotkeyRecordingState());
   const hotkeyBeforeRecordingRef = useRef<string | null>(null);
+  const dictationHotkeyRecordingStateRef = useRef<HotkeyRecordingState>(createHotkeyRecordingState());
+  const dictationHotkeyBeforeRecordingRef = useRef<string | null>(null);
   const hotkeysNavRef = useRef<HTMLButtonElement>(null);
   const [internalNav, setInternalNav] = useState<EditorSettingsNavId>("hotkeys");
   const pane = embedded && activeNav != null ? activeNav : internalNav;
@@ -244,7 +260,6 @@ export function SettingsPanel({
       savedEditorTransparency,
       app,
       gpuStatus,
-      whisperModelStatus,
       router,
     ] = await Promise.all([
         invoke<string | null>("get_setting", { key: HOTKEY_KEY }),
@@ -254,7 +269,6 @@ export function SettingsPanel({
         invoke<string | null>("get_setting", { key: EDITOR_TRANSPARENCY_KEY }),
         invoke<AppSettingsPayload>("get_settings"),
         invoke<WhisperGpuStatusPayload>("whisper_gpu_status"),
-        invoke<WhisperModelStatusPayload>("whisper_model_status"),
         invoke<RouterStatusPayload>("router_status"),
       ]);
     if (savedHotkey && savedHotkey.trim().length > 0) {
@@ -282,13 +296,16 @@ export function SettingsPanel({
     setRemoteSttKeyStored(app.remoteSttKeyStored);
     setLocalWhisperUseGpu(app.localWhisperUseGpu);
     setLocalWhisperModel(normalizeLocalWhisperModel(app.localWhisperModel));
-    setWhisperModelAvailable(whisperModelStatus.available);
     setWhisperGpuStatus(gpuStatus);
     setLlmRouterTier2Enabled(app.llmRouterTier2Enabled);
     setLlmRouterWarmupOnLaunch(app.llmRouterWarmupOnLaunch);
     setLlmRouterConfidenceThreshold(app.llmRouterConfidenceThreshold);
     setLlmRouterModelPath(app.llmRouterModelPath ?? "");
     setRouterStatus(router);
+    setDictationHotkey(
+      app.dictationHotkey?.trim().length ? app.dictationHotkey.trim() : "ctrl+shift+d",
+    );
+    setDictationHotkeyMode(normalizeDictationHotkeyMode(app.dictationHotkeyMode));
   };
 
   const whisperGpuCanEnable =
@@ -335,7 +352,7 @@ export function SettingsPanel({
     if (!onClose || embedded) return;
     const onKey = (ev: Event) => {
       const e = ev as KeyboardEvent;
-      if (hotkeyRecording) return;
+      if (hotkeyRecording || dictationHotkeyRecording) return;
       if (e.key === "Escape") {
         e.preventDefault();
         onClose();
@@ -343,14 +360,16 @@ export function SettingsPanel({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, embedded, hotkeyRecording]);
+  }, [onClose, embedded, hotkeyRecording, dictationHotkeyRecording]);
 
   useEffect(() => {
-    void invoke("set_hotkey_recording", { recording: hotkeyRecording });
+    void invoke("set_hotkey_recording", {
+      recording: hotkeyRecording || dictationHotkeyRecording,
+    });
     return () => {
       void invoke("set_hotkey_recording", { recording: false });
     };
-  }, [hotkeyRecording]);
+  }, [hotkeyRecording, dictationHotkeyRecording]);
 
   const cancelHotkeyRecording = useCallback(() => {
     if (hotkeyBeforeRecordingRef.current != null) {
@@ -404,6 +423,62 @@ export function SettingsPanel({
       window.removeEventListener("keyup", onKeyUp, true);
     };
   }, [hotkeyRecording, cancelHotkeyRecording]);
+
+  const cancelDictationHotkeyRecording = useCallback(() => {
+    if (dictationHotkeyBeforeRecordingRef.current != null) {
+      setDictationHotkey(dictationHotkeyBeforeRecordingRef.current);
+    }
+    dictationHotkeyBeforeRecordingRef.current = null;
+    setDictationHotkeyCapturedThisSession(false);
+    setDictationHotkeyRecording(false);
+  }, []);
+
+  useEffect(() => {
+    if (!dictationHotkeyRecording) return;
+
+    dictationHotkeyRecordingStateRef.current = createHotkeyRecordingState();
+
+    const onKeyDown = (ev: Event) => {
+      const e = ev as KeyboardEvent;
+      const { next, action } = processHotkeyRecordingKeyDown(
+        e,
+        dictationHotkeyRecordingStateRef.current,
+      );
+      dictationHotkeyRecordingStateRef.current = next;
+
+      if (action.type === "ignore") return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (action.type === "cancel") {
+        cancelDictationHotkeyRecording();
+        return;
+      }
+      if (action.type === "clear") {
+        setDictationHotkey("");
+        setDictationHotkeyCapturedThisSession(true);
+        return;
+      }
+      setDictationHotkey(action.chord);
+      setDictationHotkeyCapturedThisSession(true);
+    };
+
+    const onKeyUp = (ev: Event) => {
+      const e = ev as KeyboardEvent;
+      dictationHotkeyRecordingStateRef.current = processHotkeyRecordingKeyUp(
+        e,
+        dictationHotkeyRecordingStateRef.current,
+      );
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+    };
+  }, [dictationHotkeyRecording, cancelDictationHotkeyRecording]);
 
   useEffect(() => {
     const focusTarget = returnFocusRef?.current ?? null;
@@ -528,6 +603,58 @@ export function SettingsPanel({
     setHotkeyRecording(true);
   };
 
+  const saveDictationHotkey = async () => {
+    const maybeError = validateHotkeyInput(dictationHotkey);
+    if (maybeError) {
+      setDictationHotkeyError(maybeError);
+      return;
+    }
+    setDictationHotkeyError(null);
+    setSavingDictationHotkey(true);
+    try {
+      const savedHotkey = await invoke<string>("set_dictation_hotkey", {
+        hotkey: dictationHotkey,
+      });
+      setDictationHotkey(savedHotkey);
+      showSettingsNotice("Dictation hotkey updated");
+    } catch (err) {
+      setDictationHotkeyError(
+        formatUserError(err, "Could not save the dictation hotkey. Try a different shortcut."),
+      );
+    } finally {
+      setSavingDictationHotkey(false);
+    }
+  };
+
+  const toggleDictationHotkeyRecording = () => {
+    if (dictationHotkeyRecording) {
+      setDictationHotkeyRecording(false);
+      if (dictationHotkeyCapturedThisSession) {
+        void saveDictationHotkey();
+      }
+      return;
+    }
+    setDictationHotkeyError(null);
+    setDictationHotkeyCapturedThisSession(false);
+    dictationHotkeyBeforeRecordingRef.current = dictationHotkey;
+    setDictationHotkeyRecording(true);
+  };
+
+  const persistDictationHotkeyMode = async (next: DictationHotkeyMode) => {
+    const prev = dictationHotkeyMode;
+    setDictationHotkeyMode(next);
+    try {
+      const stored = await invoke<string>("set_dictation_hotkey_mode", { mode: next });
+      setDictationHotkeyMode(normalizeDictationHotkeyMode(stored));
+      showSettingsNotice(
+        next === "push_to_talk" ? "Dictation set to push-to-talk" : "Dictation set to toggle",
+      );
+    } catch (err) {
+      setDictationHotkeyMode(prev);
+      showSettingsNotice(formatUserError(err, "Could not save dictation hotkey mode."));
+    }
+  };
+
   const persistWakeEngine = async (next: string) => {
     setWakeEngine(next);
     try {
@@ -553,8 +680,6 @@ export function SettingsPanel({
       setRemoteSttKeyStored(s.remoteSttKeyStored);
       setLocalWhisperUseGpu(s.localWhisperUseGpu);
       setLocalWhisperModel(normalizeLocalWhisperModel(s.localWhisperModel));
-      const whisperStatus = await invoke<WhisperModelStatusPayload>("whisper_model_status");
-      setWhisperModelAvailable(whisperStatus.available);
     } catch (err) {
       showSettingsNotice(formatUserError(err, "Could not save the transcription provider."));
     }
@@ -653,7 +778,7 @@ export function SettingsPanel({
     }
   };
 
-  const persistLocalWhisperModel = async (next: string) => {
+  const persistLocalWhisperModel = async (next: LocalWhisperModelId) => {
     const normalized = normalizeLocalWhisperModel(next);
     const prev = localWhisperModel;
     setLocalWhisperModel(normalized);
@@ -663,15 +788,13 @@ export function SettingsPanel({
       });
       setLocalWhisperModel(normalizeLocalWhisperModel(s.localWhisperModel));
       const status = await invoke<WhisperModelStatusPayload>("whisper_model_status");
-      setWhisperModelAvailable(status.available);
       if (status.available) {
         showSettingsNotice(
-          `Whisper model set to ${LOCAL_WHISPER_MODEL_OPTIONS.find((o) => o.value === normalized)?.label ?? normalized}. Loads on next listen.`,
+          `Speech model set to ${LOCAL_WHISPER_MODEL_OPTIONS.find((o) => o.value === normalized)?.label ?? normalized}. Loads on next listen.`,
         );
       } else {
-        showSettingsNotice(
-          `Model file not found. From the jarvis folder run: npm run fetch-whisper-models`,
-        );
+        await invoke("download_whisper_model", { modelId: normalized });
+        showSettingsNotice(`Downloading ${normalized}…`);
       }
     } catch (err) {
       setLocalWhisperModel(prev);
@@ -871,6 +994,74 @@ export function SettingsPanel({
                     while recording.
                   </p>
                 </section>
+
+                <section className="editor-settings-section">
+                  <p className="editor-settings-group-label">Dictation</p>
+
+                  <div
+                    className={`editor-hotkey-panel${dictationHotkeyRecording ? " editor-hotkey-panel--recording" : ""}`}
+                  >
+                    <div className="editor-hotkey-panel-body">
+                      <span className="editor-hotkey-panel-label">
+                        <SettingsLabelWithInfo
+                          tipId="tip-dictation-hotkey"
+                          tip="Starts and stops voice dictation into the focused text field without opening the command overlay."
+                        >
+                          Dictation shortcut
+                        </SettingsLabelWithInfo>
+                      </span>
+                      <HotkeyChordDisplay
+                        chord={dictationHotkey}
+                        recording={dictationHotkeyRecording}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className={`editor-btn editor-btn--primary editor-hotkey-record-btn${dictationHotkeyRecording ? " editor-hotkey-record-btn--active" : ""}`}
+                      onClick={toggleDictationHotkeyRecording}
+                      disabled={savingDictationHotkey}
+                      aria-pressed={dictationHotkeyRecording}
+                    >
+                      {savingDictationHotkey
+                        ? "Saving…"
+                        : dictationHotkeyRecording
+                          ? "Stop"
+                          : "Record"}
+                    </button>
+                  </div>
+
+                  {dictationHotkeyError && (
+                    <p className="editor-field-error">{dictationHotkeyError}</p>
+                  )}
+
+                  <div className="editor-settings-row">
+                    <span
+                      className="editor-settings-row-label"
+                      id="editor-dictation-hotkey-mode-label"
+                    >
+                      <SettingsLabelWithInfo
+                        tipId="tip-dictation-hotkey-mode"
+                        tip="Toggle starts and stops on each press. Push-to-talk dictates only while the shortcut is held."
+                      >
+                        Activation mode
+                      </SettingsLabelWithInfo>
+                    </span>
+                    <span className="editor-settings-row-control">
+                      <EditorSelect
+                        id="editor-dictation-hotkey-mode"
+                        labelledBy="editor-dictation-hotkey-mode-label"
+                        value={dictationHotkeyMode}
+                        onChange={(v) =>
+                          void persistDictationHotkeyMode(normalizeDictationHotkeyMode(v))
+                        }
+                        options={[
+                          { value: "toggle", label: "Toggle" },
+                          { value: "push_to_talk", label: "Push to talk" },
+                        ]}
+                      />
+                    </span>
+                  </div>
+                </section>
               </div>
             )}
 
@@ -946,37 +1137,11 @@ export function SettingsPanel({
 
                     {sttProvider === "local" && (
                       <>
-                        <div className="editor-settings-row">
-                          <span
-                            className="editor-settings-row-label"
-                            id="editor-whisper-model-label"
-                          >
-                            <SettingsLabelWithInfo
-                              tipId="tip-whisper-model"
-                              tip="On-device speech recognition model. Larger models hear quiet speech better but use more disk and CPU/GPU time."
-                            >
-                              Model
-                            </SettingsLabelWithInfo>
-                          </span>
-                          <span className="editor-settings-row-control">
-                            <EditorSelect
-                              id="editor-whisper-model"
-                              labelledBy="editor-whisper-model-label"
-                              value={localWhisperModel}
-                              onChange={(v) => void persistLocalWhisperModel(v)}
-                              options={LOCAL_WHISPER_MODEL_OPTIONS.map((o) => ({
-                                value: o.value,
-                                label: o.label,
-                              }))}
-                            />
-                          </span>
-                        </div>
-                        {!whisperModelAvailable && (
-                          <p className="editor-settings-hint" role="status">
-                            Model file missing on disk. Run{" "}
-                            <code>npm run fetch-whisper-models</code> from the jarvis folder.
-                          </p>
-                        )}
+                        <WhisperModelsPane
+                          activeModelId={normalizeLocalWhisperModel(localWhisperModel)}
+                          onSelectModel={persistLocalWhisperModel}
+                          onNotice={showSettingsNotice}
+                        />
                         <div className="editor-settings-row editor-settings-row--switch">
                           <div className="editor-settings-row-label editor-settings-row-label--stack">
                             <SettingsLabelWithInfo

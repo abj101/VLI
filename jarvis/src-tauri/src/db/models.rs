@@ -154,6 +154,10 @@ pub enum Action {
         #[serde(default)]
         else_actions: Vec<Action>,
     },
+    /// Start streaming voice dictation into the focused text field.
+    StartDictation {},
+    /// Stop voice dictation.
+    StopDictation {},
 }
 
 /// Condition kinds for [`Action::IfElse`] (v1 logic).
@@ -247,12 +251,20 @@ mod tests {
 
     #[test]
     fn unit_action_accepts_empty_object_json() {
-        for json in [r#"{"get_clipboard":{}}"#, r#"{"device_info":{}}"#] {
+        for json in [
+            r#"{"get_clipboard":{}}"#,
+            r#"{"device_info":{}}"#,
+            r#"{"start_dictation":{}}"#,
+            r#"{"stop_dictation":{}}"#,
+        ] {
             let parsed: Action = serde_json::from_str(json).unwrap_or_else(|e| {
                 panic!("failed to parse {json}: {e}");
             });
             match parsed {
-                Action::GetClipboard {} | Action::DeviceInfo {} => {}
+                Action::GetClipboard {}
+                | Action::DeviceInfo {}
+                | Action::StartDictation {}
+                | Action::StopDictation {} => {}
                 other => panic!("unexpected variant for {json}: {other:?}"),
             }
         }

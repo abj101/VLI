@@ -10,10 +10,19 @@ export type HudPhase =
   | "done"
   | "stopped";
 
+export type HudOverlayMode = "command" | "dictation";
+
 export interface HudPhasePayload {
   phase: HudPhase;
   /** Matches Rust `HudRuntime::session_id` for this phase transition. */
   session_id?: number;
+  overlay_mode?: HudOverlayMode;
+}
+
+export interface HudPhaseSnapshot {
+  phase: HudPhase;
+  sessionId: number;
+  overlayMode: HudOverlayMode;
 }
 
 export interface TranscriptUpdate {
@@ -60,6 +69,8 @@ export type CommandAction =
   | { get_file_metadata: { path: string } }
   | { screenshot: { path?: string } }
   | { device_info: Record<string, never> }
+  | { start_dictation: Record<string, never> }
+  | { stop_dictation: Record<string, never> }
   | {
       if_else: {
         condition: "text_contains" | "regex_match" | "text_is_empty";
@@ -190,6 +201,13 @@ export interface OpenTargetPreview {
 /** Mic level 0..1 from `amplitude-update` (Task 4a). */
 export interface AmplitudeUpdate {
   amplitude: number;
+}
+
+/** Dictation session phase from `dictation-phase`. */
+export interface DictationPhasePayload {
+  active: boolean;
+  sessionId: number;
+  text?: string;
 }
 
 /** Mic/STT failure from `audio-error` (e.g. missing Whisper weights). */

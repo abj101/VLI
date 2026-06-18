@@ -2,8 +2,10 @@ mod apps;
 mod audio;
 mod commands;
 mod db;
+mod dictation;
 mod gpu_startup;
 mod hud;
+mod input;
 mod llm;
 mod keychain;
 mod process;
@@ -13,14 +15,17 @@ mod window;
 mod window_frame_win;
 
 use audio::SharedAudioPipeline;
-use hud::{sync_hud_webview_background, sync_hud_window, HudPhase, HUD_WINDOW_LABEL};
+use hud::{
+    apply_hud_window_geometry, persist_hud_window_position, sync_hud_webview_background,
+    sync_hud_window, HudOverlayMode, HudPhase, HudPositionGuard, HUD_WINDOW_LABEL,
+};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Listener, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Listener, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_global_shortcut::{
     Builder as ShortcutBuilder, GlobalShortcutExt, Shortcut, ShortcutState,
 };
@@ -34,7 +39,10 @@ const AFTER_WORDS_NO_MATCH_DISMISS_AFTER: Duration = Duration::from_secs(3);
 const HUD_WINDOW_HIDE_AFTER_FADE_MS: u64 = 520;
 const EDITOR_WINDOW_LABEL: &str = "editor";
 const DEFAULT_HOTKEY: &str = "ctrl+shift+j";
+const DEFAULT_DICTATION_HOTKEY: &str = "ctrl+shift+d";
 const SETTING_KEY_HOTKEY: &str = "hotkey";
+const SETTING_KEY_DICTATION_HOTKEY: &str = "dictation_hotkey";
+const SETTING_KEY_DICTATION_HOTKEY_MODE: &str = "dictation_hotkey_mode";
 const SETTING_KEY_DEFAULT_THRESHOLD: &str = "default_fuzzy_threshold_pct";
 const DEFAULT_THRESHOLD_PCT: u16 = 80;
 const EDITOR_COMMANDS_CHANGED_EVENT: &str = "editor-commands-changed";
@@ -324,6 +332,14 @@ fn is_hotkey_already_registered_error(message: &str) -> bool {
             && lower.contains("already registered"))
 }
 
+/// Compare a persisted hotkey string to a runtime [`Shortcut`].
+/// `Shortcut::to_string()` uses `control` / `KeyD`; settings store `ctrl` / `d`.
+fn shortcut_matches_stored(stored: &str, pressed: &Shortcut) -> bool {
+    Shortcut::from_str(stored)
+        .map(|expected| expected.id() == pressed.id())
+        .unwrap_or(false)
+}
+
 pub(crate) fn resolve_fuzzy_threshold_pct(
     node_threshold_pct: u16,
     default_threshold_pct: u16,
@@ -355,6 +371,7 @@ struct HudRuntime {
     phase: HudPhase,
     visible: bool,
     session_id: u64,
+    overlay_mode: HudOverlayMode,
     /// Last time we saw speech (transcript text or mic level). Used so timers run on silence, not wall-clock from HUD open.
     last_speech_activity: Option<Instant>,
     /// When the current `Listening` session began (hotkey / wake / `hud_set_phase`). Used for no-STT auto-dismiss.
@@ -389,6 +406,7 @@ impl Default for HudRuntime {
             phase: HudPhase::default(),
             visible: false,
             session_id: 0,
+            overlay_mode: HudOverlayMode::Command,
             last_speech_activity: None,
             listening_started_at: Instant::now(),
             last_nonempty_transcript_at: None,
@@ -419,6 +437,75 @@ impl Default for WakeSupervisorState {
 #[derive(Debug)]
 struct HotkeyBindingState {
     current: Mutex<String>,
+}
+
+#[derive(Debug)]
+struct DictationHotkeyBindingState {
+    current: Mutex<String>,
+    mode: Mutex<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DictationHotkeyMode {
+    Toggle,
+    PushToTalk,
+}
+
+impl DictationHotkeyMode {
+    fn parse(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "push_to_talk" | "push-to-talk" | "ptt" => Self::PushToTalk,
+            _ => Self::Toggle,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Toggle => "toggle",
+            Self::PushToTalk => "push_to_talk",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DictationShortcutEffect {
+    None,
+    Toggle,
+    Start,
+    Stop,
+}
+
+pub(crate) fn dictation_shortcut_effect(
+    mode: DictationHotkeyMode,
+    pressed: bool,
+    released: bool,
+) -> DictationShortcutEffect {
+    match mode {
+        DictationHotkeyMode::Toggle => {
+            if pressed {
+                DictationShortcutEffect::Toggle
+            } else {
+                DictationShortcutEffect::None
+            }
+        }
+        DictationHotkeyMode::PushToTalk => {
+            if pressed {
+                DictationShortcutEffect::Start
+            } else if released {
+                DictationShortcutEffect::Stop
+            } else {
+                DictationShortcutEffect::None
+            }
+        }
+    }
+}
+
+pub(crate) fn dictation_hotkey_collides_with_hud(hud_hotkey: &str, dictation_hotkey: &str) -> bool {
+    hud_hotkey.eq_ignore_ascii_case(dictation_hotkey)
+}
+
+pub(crate) fn transcript_routes_to_dictation(is_dictation_active: bool) -> bool {
+    is_dictation_active
 }
 
 /// While the settings UI is capturing a new shortcut, ignore global hotkey presses.
@@ -465,11 +552,12 @@ fn load_stt_pipeline_choice(app: &AppHandle) -> audio::SttPipelineChoice {
     }
 }
 
-fn try_start_listening_audio(
+pub(crate) fn try_start_listening_audio(
     app: &AppHandle,
     slot: &SharedAudioPipeline,
     hud_session_id: u64,
     use_wake_preroll: bool,
+    for_dictation: bool,
 ) {
     let wake_preroll_16k = if use_wake_preroll {
         app.try_state::<audio::WakePreroll>()
@@ -488,7 +576,7 @@ fn try_start_listening_audio(
     drop(old);
 
     let choice = load_stt_pipeline_choice(app);
-    match audio::AudioPipeline::start(app, hud_session_id, choice, wake_preroll_16k) {
+    match audio::AudioPipeline::start(app, hud_session_id, choice, wake_preroll_16k, for_dictation) {
         Ok(p) => {
             let mut g = slot.lock().unwrap();
             *g = Some(p);
@@ -509,12 +597,14 @@ fn emit_hud_phase(app: &AppHandle) {
     };
     let phase = s.phase.as_str();
     let session_id = s.session_id;
+    let overlay_mode = s.overlay_mode.as_str();
     drop(s);
     let _ = app.emit(
         "hud-phase",
         serde_json::json!({
             "phase": phase,
             "session_id": session_id,
+            "overlay_mode": overlay_mode,
         }),
     );
 }
@@ -643,7 +733,9 @@ fn sync_native_window_rounding(app: &AppHandle) {
 /// Live STT emits partial `transcript-update` (`is_final: false`). Matching is gated on a short
 /// silence window so commands do not fire before the user finishes their phrase.
 fn should_attempt_command_match(rt: &HudRuntime) -> bool {
-    rt.visible && rt.phase == HudPhase::Listening
+    rt.visible
+        && rt.phase == HudPhase::Listening
+        && rt.overlay_mode == HudOverlayMode::Command
 }
 
 fn should_attempt_match_for_update(rt: &HudRuntime, is_final: bool) -> bool {
@@ -688,6 +780,7 @@ fn prepare_hud_listening_session(s: &mut HudRuntime) -> u64 {
     s.dismissed_at = None;
     s.visible = true;
     s.phase = HudPhase::Listening;
+    s.overlay_mode = HudOverlayMode::Command;
     s.session_id = s.session_id.wrapping_add(1);
     s.last_speech_activity = Some(now);
     s.listening_started_at = now;
@@ -706,6 +799,7 @@ fn prepare_hud_close_session(s: &mut HudRuntime) {
     mark_hud_dismissed(s);
     s.phase = HudPhase::Stopped;
     s.visible = false;
+    s.overlay_mode = HudOverlayMode::Command;
     s.session_id = s.session_id.wrapping_add(1);
     s.nonempty_transcript_this_listen = false;
     s.pending_transcript.clear();
@@ -873,6 +967,27 @@ pub(crate) fn finalize_command_run(
     audio::stop_shared_pipeline(app, audio);
 }
 
+/// After dictation dismiss the window stays dictation-sized until hidden; restore command geometry then.
+fn reset_hud_command_geometry_if_dictation_dismissed(app: &AppHandle, rt: &SharedHud) {
+    let needs_reset = match rt.lock() {
+        Ok(mut g) => {
+            if g.overlay_mode == HudOverlayMode::Dictation
+                && !g.visible
+                && g.phase == HudPhase::Stopped
+            {
+                g.overlay_mode = HudOverlayMode::Command;
+                true
+            } else {
+                false
+            }
+        }
+        Err(_) => false,
+    };
+    if needs_reset {
+        let _ = apply_hud_window_geometry(app, HudOverlayMode::Command);
+    }
+}
+
 fn schedule_hud_window_hide_when_still_dismissed(app: AppHandle, rt: SharedHud) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(HUD_WINDOW_HIDE_AFTER_FADE_MS));
@@ -884,6 +999,7 @@ fn schedule_hud_window_hide_when_still_dismissed(app: AppHandle, rt: SharedHud) 
             return;
         }
         let app_for_main = app.clone();
+        let rt_for_main = Arc::clone(&rt);
         if let Err(err) = app.run_on_main_thread(move || {
             sync_hud_webview_background(&app_for_main);
             if let Some(w) = app_for_main.get_webview_window(HUD_WINDOW_LABEL) {
@@ -891,6 +1007,7 @@ fn schedule_hud_window_hide_when_still_dismissed(app: AppHandle, rt: SharedHud) 
                     warn!("hud delayed hide: {e}");
                 }
             }
+            reset_hud_command_geometry_if_dictation_dismissed(&app_for_main, &rt_for_main);
         }) {
             warn!("hud delayed hide dispatch: {err:?}");
         }
@@ -989,13 +1106,15 @@ pub(crate) fn await_follow_up_input(
     let window = app
         .get_webview_window(HUD_WINDOW_LABEL)
         .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
-    window.center().map_err(|e| e.to_string())?;
-    window.show().map_err(|e| e.to_string())?;
+    window
+        .show()
+        .map_err(|e| e.to_string())?;
+    apply_hud_window_geometry(app, HudOverlayMode::Command)?;
     sync_hud_webview_background(app);
     sync_hud_window(app, HudPhase::AwaitingInput)?;
     emit_hud_phase(app);
     let _ = app.emit("action-status", serde_json::json!({ "text": "follow up" }));
-    try_start_listening_audio(app, audio, expected_session_id, false);
+    try_start_listening_audio(app, audio, expected_session_id, false, false);
 
     let deadline = Instant::now() + FOLLOW_UP_TIMEOUT;
     const POLL: Duration = Duration::from_millis(50);
@@ -1094,6 +1213,12 @@ fn process_transcript_update(
         preview_chars(&update.text, 72)
     );
 
+    // Dictation uses its own session id (not HUD's). Route before the HUD session guard.
+    if transcript_routes_to_dictation(dictation::is_active(app)) {
+        dictation::handle_transcript(app, &update)?;
+        return Ok(());
+    }
+
     let (can_match, can_attempt_this_update) = {
         let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
         if update.hud_session_id != s.session_id {
@@ -1148,6 +1273,8 @@ fn show_hud_from_hotkey(
     audio: &SharedAudioPipeline,
     is_paused: &Arc<AtomicBool>,
 ) -> Result<(), String> {
+    dictation::stop_for_hud(app, rt, audio);
+
     let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
 
     let mut listening_session_id: Option<u64> = None;
@@ -1171,7 +1298,7 @@ fn show_hud_from_hotkey(
     drop(s);
 
     if opening_listen && tray::mic_start_allowed(is_paused, phase) {
-        try_start_listening_audio(app, audio, session_id, false);
+        try_start_listening_audio(app, audio, session_id, false, false);
         if let Some(sid) = listening_session_id.or(Some(session_id)) {
             spawn_no_match_watchdog(app.clone(), Arc::clone(rt), audio.clone(), sid);
         }
@@ -1182,7 +1309,7 @@ fn show_hud_from_hotkey(
         .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
 
     if opening_listen {
-        window.center().map_err(|e| e.to_string())?;
+        apply_hud_window_geometry(app, HudOverlayMode::Command)?;
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
     } else if defer_hud_window_hide {
@@ -1228,14 +1355,14 @@ fn wake_request_hud(
 
     // Open the listen mic before window show/focus so post-wake speech is not lost to handoff lag.
     if tray::mic_start_allowed(is_paused, HudPhase::Listening) {
-        try_start_listening_audio(app, audio, session_id, true);
+        try_start_listening_audio(app, audio, session_id, true, false);
         spawn_no_match_watchdog(app.clone(), Arc::clone(rt), audio.clone(), session_id);
     }
 
     let window = app
         .get_webview_window(HUD_WINDOW_LABEL)
         .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
-    window.center().map_err(|e| e.to_string())?;
+    apply_hud_window_geometry(app, HudOverlayMode::Command)?;
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
 
@@ -1363,11 +1490,74 @@ fn settings_patch_triggers_wake_reload(
     patch.oww_threshold.is_some() && settings_after.wake_engine == "oww"
 }
 
+fn prepare_dictation_overlay(s: &mut HudRuntime, session_id: u64) {
+    let now = Instant::now();
+    s.dismissed_at = None;
+    s.visible = true;
+    s.phase = HudPhase::Listening;
+    s.overlay_mode = HudOverlayMode::Dictation;
+    s.session_id = session_id;
+    s.last_speech_activity = Some(now);
+    s.listening_started_at = now;
+    s.last_nonempty_transcript_at = None;
+    s.nonempty_transcript_this_listen = false;
+    s.pending_transcript.clear();
+    s.transcript_revision = 0;
+    s.pending_follow_up_response = None;
+    s.pending_follow_up_candidate = None;
+    s.pending_follow_up_candidate_at = None;
+    cancel_active_run_in_state(s);
+}
+
+pub(crate) fn show_dictation_overlay(
+    app: &AppHandle,
+    rt: &SharedHud,
+    session_id: u64,
+) -> Result<(), String> {
+    {
+        let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+        prepare_dictation_overlay(&mut s, session_id);
+    }
+
+    let window = app
+        .get_webview_window(HUD_WINDOW_LABEL)
+        .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
+    apply_hud_window_geometry(app, HudOverlayMode::Dictation)?;
+    window.show().map_err(|e| e.to_string())?;
+    sync_hud_webview_background(app);
+    sync_hud_window(app, HudPhase::Listening)?;
+    emit_hud_phase(app);
+    Ok(())
+}
+
+pub(crate) fn hide_dictation_overlay(app: &AppHandle, rt: &SharedHud) -> Result<(), String> {
+    {
+        let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+        mark_hud_dismissed(&mut s);
+        s.phase = HudPhase::Stopped;
+        s.visible = false;
+        // Keep `Dictation` overlay mode + window geometry through the webview fade; reset after hide.
+        s.session_id = s.session_id.wrapping_add(1);
+        s.pending_transcript.clear();
+        s.transcript_revision = 0;
+        s.pending_follow_up_response = None;
+        s.pending_follow_up_candidate = None;
+        s.pending_follow_up_candidate_at = None;
+        cancel_active_run_in_state(&mut s);
+    }
+
+    sync_hud_window_from_state(app, rt)?;
+    emit_hud_phase(app);
+    schedule_hud_window_hide_when_still_dismissed(app.clone(), Arc::clone(rt));
+    Ok(())
+}
+
 fn dismiss_hud(app: &AppHandle, rt: &SharedHud) -> Result<(), String> {
     let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
     mark_hud_dismissed(&mut s);
     s.phase = HudPhase::Stopped;
     s.visible = false;
+    s.overlay_mode = HudOverlayMode::Command;
     s.session_id = s.session_id.wrapping_add(1);
     s.pending_transcript.clear();
     s.transcript_revision = 0;
@@ -1384,10 +1574,22 @@ fn dismiss_hud(app: &AppHandle, rt: &SharedHud) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HudPhaseSnapshot {
+    phase: HudPhase,
+    session_id: u64,
+    overlay_mode: HudOverlayMode,
+}
+
 #[tauri::command]
-fn hud_get_phase(state: State<'_, SharedHud>) -> Result<HudPhase, String> {
+fn hud_get_phase(state: State<'_, SharedHud>) -> Result<HudPhaseSnapshot, String> {
     let s = state.lock().map_err(|_| "hud state poisoned".to_string())?;
-    Ok(s.phase)
+    Ok(HudPhaseSnapshot {
+        phase: s.phase,
+        session_id: s.session_id,
+        overlay_mode: s.overlay_mode,
+    })
 }
 
 #[tauri::command]
@@ -1404,6 +1606,7 @@ fn hud_set_phase(
                 let now = Instant::now();
                 s.dismissed_at = None;
                 s.visible = true;
+                s.overlay_mode = HudOverlayMode::Command;
                 s.session_id = s.session_id.wrapping_add(1);
                 s.last_speech_activity = Some(now);
                 s.listening_started_at = now;
@@ -1419,6 +1622,7 @@ fn hud_set_phase(
             HudPhase::Stopped => {
                 mark_hud_dismissed(&mut s);
                 s.visible = false;
+                s.overlay_mode = HudOverlayMode::Command;
                 s.session_id = s.session_id.wrapping_add(1);
                 s.pending_transcript.clear();
                 s.transcript_revision = 0;
@@ -1785,6 +1989,102 @@ fn set_hotkey(
     Ok(next_hotkey)
 }
 
+fn load_dictation_hotkey_mode(app: &AppHandle) -> DictationHotkeyMode {
+    let Ok(conn) = open_db_connection(app) else {
+        return DictationHotkeyMode::Toggle;
+    };
+    let Ok(raw) = db::get_setting(&conn, SETTING_KEY_DICTATION_HOTKEY_MODE) else {
+        return DictationHotkeyMode::Toggle;
+    };
+    DictationHotkeyMode::parse(raw.as_deref().unwrap_or("toggle"))
+}
+
+#[tauri::command]
+fn set_dictation_hotkey(
+    app: AppHandle,
+    hotkey: String,
+    dictation_hotkey_state: State<'_, DictationHotkeyBindingState>,
+    hud_hotkey_state: State<'_, HotkeyBindingState>,
+) -> Result<String, String> {
+    let next_hotkey = normalize_hotkey_input(&hotkey)?;
+    Shortcut::from_str(&next_hotkey).map_err(|e| format!("Invalid shortcut: {e}"))?;
+
+    let hud_hotkey = hud_hotkey_state
+        .current
+        .lock()
+        .map_err(|_| "hotkey state poisoned".to_string())?
+        .clone();
+    if dictation_hotkey_collides_with_hud(&hud_hotkey, &next_hotkey) {
+        return Err("dictation hotkey cannot match the voice HUD hotkey".into());
+    }
+
+    let mut current_hotkey = dictation_hotkey_state
+        .current
+        .lock()
+        .map_err(|_| "dictation hotkey state poisoned".to_string())?;
+    let existing_hotkey = current_hotkey.clone();
+    if existing_hotkey == next_hotkey {
+        let conn = open_db_connection(&app)?;
+        db::set_setting(&conn, SETTING_KEY_DICTATION_HOTKEY, &next_hotkey)
+            .map_err(|e| e.to_string())?;
+        return Ok(next_hotkey);
+    }
+
+    app.global_shortcut()
+        .unregister(existing_hotkey.as_str())
+        .map_err(|e| format!("failed to unregister dictation hotkey `{existing_hotkey}`: {e}"))?;
+
+    if let Err(register_error) = app.global_shortcut().register(next_hotkey.as_str()) {
+        let _ = app.global_shortcut().register(existing_hotkey.as_str());
+        return Err(format!(
+            "failed to register dictation hotkey `{next_hotkey}`: {register_error}"
+        ));
+    }
+
+    let conn = open_db_connection(&app)?;
+    if let Err(persist_error) = db::set_setting(&conn, SETTING_KEY_DICTATION_HOTKEY, &next_hotkey) {
+        let _ = app.global_shortcut().unregister(next_hotkey.as_str());
+        let _ = app.global_shortcut().register(existing_hotkey.as_str());
+        return Err(format!("failed to persist dictation hotkey: {persist_error}"));
+    }
+
+    *current_hotkey = next_hotkey.clone();
+    Ok(next_hotkey)
+}
+
+#[tauri::command]
+fn set_dictation_hotkey_mode(
+    app: AppHandle,
+    mode: String,
+    dictation_hotkey_state: State<'_, DictationHotkeyBindingState>,
+) -> Result<String, String> {
+    let parsed = DictationHotkeyMode::parse(&mode);
+    let stored = parsed.as_str().to_string();
+    let conn = open_db_connection(&app)?;
+    db::set_setting(&conn, SETTING_KEY_DICTATION_HOTKEY_MODE, &stored)
+        .map_err(|e| e.to_string())?;
+    let mut guard = dictation_hotkey_state
+        .mode
+        .lock()
+        .map_err(|_| "dictation hotkey state poisoned".to_string())?;
+    *guard = stored.clone();
+    Ok(stored)
+}
+
+#[tauri::command]
+fn start_dictation_cmd(app: AppHandle) -> Result<u64, String> {
+    let hud = app.state::<SharedHud>();
+    let audio = app.state::<SharedAudioPipeline>();
+    dictation::start_dictation(&app, &*hud, &*audio)
+}
+
+#[tauri::command]
+fn stop_dictation_cmd(app: AppHandle) -> Result<(), String> {
+    let hud = app.state::<SharedHud>();
+    let audio = app.state::<SharedAudioPipeline>();
+    dictation::stop_dictation(&app, &*hud, &*audio)
+}
+
 #[tauri::command]
 fn get_settings(app: AppHandle) -> Result<db::AppSettings, String> {
     let conn = open_db_connection(&app)?;
@@ -2006,8 +2306,28 @@ fn whisper_model_status(app: AppHandle) -> Result<WhisperModelStatusPayload, Str
     let conn = open_db_connection(&app)?;
     let settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
     let model = settings.local_whisper_model.clone();
-    let available = audio::stt::is_whisper_model_available(&app, model.as_str());
+    let available = audio::whisper_models::is_whisper_model_installed(&app, model.as_str());
     Ok(WhisperModelStatusPayload { model, available })
+}
+
+#[tauri::command]
+fn list_whisper_models(app: AppHandle) -> Result<audio::whisper_models::ListWhisperModelsPayload, String> {
+    audio::whisper_models::list_whisper_models(&app)
+}
+
+#[tauri::command]
+fn download_whisper_model(app: AppHandle, model_id: String) -> Result<(), String> {
+    audio::whisper_models::spawn_whisper_model_download(app, model_id)
+}
+
+#[tauri::command]
+fn delete_whisper_model(
+    app: AppHandle,
+    model_id: String,
+) -> Result<audio::whisper_models::ListWhisperModelsPayload, String> {
+    audio::whisper_models::delete_whisper_model(&app, &model_id)?;
+    clear_whisper_model_cache(&app);
+    audio::whisper_models::list_whisper_models(&app)
 }
 
 #[tauri::command]
@@ -2069,7 +2389,12 @@ fn warmup_whisper_model_blocking(app: AppHandle, use_gpu: bool) -> WhisperModelW
     info!("whisper: loading STT model (debug MSVC builds can take several minutes)");
     #[cfg(not(debug_assertions))]
     info!("whisper: loading STT model");
-    let model_path = match audio::stt::resolve_whisper_model_path(&app) {
+    let model_id = open_db_connection(&app)
+        .ok()
+        .and_then(|conn| db::get_app_settings(&conn).ok())
+        .map(|s| s.local_whisper_model)
+        .unwrap_or_else(|| audio::stt::DEFAULT_LOCAL_WHISPER_MODEL.to_string());
+    let model_path = match audio::whisper_models::ensure_whisper_model(&app, model_id.as_str()) {
         Ok(path) => path,
         Err(msg) => {
             return WhisperModelWarmupPayload {
@@ -2190,6 +2515,7 @@ pub fn run() {
     let wake_mic_suppressed = audio::WakeMicSuppressed(Arc::new(AtomicBool::new(false)));
     let wake_preroll = audio::WakePreroll::default();
     let whisper_model_cache = WhisperModelCache(Mutex::new(None));
+    let whisper_model_download_state = audio::whisper_models::WhisperModelDownloadState::default();
     let router_model_cache = llm::RouterModelCache::default();
     let composer_model_cache = llm::ComposerModelCache::default();
     let command_cache: CommandCache = Arc::new(RwLock::new(Vec::new()));
@@ -2204,6 +2530,7 @@ pub fn run() {
         .manage(wake_mic_suppressed)
         .manage(wake_preroll)
         .manage(whisper_model_cache)
+        .manage(whisper_model_download_state)
         .manage(router_model_cache)
         .manage(composer_model_cache)
         .manage(command_cache.clone())
@@ -2213,7 +2540,13 @@ pub fn run() {
         .manage(HotkeyBindingState {
             current: Mutex::new(DEFAULT_HOTKEY.to_string()),
         })
+        .manage(DictationHotkeyBindingState {
+            current: Mutex::new(DEFAULT_DICTATION_HOTKEY.to_string()),
+            mode: Mutex::new(DictationHotkeyMode::Toggle.as_str().to_string()),
+        })
+        .manage(dictation::DictationState::default())
         .manage(WakeSupervisorState::default())
+        .manage(HudPositionGuard::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .setup({
@@ -2277,6 +2610,18 @@ pub fn run() {
                     );
                 }
 
+                if app_settings.stt_provider == "local" {
+                    let model_id = app_settings.local_whisper_model.clone();
+                    let app_models = app.handle().clone();
+                    if !audio::whisper_models::is_whisper_model_installed(
+                        &app_models,
+                        model_id.as_str(),
+                    ) {
+                        let _ =
+                            audio::whisper_models::spawn_whisper_model_download(app_models, model_id);
+                    }
+                }
+
                 let app_whisper = app_h.clone();
                 let app_router = app_h.clone();
                 let app_wake = app_h.clone();
@@ -2315,6 +2660,34 @@ pub fn run() {
                             DEFAULT_HOTKEY.to_string()
                         }
                     };
+                let configured_dictation_hotkey =
+                    match db::get_setting(&conn, SETTING_KEY_DICTATION_HOTKEY)
+                        .map_err(|e| e.to_string())?
+                    {
+                        Some(value) if !value.trim().is_empty() => value.trim().to_string(),
+                        _ => {
+                            db::set_setting(
+                                &conn,
+                                SETTING_KEY_DICTATION_HOTKEY,
+                                DEFAULT_DICTATION_HOTKEY,
+                            )
+                            .map_err(|e| e.to_string())?;
+                            DEFAULT_DICTATION_HOTKEY.to_string()
+                        }
+                    };
+                let configured_dictation_mode = {
+                    let raw = db::get_setting(&conn, SETTING_KEY_DICTATION_HOTKEY_MODE)
+                        .map_err(|e| e.to_string())?;
+                    let mode = DictationHotkeyMode::parse(
+                        raw.as_deref().unwrap_or(DictationHotkeyMode::Toggle.as_str()),
+                    );
+                    let stored = mode.as_str().to_string();
+                    if raw.as_deref() != Some(stored.as_str()) {
+                        db::set_setting(&conn, SETTING_KEY_DICTATION_HOTKEY_MODE, &stored)
+                            .map_err(|e| e.to_string())?;
+                    }
+                    mode
+                };
                 {
                     let hotkey_state = app.state::<HotkeyBindingState>();
                     let mut current = hotkey_state
@@ -2322,6 +2695,19 @@ pub fn run() {
                         .lock()
                         .map_err(|_| "hotkey state poisoned".to_string())?;
                     *current = configured_hotkey.clone();
+                }
+                {
+                    let dictation_hotkey_state = app.state::<DictationHotkeyBindingState>();
+                    let mut current = dictation_hotkey_state
+                        .current
+                        .lock()
+                        .map_err(|_| "dictation hotkey state poisoned".to_string())?;
+                    *current = configured_dictation_hotkey.clone();
+                    let mut mode = dictation_hotkey_state
+                        .mode
+                        .lock()
+                        .map_err(|_| "dictation hotkey state poisoned".to_string())?;
+                    *mode = configured_dictation_mode.as_str().to_string();
                 }
 
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -2363,8 +2749,13 @@ pub fn run() {
                         touch_speech_on_amplitude(&amp_hud, a);
                     });
 
+                    let hud_hotkey_for_handler = configured_hotkey.clone();
+                    let dictation_hotkey_for_handler = configured_dictation_hotkey.clone();
                     let shortcut_plugin = ShortcutBuilder::new()
-                        .with_shortcuts([configured_hotkey.as_str()])
+                        .with_shortcuts([
+                            configured_hotkey.as_str(),
+                            configured_dictation_hotkey.as_str(),
+                        ])
                         .map_err(|e| e.to_string())?
                         .with_handler({
                             let hud_state = Arc::clone(&hud_state);
@@ -2372,15 +2763,71 @@ pub fn run() {
                             let is_paused_for_shortcut = Arc::clone(&is_paused_for_shortcut);
                             let hotkey_recording_suppressed_for_shortcut =
                                 Arc::clone(&hotkey_recording_suppressed_for_shortcut);
-                            move |app, _shortcut, event| {
-                                if event.state != ShortcutState::Pressed {
-                                    return;
-                                }
+                            move |app, shortcut, event| {
                                 if hotkey_recording_suppressed_for_shortcut
                                     .load(Ordering::Relaxed)
                                 {
                                     return;
                                 }
+
+                                if shortcut_matches_stored(&dictation_hotkey_for_handler, shortcut)
+                                {
+                                    info!(
+                                        "dictation hotkey {:?} ({})",
+                                        event.state,
+                                        dictation_hotkey_for_handler
+                                    );
+                                    let mode = load_dictation_hotkey_mode(app);
+                                    let pressed = event.state == ShortcutState::Pressed;
+                                    let released = event.state == ShortcutState::Released;
+                                    match dictation_shortcut_effect(mode, pressed, released) {
+                                        DictationShortcutEffect::None => {}
+                                        DictationShortcutEffect::Toggle => {
+                                            if let Err(err) = dictation::toggle_dictation(
+                                                app,
+                                                &hud_state,
+                                                &audio_for_shortcut,
+                                            ) {
+                                                warn!("dictation toggle failed: {err}");
+                                                let _ = app.emit(
+                                                    "audio-error",
+                                                    serde_json::json!({ "message": err }),
+                                                );
+                                            }
+                                        }
+                                        DictationShortcutEffect::Start => {
+                                            if let Err(err) = dictation::start_dictation(
+                                                app,
+                                                &hud_state,
+                                                &audio_for_shortcut,
+                                            ) {
+                                                warn!("dictation start failed: {err}");
+                                                let _ = app.emit(
+                                                    "audio-error",
+                                                    serde_json::json!({ "message": err }),
+                                                );
+                                            }
+                                        }
+                                        DictationShortcutEffect::Stop => {
+                                            if let Err(err) = dictation::stop_dictation(
+                                                app,
+                                                &hud_state,
+                                                &audio_for_shortcut,
+                                            ) {
+                                                warn!("dictation stop failed: {err}");
+                                            }
+                                        }
+                                    }
+                                    return;
+                                }
+
+                                if !shortcut_matches_stored(&hud_hotkey_for_handler, shortcut) {
+                                    return;
+                                }
+                                if event.state != ShortcutState::Pressed {
+                                    return;
+                                }
+                                info!("voice HUD hotkey pressed ({hud_hotkey_for_handler})");
                                 let _ = show_hud_from_hotkey(
                                     app,
                                     &hud_state,
@@ -2406,10 +2853,31 @@ pub fn run() {
                 sync_hud_window(app.handle(), HudPhase::Idle).map_err(|e| e.to_string())?;
                 emit_hud_phase(app.handle());
                 sync_hud_webview_background(app.handle());
+                if let Some(hud_window) = app.get_webview_window(HUD_WINDOW_LABEL) {
+                    let hud_for_move = Arc::clone(&hud_state);
+                    let app_for_move = app.handle().clone();
+                    hud_window.on_window_event(move |event| {
+                        if !matches!(event, WindowEvent::Moved(_)) {
+                            return;
+                        }
+                        let guard = app_for_move.state::<HudPositionGuard>();
+                        if guard.0.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        let overlay_mode = hud_for_move
+                            .lock()
+                            .ok()
+                            .map(|s| s.overlay_mode)
+                            .unwrap_or(HudOverlayMode::Command);
+                        if let Err(e) = persist_hud_window_position(&app_for_move, overlay_mode) {
+                            warn!("hud position persist: {e}");
+                        }
+                    });
+                }
                 #[cfg(windows)]
                 sync_native_window_rounding(app.handle());
                 log::info!(
-                    "jarvis: ready — press {configured_hotkey} for voice HUD; tray icon for Settings (no logs until you speak)"
+                    "jarvis: ready — press {configured_hotkey} for voice HUD, {configured_dictation_hotkey} for dictation; tray icon for Settings"
                 );
                 Ok(())
             }
@@ -2438,6 +2906,10 @@ pub fn run() {
             set_setting,
             set_hotkey,
             set_hotkey_recording,
+            set_dictation_hotkey,
+            set_dictation_hotkey_mode,
+            start_dictation_cmd,
+            stop_dictation_cmd,
             get_settings,
             search_app_index,
             get_app_index_status,
@@ -2446,6 +2918,9 @@ pub fn run() {
             whisper_gpu_compile_supported,
             whisper_gpu_status,
             whisper_model_status,
+            list_whisper_models,
+            download_whisper_model,
+            delete_whisper_model,
             warmup_whisper_gpu,
             llm::tauri_cmds::router_status,
             llm::tauri_cmds::router_warmup,
@@ -2510,6 +2985,8 @@ mod tests {
             llm_composer_enabled: false,
             llm_composer_model_path: None,
             llm_composer_warmup_on_launch: false,
+            dictation_hotkey: db::settings::DEFAULT_DICTATION_HOTKEY.to_string(),
+            dictation_hotkey_mode: db::settings::DEFAULT_DICTATION_HOTKEY_MODE.to_string(),
         }
     }
 
@@ -2553,6 +3030,8 @@ mod tests {
             llm_composer_enabled: None,
             llm_composer_model_path: None,
             llm_composer_warmup_on_launch: None,
+            dictation_hotkey: None,
+            dictation_hotkey_mode: None,
         };
         assert!(settings_patch_triggers_wake_reload(
             &patch,
@@ -2578,6 +3057,8 @@ mod tests {
             llm_composer_enabled: None,
             llm_composer_model_path: None,
             llm_composer_warmup_on_launch: None,
+            dictation_hotkey: None,
+            dictation_hotkey_mode: None,
         };
         assert!(!settings_patch_triggers_wake_reload(
             &patch,
@@ -2970,5 +3451,64 @@ mod tests {
             read_command_cache(&cache).expect("read second").is_empty(),
             "cache should be replaced, not appended"
         );
+    }
+
+    #[test]
+    fn toggle_mode_pressed_starts_then_stops() {
+        use DictationHotkeyMode::{PushToTalk, Toggle};
+        use DictationShortcutEffect::{None, Start, Stop, Toggle as ToggleEffect};
+
+        assert_eq!(
+            dictation_shortcut_effect(Toggle, true, false),
+            ToggleEffect
+        );
+        assert_eq!(
+            dictation_shortcut_effect(Toggle, true, false),
+            ToggleEffect,
+            "second press also toggles"
+        );
+        assert_eq!(dictation_shortcut_effect(Toggle, false, true), None);
+        assert_eq!(dictation_shortcut_effect(Toggle, false, false), None);
+
+        assert_eq!(dictation_shortcut_effect(PushToTalk, true, false), Start);
+        assert_eq!(dictation_shortcut_effect(PushToTalk, false, true), Stop);
+        assert_eq!(dictation_shortcut_effect(PushToTalk, false, false), None);
+    }
+
+    #[test]
+    fn shortcut_matches_stored_accepts_ctrl_alias() {
+        let stored = "ctrl+shift+d";
+        let parsed = Shortcut::from_str(stored).expect("parse stored");
+        assert!(shortcut_matches_stored(stored, &parsed));
+        // Runtime string form differs from persisted settings text.
+        assert_ne!(parsed.to_string().to_ascii_lowercase(), stored);
+    }
+
+    #[test]
+    fn shortcut_matches_stored_rejects_different_keys() {
+        let hud = Shortcut::from_str("ctrl+shift+j").expect("parse hud");
+        assert!(!shortcut_matches_stored("ctrl+shift+d", &hud));
+    }
+
+    #[test]
+    fn set_dictation_hotkey_rejects_hud_collision() {
+        assert!(dictation_hotkey_collides_with_hud(
+            "ctrl+shift+j",
+            "ctrl+shift+j"
+        ));
+        assert!(dictation_hotkey_collides_with_hud(
+            "Ctrl+Shift+J",
+            "ctrl+shift+j"
+        ));
+        assert!(!dictation_hotkey_collides_with_hud(
+            "ctrl+shift+j",
+            "ctrl+shift+d"
+        ));
+    }
+
+    #[test]
+    fn transcript_update_skips_command_match_when_dictating() {
+        assert!(transcript_routes_to_dictation(true));
+        assert!(!transcript_routes_to_dictation(false));
     }
 }

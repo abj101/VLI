@@ -20,6 +20,12 @@ pub const SETTING_LLM_ROUTER_WARMUP_ON_LAUNCH: &str = "llm_router_warmup_on_laun
 pub const SETTING_LLM_COMPOSER_ENABLED: &str = "llm_composer_enabled";
 pub const SETTING_LLM_COMPOSER_MODEL_PATH: &str = "llm_composer_model_path";
 pub const SETTING_LLM_COMPOSER_WARMUP_ON_LAUNCH: &str = "llm_composer_warmup_on_launch";
+pub const SETTING_DICTATION_HOTKEY: &str = "dictation_hotkey";
+pub const SETTING_DICTATION_HOTKEY_MODE: &str = "dictation_hotkey_mode";
+pub const SETTING_HUD_COMMAND_POSITION: &str = "hud_command_position";
+pub const SETTING_HUD_DICTATION_POSITION: &str = "hud_dictation_position";
+pub const DEFAULT_DICTATION_HOTKEY: &str = "ctrl+shift+d";
+pub const DEFAULT_DICTATION_HOTKEY_MODE: &str = "toggle";
 
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>, DbError> {
     let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
@@ -111,6 +117,20 @@ fn normalize_optional_trimmed(s: Option<String>) -> Option<String> {
     s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
+pub fn parse_dictation_hotkey_mode(raw: Option<&str>) -> String {
+    match raw
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("push_to_talk") | Some("push-to-talk") | Some("ptt") => {
+            "push_to_talk".to_string()
+        }
+        _ => DEFAULT_DICTATION_HOTKEY_MODE.to_string(),
+    }
+}
+
 /// Serializable app settings for IPC — never includes secret key material.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -142,6 +162,10 @@ pub struct AppSettings {
     pub llm_composer_model_path: Option<String>,
     /// When true, warm the composer model at app startup.
     pub llm_composer_warmup_on_launch: bool,
+    /// Global shortcut to start/stop dictation into the focused text field.
+    pub dictation_hotkey: String,
+    /// `toggle` or `push_to_talk`.
+    pub dictation_hotkey_mode: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -162,6 +186,8 @@ pub struct SettingsPatch {
     pub llm_composer_enabled: Option<bool>,
     pub llm_composer_model_path: Option<String>,
     pub llm_composer_warmup_on_launch: Option<bool>,
+    pub dictation_hotkey: Option<String>,
+    pub dictation_hotkey_mode: Option<String>,
 }
 
 pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
@@ -214,6 +240,14 @@ pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
             conn,
             SETTING_LLM_COMPOSER_WARMUP_ON_LAUNCH,
         )?),
+        dictation_hotkey: get_setting(conn, SETTING_DICTATION_HOTKEY)?
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| DEFAULT_DICTATION_HOTKEY.to_string()),
+        dictation_hotkey_mode: parse_dictation_hotkey_mode(
+            get_setting(conn, SETTING_DICTATION_HOTKEY_MODE)?
+                .as_deref(),
+        ),
     })
 }
 
@@ -359,6 +393,17 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
             if on { "1" } else { "0" },
         )?;
     }
+    if let Some(ref hotkey) = patch.dictation_hotkey {
+        let trimmed = hotkey.trim();
+        if trimmed.is_empty() {
+            return Err(DbError::Validation("dictation_hotkey cannot be empty".into()));
+        }
+        set_setting(conn, SETTING_DICTATION_HOTKEY, trimmed)?;
+    }
+    if let Some(ref mode) = patch.dictation_hotkey_mode {
+        let normalized = parse_dictation_hotkey_mode(Some(mode.as_str()));
+        set_setting(conn, SETTING_DICTATION_HOTKEY_MODE, &normalized)?;
+    }
     Ok(())
 }
 
@@ -432,7 +477,7 @@ mod tests {
         assert_eq!(s.remote_stt_timeout_secs, 30);
         assert!(!s.remote_stt_key_stored);
         assert!(!s.local_whisper_use_gpu);
-        assert_eq!(s.local_whisper_model, "tiny.en");
+        assert_eq!(s.local_whisper_model, "base.en");
         assert_eq!(s.llm_router_model_path, None);
         assert!(
             (s.llm_router_confidence_threshold - DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD).abs()
@@ -466,6 +511,8 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_hotkey: None,
+                dictation_hotkey_mode: None,
             },
         )
         .expect("patch");
@@ -495,6 +542,8 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_hotkey: None,
+                dictation_hotkey_mode: None,
             },
         )
         .expect_err("expected validation error");
@@ -525,6 +574,8 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_hotkey: None,
+                dictation_hotkey_mode: None,
             },
         )
         .expect("patch");
@@ -556,6 +607,8 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_hotkey: None,
+                dictation_hotkey_mode: None,
             },
         )
         .expect_err("expected validation error");
@@ -583,6 +636,8 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_hotkey: None,
+                dictation_hotkey_mode: None,
             },
         )
         .expect("patch");
@@ -611,6 +666,8 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_hotkey: None,
+                dictation_hotkey_mode: None,
             },
         )
         .expect_err("expected validation error");
@@ -638,6 +695,8 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_hotkey: None,
+                dictation_hotkey_mode: None,
             },
         )
         .expect("patch");
@@ -661,12 +720,14 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_hotkey: None,
+                dictation_hotkey_mode: None,
             },
         )
         .expect("patch off");
         let s = get_app_settings(&conn).expect("reload");
         assert!(!s.local_whisper_use_gpu);
-        assert_eq!(s.local_whisper_model, "tiny.en");
+        assert_eq!(s.local_whisper_model, "base.en");
     }
 
     #[test]
@@ -690,6 +751,8 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_hotkey: None,
+                dictation_hotkey_mode: None,
             },
         )
         .expect("patch");
@@ -701,5 +764,24 @@ mod tests {
         assert!((s.llm_router_confidence_threshold - 0.55).abs() < 0.0001);
         assert!(s.llm_router_tier2_enabled);
         assert!(s.llm_router_warmup_on_launch);
+    }
+
+    #[test]
+    fn dictation_settings_default_to_ctrl_shift_d_toggle() {
+        let (_dir, conn) = open_temp();
+        let s = get_app_settings(&conn).expect("settings");
+        assert_eq!(s.dictation_hotkey, "ctrl+shift+d");
+        assert_eq!(s.dictation_hotkey_mode, "toggle");
+    }
+
+    #[test]
+    fn parse_dictation_hotkey_mode_normalizes_ptt() {
+        assert_eq!(
+            parse_dictation_hotkey_mode(Some("push-to-talk")),
+            "push_to_talk"
+        );
+        assert_eq!(parse_dictation_hotkey_mode(Some("ptt")), "push_to_talk");
+        assert_eq!(parse_dictation_hotkey_mode(Some("toggle")), "toggle");
+        assert_eq!(parse_dictation_hotkey_mode(None), "toggle");
     }
 }

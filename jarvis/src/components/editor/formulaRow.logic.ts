@@ -64,6 +64,8 @@ function actionSnippet(action: ActionPayload): string {
   if ("get_file_metadata" in action) return action.get_file_metadata.path;
   if ("screenshot" in action) return action.screenshot.path?.trim() ?? "";
   if ("device_info" in action) return "";
+  if ("start_dictation" in action) return "";
+  if ("stop_dictation" in action) return "";
   if ("if_else" in action) {
     return action.if_else.pattern.trim() || action.if_else.condition;
   }

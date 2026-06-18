@@ -2,6 +2,7 @@ import type {
   ActionErrorPayload,
   ActionStatus,
   AudioErrorPayload,
+  HudOverlayMode,
   HudPhase,
   HudPhasePayload,
   MatchResult,
@@ -21,6 +22,7 @@ export type HudState = {
   phase: HudPhase;
   /** Authoritative session from Rust `hud-phase` events; filters stale STT. */
   sessionId: number;
+  overlayMode: HudOverlayMode;
   transcript: string;
   transcriptFinal: boolean;
   match: MatchResult | null;
@@ -33,6 +35,7 @@ export type HudState = {
 export const initialHudState: HudState = {
   phase: "idle",
   sessionId: 0,
+  overlayMode: "command",
   transcript: "",
   transcriptFinal: false,
   match: null,
@@ -75,7 +78,8 @@ export function reduceHudState(
 ): HudState {
   switch (topic) {
     case "hud-phase": {
-      const { phase, session_id: sessionId } = payload as HudPhasePayload;
+      const { phase, session_id: sessionId, overlay_mode: overlayMode } =
+        payload as HudPhasePayload;
       if (sessionId != null && sessionId < state.sessionId) {
         return state;
       }
@@ -83,6 +87,7 @@ export function reduceHudState(
         ...state,
         phase,
         sessionId: sessionId ?? state.sessionId,
+        overlayMode: overlayMode ?? state.overlayMode,
       };
       if (phase === "listening") {
         next.transcript = "";
@@ -120,6 +125,9 @@ export function reduceHudState(
         u.hud_session_id != null &&
         u.hud_session_id !== state.sessionId
       ) {
+        return state;
+      }
+      if (state.overlayMode === "dictation") {
         return state;
       }
       return {

@@ -105,6 +105,16 @@ export const ACTION_KIND_OPTIONS: ActionKindOption[] = [
     haystack: "device info cpu memory ram system stats",
   },
   {
+    id: "start_dictation",
+    label: "Start dictation",
+    haystack: "start dictation voice type speak microphone live text field",
+  },
+  {
+    id: "stop_dictation",
+    label: "Stop dictation",
+    haystack: "stop dictation voice type microphone end",
+  },
+  {
     id: "if_else",
     label: "If/Else",
     haystack: "if else condition branch logic contains regex empty",
@@ -136,6 +146,8 @@ export function getActionKind(action: FormActionPayload): ActionKind {
   if ("get_file_metadata" in action) return "get_file_metadata";
   if ("screenshot" in action) return "screenshot";
   if ("device_info" in action) return "device_info";
+  if ("start_dictation" in action) return "start_dictation";
+  if ("stop_dictation" in action) return "stop_dictation";
   if ("if_else" in action) return "if_else";
   return "sub_prompt";
 }

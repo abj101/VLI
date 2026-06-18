@@ -19,6 +19,7 @@ function pickHudState(s: HudStore): HudState {
   return {
     phase: s.phase,
     sessionId: s.sessionId,
+    overlayMode: s.overlayMode,
     transcript: s.transcript,
     transcriptFinal: s.transcriptFinal,
     match: s.match,

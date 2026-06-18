@@ -37,9 +37,17 @@ describe("subscribeHudIpc", () => {
   });
 
   it("applies hud_get_phase after listeners attach so phase is not stale", async () => {
-    vi.mocked(invoke).mockResolvedValue("executing");
+    vi.mocked(invoke).mockResolvedValue({
+      phase: "executing",
+      sessionId: 3,
+      overlayMode: "command",
+    });
     await subscribeHudIpc();
     expect(invoke).toHaveBeenCalledWith("hud_get_phase");
-    expect(applyIpc).toHaveBeenCalledWith("hud-phase", { phase: "executing" });
+    expect(applyIpc).toHaveBeenCalledWith("hud-phase", {
+      phase: "executing",
+      session_id: 3,
+      overlay_mode: "command",
+    });
   });
 });

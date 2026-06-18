@@ -7,6 +7,12 @@ import {
   processHotkeyRecordingKeyDown,
   processHotkeyRecordingKeyUp,
   normalizeSttProvider,
+  normalizeLocalWhisperModel,
+  DEFAULT_LOCAL_WHISPER_MODEL,
+  formatByteSize,
+  whisperModelShortTitle,
+  whisperModelSubtitle,
+  normalizeDictationHotkeyMode,
   normalizeThemePreference,
   parseEditorTransparencySettingValue,
   parseHudTransparencySettingValue,
@@ -28,6 +34,27 @@ import {
 } from "./SettingsPanel.logic";
 
 describe("SettingsPanel logic", () => {
+  it("normalizes local Whisper model id with base.en default", () => {
+    expect(normalizeLocalWhisperModel(null)).toBe(DEFAULT_LOCAL_WHISPER_MODEL);
+    expect(normalizeLocalWhisperModel(undefined)).toBe("base.en");
+    expect(normalizeLocalWhisperModel("")).toBe("base.en");
+    expect(normalizeLocalWhisperModel("small.en")).toBe("small.en");
+    expect(normalizeLocalWhisperModel("tiny.en")).toBe("tiny.en");
+    expect(normalizeLocalWhisperModel("bogus")).toBe("base.en");
+  });
+
+  it("formats byte sizes for model list UI", () => {
+    expect(formatByteSize(null)).toBe("—");
+    expect(formatByteSize(512)).toBe("512 B");
+    expect(formatByteSize(1024 * 1024)).toBe("1.0 MB");
+  });
+
+  it("splits whisper model labels for card UI", () => {
+    expect(whisperModelShortTitle("base.en")).toBe("Base");
+    expect(whisperModelSubtitle("base.en")).toBe("balanced (default)");
+    expect(whisperModelShortTitle("small.en")).toBe("Small");
+  });
+
   it("normalizes STT provider to local, os, or remote", () => {
     expect(normalizeSttProvider(null)).toBe("local");
     expect(normalizeSttProvider(undefined)).toBe("local");
@@ -36,6 +63,18 @@ describe("SettingsPanel logic", () => {
     expect(normalizeSttProvider("os")).toBe("os");
     expect(normalizeSttProvider("Remote")).toBe("remote");
     expect(normalizeSttProvider("bogus")).toBe("local");
+  });
+
+  it("normalizes dictation hotkey mode to toggle or push_to_talk", () => {
+    expect(normalizeDictationHotkeyMode(null)).toBe("toggle");
+    expect(normalizeDictationHotkeyMode(undefined)).toBe("toggle");
+    expect(normalizeDictationHotkeyMode("")).toBe("toggle");
+    expect(normalizeDictationHotkeyMode("toggle")).toBe("toggle");
+    expect(normalizeDictationHotkeyMode("TOGGLE")).toBe("toggle");
+    expect(normalizeDictationHotkeyMode("push_to_talk")).toBe("push_to_talk");
+    expect(normalizeDictationHotkeyMode("push-to-talk")).toBe("push_to_talk");
+    expect(normalizeDictationHotkeyMode("ptt")).toBe("push_to_talk");
+    expect(normalizeDictationHotkeyMode("unknown")).toBe("toggle");
   });
 
   it("parses remote STT timeout only inside 1–300", () => {

@@ -28,3 +28,23 @@ Callers must pass `env` to spawned children; do not read `process.env` after res
 ## GPU prebuild cache
 
 Warm CMake build trees under `jarvis/.cache/gpu-prebuild/<arch>/` for `whisper-rs-sys` and `llama-cpp-sys-2`. Populated by `npm run prebuild:gpu-cuda`; consumed by `prepareGpuNativeBuild()` when `JARVIS_GPU_PREBUILD_WARM=1`.
+
+## Dictation session
+
+Voice-dictation period: STT partials stream into the focused text field without HUD focus steal. One session owns rolling decode state (`last_stt_text`), on-screen segment tracking (`segment_injected`), and cumulative typed text (`session_typed`).
+
+## Transcript reconcile
+
+Deep module (`dictation/reconcile.rs`): `TranscriptReconciler::apply_with_kind(partial, kind) → ReconcileResult`. Owns segment + `ScreenModel` state. Policy: `growth` → char-prefix delta; `revision` → overlap merge, then segment replace, then full-span fallback (never append); new utterance → overlap merge; `silence_reset` → clear rolling STT only.
+
+## Transcript partial kind
+
+STT event tag (`audio/transcript_event.rs`): `growth`, `revision`, `silence_reset`. Carried on `TranscriptUpdate.kind`; dictation reconcile consumes it directly.
+
+## Dictation session controller
+
+Lifecycle module (`dictation/session.rs`): start/stop/toggle, flush on stop, HUD collision guard. Holds `TranscriptReconciler` per session.
+
+## Text injector seam
+
+Adapter turning reconcile deltas into OS keystrokes. `SystemTextInjector` in production — batched `SendInput` backspaces (32/burst), brief settle delay before large retypes; `MockTextInjector` / `VirtualScreen` in tests. Invariant: dictation only mutates field tail; `ScreenModel` clamps backspace count to typed screen length.

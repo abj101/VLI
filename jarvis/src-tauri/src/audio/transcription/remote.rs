@@ -12,6 +12,9 @@ use crate::audio::stt::{
     resample_mono_to_16k, SilenceResetTracker, TranscriptUpdate, INFER_EVERY, MIN_DECODE_SAMPLES,
     TARGET_RATE,
 };
+use crate::audio::transcript_event::{
+    audio_has_speech, classify_partial, normalize_transcript_candidate, TranscriptPartialKind,
+};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -63,7 +66,7 @@ fn parse_transcript_from_response(body: &str) -> Result<String, String> {
 }
 
 fn post_transcription(params: &RemoteSttParams, pcm_16k: &[f32]) -> Result<String, String> {
-    if pcm_16k.len() < MIN_DECODE_SAMPLES {
+    if pcm_16k.len() < MIN_DECODE_SAMPLES || !audio_has_speech(pcm_16k) {
         return Ok(String::new());
     }
     let raw = f32_pcm_to_s16le_bytes(pcm_16k);
@@ -113,10 +116,18 @@ pub fn spawn_remote_stt_thread(
     pcm_rx: Receiver<Vec<f32>>,
     input_sample_rate: u32,
     hud_session_id: u64,
+    for_dictation: bool,
 ) -> JoinHandle<()> {
     let app_err = app.clone();
     std::thread::spawn(move || {
-        if let Err(e) = remote_stt_loop(app, params, pcm_rx, input_sample_rate, hud_session_id) {
+        if let Err(e) = remote_stt_loop(
+            app,
+            params,
+            pcm_rx,
+            input_sample_rate,
+            hud_session_id,
+            for_dictation,
+        ) {
             let _ = app_err.emit("audio-error", serde_json::json!({ "message": e }));
         }
     })
@@ -128,20 +139,34 @@ fn remote_stt_loop(
     pcm_rx: Receiver<Vec<f32>>,
     input_sample_rate: u32,
     hud_session_id: u64,
+    for_dictation: bool,
 ) -> Result<(), String> {
     use std::time::Instant;
 
     let mut buffer_16k: Vec<f32> = Vec::new();
     let mut last_infer = Instant::now() - INFER_EVERY;
     let mut last_text = String::new();
-    let mut silence_reset = SilenceResetTracker::default();
+    let mut silence_reset = SilenceResetTracker::for_mode(for_dictation);
     let mut consecutive_errors: u32 = 0;
 
     while let Ok(chunk) = pcm_rx.recv() {
         let chunk_16k = resample_mono_to_16k(&chunk, input_sample_rate);
         if silence_reset.push_and_should_reset(&chunk_16k) {
             buffer_16k.clear();
-            last_text.clear();
+            if !last_text.is_empty() {
+                last_text.clear();
+                let _ = app.emit(
+                    "transcript-update",
+                    TranscriptUpdate {
+                        text: String::new(),
+                        is_final: false,
+                        hud_session_id,
+                        kind: TranscriptPartialKind::SilenceReset,
+                    },
+                );
+            } else {
+                last_text.clear();
+            }
             continue;
         }
         buffer_16k.extend_from_slice(&chunk_16k);
@@ -175,12 +200,28 @@ fn remote_stt_loop(
             }
         };
 
-        if text.is_empty() {
+        let text = match normalize_transcript_candidate(&text) {
+            Some(t) => t,
+            None => {
+                if !last_text.is_empty() {
+                    last_text.clear();
+                    let _ = app.emit(
+                        "transcript-update",
+                        TranscriptUpdate {
+                            text: String::new(),
+                            is_final: false,
+                            hud_session_id,
+                            kind: TranscriptPartialKind::SilenceReset,
+                        },
+                    );
+                }
+                continue;
+            }
+        };
+
+        let Some(kind) = classify_partial(&last_text, &text) else {
             continue;
-        }
-        if text == last_text {
-            continue;
-        }
+        };
         last_text = text.clone();
         let _ = app.emit(
             "transcript-update",
@@ -188,19 +229,21 @@ fn remote_stt_loop(
                 text,
                 is_final: false,
                 hud_session_id,
+                kind,
             },
         );
     }
 
     if buffer_16k.len() >= MIN_DECODE_SAMPLES {
         if let Ok(text) = post_transcription(&params, &buffer_16k) {
-            if !text.is_empty() {
+            if let Some(text) = normalize_transcript_candidate(&text) {
                 let _ = app.emit(
                     "transcript-update",
                     TranscriptUpdate {
                         text,
                         is_final: true,
                         hud_session_id,
+                        kind: TranscriptPartialKind::Growth,
                     },
                 );
             }

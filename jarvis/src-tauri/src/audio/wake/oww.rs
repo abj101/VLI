@@ -462,6 +462,8 @@ mod tests {
             llm_composer_enabled: false,
             llm_composer_model_path: None,
             llm_composer_warmup_on_launch: false,
+            dictation_hotkey: crate::db::settings::DEFAULT_DICTATION_HOTKEY.to_string(),
+            dictation_hotkey_mode: crate::db::settings::DEFAULT_DICTATION_HOTKEY_MODE.to_string(),
         };
         let b = crate::audio::wake::try_open_wake_word_oww(&base, &settings).expect("oww init");
         assert!((b.threshold() - 0.73).abs() < 0.000_1);

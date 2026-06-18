@@ -72,6 +72,7 @@ pub fn init_db(path: &Path) -> Result<(), DbError> {
     target_aliases::ensure_target_aliases_schema(&conn)?;
     registered_scripts::ensure_registered_scripts_schema(&conn)?;
     seed_builtin_open_command(&conn)?;
+    seed_builtin_dictation_command(&conn)?;
     drop_legacy_ai_command_columns(&conn)?;
     purge_legacy_shipped_sample_commands(&conn)?;
     settings::prune_legacy_settings(&conn)?;
@@ -172,6 +173,30 @@ fn legacy_shipped_sample_trigger_json() -> [&'static str; 4] {
 }
 
 const BUILTIN_OPEN_COMMAND_NAME: &str = "Open target";
+const BUILTIN_DICTATION_COMMAND_NAME: &str = "Start dictation";
+
+fn seed_builtin_dictation_command(conn: &Connection) -> Result<(), DbError> {
+    let exists: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM command_nodes WHERE name = ?1",
+        [BUILTIN_DICTATION_COMMAND_NAME],
+        |row| row.get(0),
+    )?;
+    if exists > 0 {
+        return Ok(());
+    }
+    insert_command(
+        conn,
+        &NewCommandNode {
+            name: BUILTIN_DICTATION_COMMAND_NAME.into(),
+            trigger_phrases: vec!["start dictation".into(), "dictate".into()],
+            actions: vec![Action::StartDictation {}],
+            enabled: true,
+            fuzzy_threshold_pct: 80,
+            match_mode: MatchMode::Phrase,
+        },
+    )?;
+    Ok(())
+}
 
 fn seed_builtin_open_command(conn: &Connection) -> Result<(), DbError> {
     let exists: i64 = conn.query_row(
@@ -344,21 +369,34 @@ mod tests {
         init_db(&path).unwrap();
         let conn = Connection::open(&path).unwrap();
         let commands = get_all_commands(&conn).unwrap();
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].name, BUILTIN_OPEN_COMMAND_NAME);
-        assert_eq!(commands[0].trigger_phrases, vec!["open".to_string()]);
-        assert_eq!(commands[0].match_mode, MatchMode::Prefix);
+        assert_eq!(commands.len(), 2);
+        let open = commands
+            .iter()
+            .find(|c| c.name == BUILTIN_OPEN_COMMAND_NAME)
+            .expect("open command");
+        assert_eq!(open.trigger_phrases, vec!["open".to_string()]);
+        assert_eq!(open.match_mode, MatchMode::Prefix);
         assert_eq!(
-            commands[0].actions,
+            open.actions,
             vec![Action::OpenTarget {
                 target: "{{remainder}}".into(),
                 placement: None,
             }]
         );
 
+        let dictation = commands
+            .iter()
+            .find(|c| c.name == BUILTIN_DICTATION_COMMAND_NAME)
+            .expect("dictation command");
+        assert_eq!(
+            dictation.trigger_phrases,
+            vec!["start dictation".to_string(), "dictate".to_string()]
+        );
+        assert_eq!(dictation.actions, vec![Action::StartDictation {}]);
+
         init_db(&path).unwrap();
         let conn2 = Connection::open(&path).unwrap();
-        assert_eq!(get_all_commands(&conn2).unwrap().len(), 1);
+        assert_eq!(get_all_commands(&conn2).unwrap().len(), 2);
     }
 
     #[test]

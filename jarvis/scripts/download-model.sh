@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Downloads bundled Whisper ggml weights into src-tauri/resources (not committed).
-MODEL="${1:-tiny.en}"
+MODEL="${1:-base.en}"
 case "${MODEL}" in
   tiny.en|base.en|small.en) ;;
   *)

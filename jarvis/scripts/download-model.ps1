@@ -1,7 +1,7 @@
 # Downloads bundled Whisper ggml weights into src-tauri/resources (not committed).
 param(
     [ValidateSet("tiny.en", "base.en", "small.en")]
-    [string]$Model = "tiny.en"
+    [string]$Model = "base.en"
 )
 
 $ErrorActionPreference = "Stop"

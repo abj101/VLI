@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use rusqlite::Connection;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 pub const ACTION_STATUS_EVENT: &str = "action-status";
@@ -98,6 +98,12 @@ pub trait ActionRuntime {
     }
     fn persist_target_alias(&self, alias: &TargetAlias) -> Result<(), String> {
         let _ = alias;
+        Ok(())
+    }
+    fn start_dictation(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn stop_dictation(&self) -> Result<(), String> {
         Ok(())
     }
 }
@@ -270,6 +276,19 @@ impl ActionRuntime for TauriActionRuntime<'_> {
         };
         self.emit_status(&format!("Notification — {status}"));
         Ok(())
+    }
+
+    fn start_dictation(&self) -> Result<(), String> {
+        let hud = self.app.state::<crate::SharedHud>();
+        let audio = self.app.state::<crate::SharedAudioPipeline>();
+        crate::dictation::start_dictation(self.app, &*hud, &*audio)?;
+        Ok(())
+    }
+
+    fn stop_dictation(&self) -> Result<(), String> {
+        let hud = self.app.state::<crate::SharedHud>();
+        let audio = self.app.state::<crate::SharedAudioPipeline>();
+        crate::dictation::stop_dictation(self.app, &*hud, &*audio)
     }
 
     fn persist_target_alias(&self, alias: &TargetAlias) -> Result<(), String> {
@@ -624,6 +643,8 @@ fn action_kind_label(action: &Action) -> &'static str {
         Action::Screenshot { .. } => "screenshot",
         Action::DeviceInfo {} => "device_info",
         Action::IfElse { .. } => "if_else",
+        Action::StartDictation {} => "start_dictation",
+        Action::StopDictation {} => "stop_dictation",
     }
 }
 
@@ -869,6 +890,14 @@ fn execute_one_action(
             Ok(dict_outcome(info, "Device info".to_string()))
         }
         Action::IfElse { .. } => Err("IfElse is handled by execute_actions".to_string()),
+        Action::StartDictation {} => {
+            runtime.start_dictation()?;
+            Ok(nothing_outcome("Started dictation".into()))
+        }
+        Action::StopDictation {} => {
+            runtime.stop_dictation()?;
+            Ok(nothing_outcome("Stopped dictation".into()))
+        }
         Action::RunCommand { .. } => {
             Err("RunCommand is handled by execute_actions".to_string())
         }
@@ -976,6 +1005,8 @@ pub fn resolve_action_templates(
             then_actions: then_actions.clone(),
             else_actions: else_actions.clone(),
         },
+        Action::StartDictation {} => Action::StartDictation {},
+        Action::StopDictation {} => Action::StopDictation {},
     };
     apply_implicit_passthrough(&resolved, exec_ctx)
 }
@@ -1771,6 +1802,8 @@ mod tests {
         follow_up_answers: Vec<String>,
         follow_up_prompts: Vec<String>,
         fail_follow_up_prompt: Option<String>,
+        dictation_starts: usize,
+        dictation_stops: usize,
         cancelled: bool,
     }
 
@@ -1847,6 +1880,8 @@ mod tests {
                 follow_up_answers: self.follow_up_answers.clone(),
                 follow_up_prompts: self.follow_up_prompts.clone(),
                 fail_follow_up_prompt: self.fail_follow_up_prompt.clone(),
+                dictation_starts: self.dictation_starts,
+                dictation_stops: self.dictation_stops,
                 cancelled: self.cancelled,
             }
         }
@@ -1935,6 +1970,30 @@ mod tests {
         fn emit_error(&self, message: &str) {
             self.state.lock().unwrap().errors.push(message.to_string());
         }
+
+        fn start_dictation(&self) -> Result<(), String> {
+            self.state.lock().unwrap().dictation_starts += 1;
+            Ok(())
+        }
+
+        fn stop_dictation(&self) -> Result<(), String> {
+            self.state.lock().unwrap().dictation_stops += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn executor_start_dictation_action() {
+        let runtime = MockRuntime::default();
+        let node = node_with_actions(vec![
+            Action::StartDictation {},
+            Action::StopDictation {},
+        ]);
+        execute_command_with_context(&node, &runtime, None, None, None);
+        let s = runtime.snapshot();
+        assert_eq!(s.dictation_starts, 1);
+        assert_eq!(s.dictation_stops, 1);
+        assert!(s.errors.is_empty());
     }
 
     #[test]

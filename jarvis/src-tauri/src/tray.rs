@@ -13,7 +13,7 @@ use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 pub(crate) const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
 pub(crate) const PAUSE_TOGGLE_MENU_ID: &str = "pause-toggle";
@@ -71,6 +71,14 @@ pub fn setup_tray(
                 is_paused_for_menu.store(now_paused, Ordering::SeqCst);
                 if now_paused {
                     stop_shared_pipeline(app, &audio_for_menu);
+                    if crate::dictation::is_active(app) {
+                        let hud_for_menu = app.state::<crate::SharedHud>();
+                        let _ = crate::dictation::stop_dictation(
+                            app,
+                            &hud_for_menu,
+                            &audio_for_menu,
+                        );
+                    }
                 }
                 let label = if now_paused { "Resume" } else { "Pause" };
                 let _ = pause_item_for_menu.set_text(label);

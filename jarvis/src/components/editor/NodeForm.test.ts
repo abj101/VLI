@@ -132,6 +132,8 @@ describe("NodeForm logic", () => {
       write_file: { path: "", content: "" },
     });
     expect(defaultActionForKind("device_info")).toEqual({ device_info: {} });
+    expect(defaultActionForKind("start_dictation")).toEqual({ start_dictation: {} });
+    expect(defaultActionForKind("stop_dictation")).toEqual({ stop_dictation: {} });
   });
 
   it("requires folder path on list_folder actions", () => {

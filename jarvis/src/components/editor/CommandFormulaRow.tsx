@@ -1929,6 +1929,20 @@ function ActionSegmentEditor({
         </span>
       );
     }
+    if ("start_dictation" in action) {
+      return (
+        <span className="editor-formula-muted" aria-label={`Start dictation for step ${index + 1}`}>
+          Voice typing on
+        </span>
+      );
+    }
+    if ("stop_dictation" in action) {
+      return (
+        <span className="editor-formula-muted" aria-label={`Stop dictation for step ${index + 1}`}>
+          Voice typing off
+        </span>
+      );
+    }
     if ("if_else" in action) {
       const needsPattern = ifElseConditionNeedsPattern(action.if_else.condition);
       return (

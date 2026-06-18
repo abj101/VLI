@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useLayoutEffect, useMemo, useRef } from "react";
+import type { HudOverlayMode } from "../../types";
 import { useShallow } from "zustand/react/shallow";
 import { useDebounced } from "../../hooks/useDebounced";
 import { useHudStore } from "../../store/hudStore";
@@ -34,31 +35,43 @@ function useHudCenterInput(): CenterSelectorInput {
   );
 }
 
-function WaveformBars() {
+function WaveformBars({ dictation = false }: { dictation?: boolean }) {
   const phase = useHudStore((s) => s.phase);
   const amplitude = useHudStore((s) => s.amplitude);
   const active = phase === "listening";
   const level = active ? amplitude : 0;
+  // Dictation: boost mic level so bars read taller in the compact HUD.
+  const visualLevel = dictation && active ? Math.min(1, level * 1.35 + 0.08) : level;
 
   const bars = useMemo(() => [0, 1, 2, 3, 4, 5, 6], []);
 
   return (
-    <div className="hud-waveform" aria-hidden>
+    <div
+      className={dictation ? "hud-waveform hud-waveform--dictation" : "hud-waveform"}
+      aria-hidden
+    >
       {bars.map((i) => {
-        const wave = 0.25 + 0.75 * Math.sin((i / 6) * Math.PI + level * 2.4);
-        const rawH = 6 + level * wave * 22;
-        const scaleY = active
-          ? Math.max(0.14, Math.min(1, rawH / WAVE_BAR_SLEEVE_PX))
-          : 0.14;
+        const wave = 0.25 + 0.75 * Math.sin((i / 6) * Math.PI + visualLevel * 2.4);
+        let scaleY: number;
+        if (dictation) {
+          scaleY = active
+            ? Math.max(0.22, Math.min(1, 0.18 + visualLevel * wave * 0.82))
+            : 0.22;
+        } else {
+          const rawH = 6 + level * wave * 22;
+          scaleY = active
+            ? Math.max(0.14, Math.min(1, rawH / WAVE_BAR_SLEEVE_PX))
+            : 0.14;
+        }
 
         return (
           <div
             key={i}
             className="hud-waveform-bar"
             style={{
-              height: WAVE_BAR_SLEEVE_PX,
+              ...(dictation ? {} : { height: WAVE_BAR_SLEEVE_PX }),
               transform: `scaleY(${scaleY})`,
-              opacity: active ? 0.55 + level * 0.45 : 0.12,
+              opacity: active ? 0.55 + visualLevel * 0.45 : 0.12,
             }}
           />
         );
@@ -126,6 +139,13 @@ function HudShell() {
   const reduceMotion = useReducedMotion();
   const shellRef = useRef<HTMLDivElement>(null);
   const centerInput = useHudCenterInput();
+  const overlayMode = useHudStore((s) => s.overlayMode);
+  // Pin layout for this shell instance so exit fade keeps dictation chrome if mode flips mid-animation.
+  const shellOverlayModeRef = useRef<HudOverlayMode | null>(null);
+  if (shellOverlayModeRef.current === null) {
+    shellOverlayModeRef.current = overlayMode;
+  }
+  const isDictation = shellOverlayModeRef.current === "dictation";
   const selected = useMemo(
     () => selectCenterContent(centerInput),
     [centerInput],
@@ -177,10 +197,31 @@ function HudShell() {
 
   const shellExit = reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 1 };
 
+  if (isDictation) {
+    return (
+      <motion.div
+        ref={shellRef}
+        className="hud-root hud-root--dictation"
+        data-tauri-drag-region
+        role="region"
+        aria-label="Dictation session"
+        initial={shellInitial}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={shellExit}
+        transition={transition}
+      >
+        <div className="hud-body hud-body--dictation">
+          <WaveformBars dictation />
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
       ref={shellRef}
       className="hud-root"
+      data-tauri-drag-region
       role="region"
       {...(phaseLabel
         ? { "aria-labelledby": "hud-phase-label" }

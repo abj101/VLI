@@ -9,27 +9,70 @@ export type SttProvider = "local" | "os" | "remote";
 /** Matches `local_whisper_model` in SQLite / `AppSettings.localWhisperModel`. */
 export type LocalWhisperModelId = "tiny.en" | "base.en" | "small.en";
 
+export const DEFAULT_LOCAL_WHISPER_MODEL: LocalWhisperModelId = "base.en";
+
 export const LOCAL_WHISPER_MODEL_OPTIONS: ReadonlyArray<{
   value: LocalWhisperModelId;
   label: string;
 }> = [
-  { value: "tiny.en", label: "Tiny — fastest, least accurate" },
-  { value: "base.en", label: "Base — balanced (recommended)" },
-  { value: "small.en", label: "Small — most accurate, slowest" },
+  { value: "tiny.en", label: "Tiny — fastest, weak punctuation" },
+  { value: "base.en", label: "Base — balanced (default)" },
+  { value: "small.en", label: "Small — best accuracy & punctuation" },
 ] as const;
 
 export function normalizeLocalWhisperModel(
   raw: string | null | undefined,
 ): LocalWhisperModelId {
   const s = (raw ?? "").trim();
-  if (s === "base.en" || s === "small.en") return s;
-  return "tiny.en";
+  if (s === "tiny.en" || s === "base.en" || s === "small.en") return s;
+  return DEFAULT_LOCAL_WHISPER_MODEL;
+}
+
+export function formatByteSize(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return "—";
+  const units = ["B", "KB", "MB", "GB"] as const;
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+}
+
+export function whisperModelOptionLabel(id: LocalWhisperModelId): string {
+  return LOCAL_WHISPER_MODEL_OPTIONS.find((o) => o.value === id)?.label ?? id;
+}
+
+/** Display title for model cards, e.g. `tiny.en` → `Tiny`. */
+export function whisperModelShortTitle(id: LocalWhisperModelId): string {
+  const head = whisperModelOptionLabel(id).split(" — ")[0]?.trim();
+  return head || id;
+}
+
+/** Secondary line under the card title. */
+export function whisperModelSubtitle(id: LocalWhisperModelId): string {
+  const parts = whisperModelOptionLabel(id).split(" — ");
+  return parts[1]?.trim() ?? "";
 }
 
 export function normalizeSttProvider(raw: string | null | undefined): SttProvider {
   const s = (raw ?? "").trim().toLowerCase();
   if (s === "os" || s === "remote") return s;
   return "local";
+}
+
+/** Matches `dictation_hotkey_mode` in SQLite / `AppSettings.dictationHotkeyMode`. */
+export type DictationHotkeyMode = "toggle" | "push_to_talk";
+
+export function normalizeDictationHotkeyMode(
+  raw: string | null | undefined,
+): DictationHotkeyMode {
+  const s = (raw ?? "").trim().toLowerCase();
+  if (s === "push_to_talk" || s === "push-to-talk" || s === "ptt") {
+    return "push_to_talk";
+  }
+  return "toggle";
 }
 
 /** Parses remote STT timeout for settings UI; valid range 1–300 seconds. */

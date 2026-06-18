@@ -236,6 +236,8 @@ fn action_kind(action: &Action) -> &'static str {
         Action::Screenshot { .. } => "screenshot",
         Action::DeviceInfo {} => "device_info",
         Action::IfElse { .. } => "if_else",
+        Action::StartDictation {} => "start_dictation",
+        Action::StopDictation {} => "stop_dictation",
     }
 }
 

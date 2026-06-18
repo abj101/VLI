@@ -31,6 +31,8 @@ export type ActionKind =
   | "get_file_metadata"
   | "screenshot"
   | "device_info"
+  | "start_dictation"
+  | "stop_dictation"
   | "if_else"
   | "pending";
 
@@ -109,6 +111,10 @@ export function defaultActionForKind(kind: ConcreteActionKind): ActionPayload {
       return { screenshot: { path: "" } };
     case "device_info":
       return { device_info: {} };
+    case "start_dictation":
+      return { start_dictation: {} };
+    case "stop_dictation":
+      return { stop_dictation: {} };
     case "if_else":
       return defaultIfElseAction();
   }

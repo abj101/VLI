@@ -111,6 +111,8 @@ mod tests {
             llm_composer_warmup_on_launch: false,
             llm_router_confidence_threshold: DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD,
             llm_router_model_path: None,
+            dictation_hotkey: crate::db::settings::DEFAULT_DICTATION_HOTKEY.to_string(),
+            dictation_hotkey_mode: crate::db::settings::DEFAULT_DICTATION_HOTKEY_MODE.to_string(),
         }
     }
 
