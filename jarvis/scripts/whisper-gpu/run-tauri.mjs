@@ -21,6 +21,8 @@ import {
   prepareGpuNativeBuild,
   resolveBuildEnvironment,
 } from "../build-environment.mjs";
+import { parseDevProfileFlags, resolveDevProfile } from "../dev-profiles.mjs";
+import { fetchModelsForSets } from "../fetch-models.mjs";
 import { collectBuildEnvDiagnostics } from "../diagnose-build-env.mjs";
 import {
   formatCondensedBuildEnvDiagnostics,
@@ -49,18 +51,17 @@ function resolveTauriCli() {
   return p;
 }
 
-/** Fetch wake + LLM GGUF into src-tauri/resources before Cargo needs bundle paths. */
-function ensureBundledModels() {
-  const script = path.join(JARVIS_ROOT, "scripts", "fetch-models.mjs");
-  console.log("whisper-gpu: ensuring bundled models (skip if already on disk)...");
-  const result = spawnSync(process.execPath, [script], {
-    cwd: JARVIS_ROOT,
-    stdio: "inherit",
-    env: process.env,
-  });
-  if (result.status !== 0) {
-    console.error("whisper-gpu: fetch-models failed");
-    process.exit(result.status ?? 1);
+/** Fetch bundled models before Cargo needs bundle paths. */
+async function ensureBundledModels(modelSets) {
+  const sets = modelSets ?? ["wake", "whisper-all", "llm"];
+  console.log(
+    `whisper-gpu: ensuring bundled models (${sets.join(", ")}; skip if already on disk)...`,
+  );
+  try {
+    await fetchModelsForSets(sets);
+  } catch (err) {
+    console.error("whisper-gpu: fetch-models failed:", err instanceof Error ? err.message : err);
+    process.exit(1);
   }
 }
 
@@ -116,14 +117,18 @@ function releaseWindowsDevJarvisExeLock(subcommand) {
   }
 }
 
-function resolveJarvisDevExecutablePath(jarvisRoot, useReleaseNative) {
-  const name = process.platform === "win32" ? "jarvis.exe" : "jarvis";
-  const profile = useReleaseNative ? "release" : "debug";
-  return path.join(jarvisRoot, "src-tauri", "target", profile, name);
+function resolveCargoTargetRoot(jarvisRoot, targetDirOverride) {
+  return targetDirOverride ?? path.join(jarvisRoot, "src-tauri", "target");
 }
 
-function isJarvisDevProcessRunning(jarvisRoot, useReleaseNative) {
-  const exePath = resolveJarvisDevExecutablePath(jarvisRoot, useReleaseNative);
+function resolveJarvisDevExecutablePath(jarvisRoot, useReleaseNative, targetDirOverride) {
+  const name = process.platform === "win32" ? "jarvis.exe" : "jarvis";
+  const profile = useReleaseNative ? "release" : "debug";
+  return path.join(resolveCargoTargetRoot(jarvisRoot, targetDirOverride), profile, name);
+}
+
+function isJarvisDevProcessRunning(jarvisRoot, useReleaseNative, targetDirOverride) {
+  const exePath = resolveJarvisDevExecutablePath(jarvisRoot, useReleaseNative, targetDirOverride);
   if (!fs.existsSync(exePath)) {
     return false;
   }
@@ -224,16 +229,18 @@ function emitGpuProgressTick(opts) {
  *   useReleaseNative: boolean,
  *   nativeProfile: "debug" | "release",
  *   prebuildWarm: boolean,
+ *   cargoTargetDir: string | null,
  * }} opts
  * @returns {Promise<number>}
  */
 function spawnTauriWithGpuProgress(spawnExecutable, spawnArgv, childEnv, opts) {
-  const { cudaFirstBuild, subcommand, useReleaseNative, nativeProfile, prebuildWarm } = opts;
+  const { cudaFirstBuild, subcommand, useReleaseNative, nativeProfile, prebuildWarm, cargoTargetDir } =
+    opts;
   const progressEnabled =
     cudaFirstBuild && process.env.JARVIS_GPU_BUILD_PROGRESS !== "0";
   const stopProgressOnDevApp =
     subcommand === "dev"
-      ? () => isJarvisDevProcessRunning(JARVIS_ROOT, useReleaseNative)
+      ? () => isJarvisDevProcessRunning(JARVIS_ROOT, useReleaseNative, cargoTargetDir)
       : null;
 
   return new Promise((resolve, reject) => {
@@ -323,14 +330,14 @@ function spawnTauriWithGpuProgress(spawnExecutable, spawnArgv, childEnv, opts) {
  * @param {string} spawnExecutable
  * @param {string[]} spawnArgv
  * @param {NodeJS.ProcessEnv} childEnv
- * @param {{ subcommand: string, useReleaseNative: boolean }} opts
+ * @param {{ subcommand: string, useReleaseNative: boolean, cargoTargetDir: string | null }} opts
  * @returns {Promise<number>}
  */
 function spawnTauriPlain(spawnExecutable, spawnArgv, childEnv, opts) {
-  const { subcommand, useReleaseNative } = opts;
+  const { subcommand, useReleaseNative, cargoTargetDir } = opts;
   const stopOnDevApp =
     subcommand === "dev"
-      ? () => isJarvisDevProcessRunning(JARVIS_ROOT, useReleaseNative)
+      ? () => isJarvisDevProcessRunning(JARVIS_ROOT, useReleaseNative, cargoTargetDir)
       : null;
 
   return new Promise((resolve, reject) => {
@@ -396,15 +403,11 @@ function applyGpuDevProfile(subcommand, backend, extraArgs) {
   return ["--release", ...extraArgs];
 }
 
-async function runTauri(subcommand, extraArgs, withGpuSelection) {
+async function runTauri(subcommand, extraArgs, withGpuSelection, devProfileOpts) {
   const lock = checkCargoBuildLock(JARVIS_ROOT);
   if (lock.blocked) {
     console.error(`whisper-gpu: ${lock.message}`);
     process.exit(1);
-  }
-
-  if (subcommand === "dev" || subcommand === "build") {
-    ensureBundledModels();
   }
 
   releaseWindowsDevJarvisExeLock(subcommand);
@@ -438,17 +441,46 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
     };
   }
 
+  /** @type {import("../dev-profiles.mjs").DevProfile | null} */
+  let devProfile = null;
+  if (withGpuSelection) {
+    try {
+      devProfile = resolveDevProfile({
+        platformFlag: devProfileOpts?.platformFlag ?? "auto",
+        scopeFlag: devProfileOpts?.scopeFlag ?? "full",
+        hostPlatform: process.platform,
+        backend: selected.backend,
+        jarvisRoot: JARVIS_ROOT,
+      });
+      console.log(`whisper-gpu: dev profile=${devProfile.logLabel}`);
+    } catch (err) {
+      console.error("whisper-gpu:", err instanceof Error ? err.message : err);
+      process.exit(1);
+    }
+  }
+
+  if (subcommand === "dev" || subcommand === "build") {
+    await ensureBundledModels(devProfile?.modelSets);
+  }
+
   const tauriExtraArgs = applyGpuDevProfile(subcommand, selected.backend, extraArgs);
 
   const nativeProfile =
     subcommand === "build" || tauriExtraArgs.includes("--release") ? "release" : "debug";
 
   const args = [subcommand];
-  const cargoFeatures = ["llm-local"];
-  if (withGpuSelection && selected.backend !== "none") {
-    cargoFeatures.push(`whisper-${selected.backend}`, `llm-${selected.backend}`);
+  if (withGpuSelection && devProfile) {
+    if (devProfile.noDefaultFeatures) {
+      args.push("--no-default-features");
+    }
+    args.push("--features", devProfile.cargoFeatures.join(","));
+  } else if (withGpuSelection) {
+    const cargoFeatures = ["llm-local"];
+    if (selected.backend !== "none") {
+      cargoFeatures.push(`whisper-${selected.backend}`, `llm-${selected.backend}`);
+    }
+    args.push("--features", cargoFeatures.join(","));
   }
-  args.push("--features", cargoFeatures.join(","));
   args.push(...tauriExtraArgs);
 
   if (withGpuSelection) {
@@ -482,6 +514,12 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
     needsCuda: withGpuSelection && selected.backend === "cuda",
     logPrefix: "whisper-gpu",
   });
+
+  const cargoTargetDir = devProfile?.targetDir ?? null;
+  if (cargoTargetDir) {
+    childEnv.CARGO_TARGET_DIR = cargoTargetDir;
+    console.log(`whisper-gpu: CARGO_TARGET_DIR=${cargoTargetDir}`);
+  }
 
   if (cudaBuildEnv) {
     const cudaLog = formatResolvedCudaLog(cudaBuildEnv, gpuPrebuild);
@@ -552,6 +590,7 @@ async function runTauri(subcommand, extraArgs, withGpuSelection) {
     const spawnOpts = {
       subcommand,
       useReleaseNative: tauriExtraArgs.includes("--release"),
+      cargoTargetDir,
     };
     if (gpuBuildNeedsProgress) {
       status = await spawnTauriWithGpuProgress(spawnExecutable, spawnArgv, childEnv, {
@@ -592,14 +631,18 @@ async function main() {
 
   try {
     const rawArgv = process.argv.slice(2);
-    const { extraArgs, backendOverride } = parseLauncherFlags(rawArgv);
+    const { extraArgs: afterProfile, platformFlag, scopeFlag } = parseDevProfileFlags(rawArgv);
+    const { extraArgs, backendOverride } = parseLauncherFlags(afterProfile);
     if (backendOverride === "none") {
       process.env.WHISPER_GPU_BACKEND = "none";
     } else if (backendOverride === "auto") {
       process.env.WHISPER_GPU_BACKEND = "auto";
     }
     const [subcommand = "build", ...rest] = extraArgs;
-    await runTauri(subcommand, rest, ["build", "dev"].includes(subcommand));
+    await runTauri(subcommand, rest, ["build", "dev"].includes(subcommand), {
+      platformFlag,
+      scopeFlag,
+    });
   } catch (e) {
     console.error("whisper-gpu:", e instanceof Error ? e.message : e);
     process.exit(1);

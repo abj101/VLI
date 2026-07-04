@@ -280,7 +280,7 @@ fn resolve_app_launch_path(
             }
         }
     }
-    if trimmed.contains('\\') || trimmed.contains('/') || trimmed.ends_with(".exe") {
+    if trimmed.contains('\\') || trimmed.contains('/') || trimmed.ends_with(".exe") || trimmed.ends_with(".app") {
         return Ok(trimmed.to_string());
     }
     if let Some(entries) = app_index {

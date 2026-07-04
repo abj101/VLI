@@ -64,10 +64,6 @@ impl DictationSessionController {
         self.session.is_some()
     }
 
-    pub fn current_session_id(&self) -> Option<u64> {
-        self.session.as_ref().map(|s| s.session_id)
-    }
-
     pub fn start(&mut self, hud: HudSnapshot) -> Result<u64, String> {
         if self.is_active() {
             return Err("dictation already active".into());
@@ -90,20 +86,6 @@ impl DictationSessionController {
         let id = self.session.as_ref().map(|s| s.session_id).unwrap_or(0);
         self.session = None;
         Ok(id)
-    }
-
-    /// `Ok(Some(id))` when started, `Ok(None)` when stopped.
-    pub fn toggle<I: TextInjector>(
-        &mut self,
-        hud: HudSnapshot,
-        injector: &mut I,
-    ) -> Result<Option<u64>, String> {
-        if self.is_active() {
-            self.stop(injector)?;
-            Ok(None)
-        } else {
-            Ok(Some(self.start(hud)?))
-        }
     }
 
     /// Apply one STT update.
@@ -135,6 +117,26 @@ impl DictationSessionController {
                 Some(text.to_string())
             },
         ))
+    }
+}
+
+#[cfg(test)]
+impl DictationSessionController {
+    pub fn current_session_id(&self) -> Option<u64> {
+        self.session.as_ref().map(|s| s.session_id)
+    }
+
+    pub fn toggle<I: TextInjector>(
+        &mut self,
+        hud: HudSnapshot,
+        injector: &mut I,
+    ) -> Result<Option<u64>, String> {
+        if self.is_active() {
+            self.stop(injector)?;
+            Ok(None)
+        } else {
+            Ok(Some(self.start(hud)?))
+        }
     }
 
     pub fn flush<I: TextInjector>(&mut self, injector: &mut I) -> Result<(), String> {

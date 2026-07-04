@@ -8,15 +8,19 @@ mod hud;
 mod input;
 mod llm;
 mod keychain;
+#[cfg(target_os = "macos")]
+mod macos;
 mod process;
 mod tray;
 mod window;
 #[cfg(windows)]
 mod window_frame_win;
 
-use audio::SharedAudioPipeline;
+use audio::{transcript_event::TranscriptPartialKind, SharedAudioPipeline};
 use hud::{
-    apply_hud_window_geometry, persist_hud_window_position, sync_hud_webview_background,
+    apply_hud_window_geometry, hide_hud_window_on_main, persist_hud_window_position,
+    present_hud_window, present_hud_window_on_main,
+    sync_hud_webview_background,
     sync_hud_window, HudOverlayMode, HudPhase, HudPositionGuard, HUD_WINDOW_LABEL,
 };
 use log::{debug, info, warn};
@@ -34,6 +38,8 @@ use tauri_plugin_global_shortcut::{
 const NO_WORDS_DISMISS_AFTER: Duration = Duration::from_secs(3);
 /// After STT has produced words but no command matched, dismiss this long after the last non-empty transcript.
 const AFTER_WORDS_NO_MATCH_DISMISS_AFTER: Duration = Duration::from_secs(3);
+/// Hard cap on a single listen session so the HUD cannot record indefinitely.
+const MAX_LISTEN_DURATION: Duration = Duration::from_secs(20);
 /// Must stay above `HUD_SHELL_TRANSITION_MS` in `jarvis/src/components/hud/hudMotion.ts` (320 ms);
 /// extra margin avoids GPU compositor lag revealing native chrome when WebView2 bg resets before hide.
 const HUD_WINDOW_HIDE_AFTER_FADE_MS: u64 = 520;
@@ -50,7 +56,11 @@ const EDITOR_TOOLS_CHANGED_EVENT: &str = "editor-tools-changed";
 const APP_INDEX_READY_EVENT: &str = "app-index-ready";
 pub(crate) const OPEN_SETTINGS_EVENT: &str = "open-settings";
 /// Debounce partial STT updates so commands do not fire mid-sentence.
-const SILENCE_BEFORE_MATCH: Duration = Duration::from_millis(550);
+/// Kept below STT [`audio::stt::SILENCE_RESET_AFTER`] (900 ms) so end-of-phrase routing runs
+/// before rolling decode context clears, but long enough for natural word gaps.
+const SILENCE_BEFORE_MATCH: Duration = Duration::from_millis(800);
+/// Upper bound for deferred match wait when mic amplitude stays above threshold after speech ends.
+const MATCH_QUIET_MAX_WAIT: Duration = Duration::from_secs(4);
 /// Amplitude above this (0..1) counts as speech for activity / silence detection.
 const SPEECH_AMPLITUDE_THRESHOLD: f64 = 0.02;
 /// Block wake reopens briefly after dismiss so mic handoff / tail audio does not immediately re-show the HUD.
@@ -372,8 +382,10 @@ struct HudRuntime {
     visible: bool,
     session_id: u64,
     overlay_mode: HudOverlayMode,
-    /// Last time we saw speech (transcript text or mic level). Used so timers run on silence, not wall-clock from HUD open.
+    /// Last time mic amplitude crossed the speech threshold. Used with transcript idle for match gating.
     last_speech_activity: Option<Instant>,
+    /// Last time STT emitted non-empty text while listening. Command match gating uses this, not mic amplitude.
+    last_transcript_activity: Option<Instant>,
     /// When the current `Listening` session began (hotkey / wake / `hud_set_phase`). Used for no-STT auto-dismiss.
     listening_started_at: Instant,
     /// Last non-empty STT text while listening (not mic amplitude). Used for post-speech no-match dismiss.
@@ -383,9 +395,11 @@ struct HudRuntime {
     /// Monotonic version for pending transcript debounce scheduling.
     transcript_revision: u64,
     /// Set when this listen session has received at least one non-empty STT chunk.
-    /// Partial matching uses `last_speech_activity` silence; without this, idle time after
+    /// Partial matching uses `last_transcript_activity` silence; without this, idle time after
     /// opening the HUD satisfies that window before the user speaks.
     nonempty_transcript_this_listen: bool,
+    /// When `transcript_revision` last changed (stable revision → no-match watchdog).
+    transcript_revision_changed_at: Option<Instant>,
     /// Cooperative cancellation handle for currently running action chain.
     active_run_cancel: Option<Arc<AtomicBool>>,
     /// Session id that owns `active_run_cancel`.
@@ -398,6 +412,10 @@ struct HudRuntime {
     pending_follow_up_candidate_at: Option<Instant>,
     /// Set on dismiss/close; suppresses wake reopens until [`WAKE_COOLDOWN_AFTER_DISMISS`].
     dismissed_at: Option<Instant>,
+    /// Cancels the latest [`spawn_deferred_partial_match`] sleep when HUD dismisses or session bumps.
+    deferred_match_cancel: Option<Arc<AtomicBool>>,
+    /// Cancels in-flight tier-2 router infer when the user keeps speaking.
+    routing_cancel: Option<Arc<AtomicBool>>,
 }
 
 impl Default for HudRuntime {
@@ -408,22 +426,33 @@ impl Default for HudRuntime {
             session_id: 0,
             overlay_mode: HudOverlayMode::Command,
             last_speech_activity: None,
+            last_transcript_activity: None,
             listening_started_at: Instant::now(),
             last_nonempty_transcript_at: None,
             pending_transcript: String::new(),
             transcript_revision: 0,
             nonempty_transcript_this_listen: false,
+            transcript_revision_changed_at: None,
             active_run_cancel: None,
             active_run_session_id: None,
             pending_follow_up_response: None,
             pending_follow_up_candidate: None,
             pending_follow_up_candidate_at: None,
             dismissed_at: None,
+            deferred_match_cancel: None,
+            routing_cancel: None,
         }
     }
 }
 
 pub(crate) type SharedHud = Arc<Mutex<HudRuntime>>;
+
+/// Whether the HUD session is marked visible (macOS overlay reassert guard).
+pub(crate) fn is_hud_overlay_visible(app: &AppHandle) -> bool {
+    app.try_state::<SharedHud>()
+        .and_then(|rt| rt.lock().ok().map(|s| s.visible))
+        .unwrap_or(false)
+}
 
 /// Holds the running wake worker so `update_settings` can restart it (live reload).
 pub struct WakeSupervisorState(pub Mutex<Option<audio::wake::thread::WakeSupervisor>>);
@@ -571,6 +600,9 @@ pub(crate) fn try_start_listening_audio(
     }
     let old = {
         let mut g = slot.lock().unwrap();
+        if let Some(pipeline) = g.as_ref() {
+            pipeline.signal_cancel();
+        }
         g.take()
     };
     drop(old);
@@ -615,6 +647,75 @@ fn sync_hud_window_from_state(app: &AppHandle, rt: &SharedHud) -> Result<(), Str
         .map_err(|_| "hud state poisoned".to_string())?
         .phase;
     sync_hud_window(app, phase)
+}
+
+fn cancel_deferred_partial_match(s: &mut HudRuntime) {
+    if let Some(cancel) = s.deferred_match_cancel.take() {
+        cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+pub(crate) fn cancel_tier2_routing(s: &mut HudRuntime) {
+    if let Some(cancel) = s.routing_cancel.take() {
+        cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+pub(crate) fn assign_routing_cancel(rt: &SharedHud) -> Arc<AtomicBool> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    if let Ok(mut s) = rt.lock() {
+        cancel_tier2_routing(&mut s);
+        s.routing_cancel = Some(cancel.clone());
+    }
+    cancel
+}
+
+fn activity_idle_since(last: Option<Instant>, duration: Duration) -> bool {
+    last.is_some_and(|t| t.elapsed() >= duration)
+}
+
+fn transcript_match_quiet(s: &HudRuntime) -> bool {
+    activity_idle_since(s.last_transcript_activity, SILENCE_BEFORE_MATCH)
+}
+
+fn speech_match_quiet(s: &HudRuntime) -> bool {
+    match s.last_speech_activity {
+        None => true,
+        Some(t) => t.elapsed() >= SILENCE_BEFORE_MATCH,
+    }
+}
+
+fn command_match_quiet(s: &HudRuntime) -> bool {
+    // Once STT produced words, transcript idle is the utterance-end signal. Mic amplitude
+    // on macOS (and some Windows inputs) can stay above threshold from room noise and
+    // block routing forever if we also require amplitude silence.
+    if s.nonempty_transcript_this_listen && transcript_match_quiet(s) {
+        return true;
+    }
+    transcript_match_quiet(s) && speech_match_quiet(s)
+}
+
+fn clear_pending_transcript_after_silence_reset(s: &mut HudRuntime) {
+    s.pending_transcript.clear();
+    s.transcript_revision = s.transcript_revision.wrapping_add(1);
+    s.transcript_revision_changed_at = Some(Instant::now());
+    cancel_deferred_partial_match(s);
+    cancel_tier2_routing(s);
+}
+
+fn abort_tier2_routing_for_new_speech(rt: &SharedHud, update: &audio::stt::TranscriptUpdate) -> bool {
+    if update.text.trim().is_empty() {
+        return false;
+    }
+    let Ok(mut s) = rt.lock() else {
+        return false;
+    };
+    if s.phase != HudPhase::Routing || s.session_id != update.hud_session_id {
+        return false;
+    }
+    cancel_tier2_routing(&mut s);
+    s.phase = HudPhase::Listening;
+    true
 }
 
 fn mark_hud_dismissed(s: &mut HudRuntime) {
@@ -745,10 +846,29 @@ fn should_attempt_match_for_update(rt: &HudRuntime, is_final: bool) -> bool {
     if !rt.nonempty_transcript_this_listen {
         return false;
     }
-    match rt.last_speech_activity {
-        Some(last) => last.elapsed() >= SILENCE_BEFORE_MATCH,
-        None => false,
+    command_match_quiet(rt)
+}
+
+/// After the defer sleep, route when the scheduled revision is still current and text is non-empty.
+fn deferred_partial_match_text(
+    s: &HudRuntime,
+    expected_session_id: u64,
+    expected_revision: u64,
+) -> Option<String> {
+    if !should_attempt_command_match(s) || s.session_id != expected_session_id {
+        return None;
     }
+    if s.transcript_revision != expected_revision {
+        return None;
+    }
+    if !command_match_quiet(s) {
+        return None;
+    }
+    let text = s.pending_transcript.trim();
+    if text.is_empty() {
+        return None;
+    }
+    Some(text.to_string())
 }
 
 fn update_pending_transcript(rt: &SharedHud, text: &str) -> Option<(u64, u64)> {
@@ -762,6 +882,7 @@ fn update_pending_transcript(rt: &SharedHud, text: &str) -> Option<(u64, u64)> {
     }
     s.pending_transcript = trimmed.to_string();
     s.transcript_revision = s.transcript_revision.wrapping_add(1);
+    s.transcript_revision_changed_at = Some(Instant::now());
     s.pending_follow_up_response = None;
     s.pending_follow_up_candidate = None;
     s.pending_follow_up_candidate_at = None;
@@ -783,11 +904,13 @@ fn prepare_hud_listening_session(s: &mut HudRuntime) -> u64 {
     s.overlay_mode = HudOverlayMode::Command;
     s.session_id = s.session_id.wrapping_add(1);
     s.last_speech_activity = Some(now);
+    s.last_transcript_activity = None;
     s.listening_started_at = now;
     s.last_nonempty_transcript_at = None;
     s.nonempty_transcript_this_listen = false;
     s.pending_transcript.clear();
     s.transcript_revision = 0;
+    s.transcript_revision_changed_at = None;
     s.pending_follow_up_response = None;
     s.pending_follow_up_candidate = None;
     s.pending_follow_up_candidate_at = None;
@@ -797,6 +920,8 @@ fn prepare_hud_listening_session(s: &mut HudRuntime) -> u64 {
 
 fn prepare_hud_close_session(s: &mut HudRuntime) {
     mark_hud_dismissed(s);
+    cancel_deferred_partial_match(s);
+    cancel_tier2_routing(s);
     s.phase = HudPhase::Stopped;
     s.visible = false;
     s.overlay_mode = HudOverlayMode::Command;
@@ -804,6 +929,8 @@ fn prepare_hud_close_session(s: &mut HudRuntime) {
     s.nonempty_transcript_this_listen = false;
     s.pending_transcript.clear();
     s.transcript_revision = 0;
+    s.transcript_revision_changed_at = None;
+    s.last_transcript_activity = None;
     s.pending_follow_up_response = None;
     s.pending_follow_up_candidate = None;
     s.pending_follow_up_candidate_at = None;
@@ -904,16 +1031,24 @@ fn should_fire_no_match_timeout(rt: &HudRuntime, expected_session_id: u64) -> bo
     rt.visible && rt.phase == HudPhase::Listening && rt.session_id == expected_session_id
 }
 
-/// Dismiss while listening: 3s with no STT words, or 3s idle after the last non-empty transcript if words were seen.
+/// Dismiss while listening: no STT words timeout, transcript idle, revision stable, or max listen cap.
 fn no_match_idle_should_dismiss(s: &HudRuntime) -> bool {
-    if !s.nonempty_transcript_this_listen {
-        s.listening_started_at.elapsed() >= NO_WORDS_DISMISS_AFTER
-    } else {
-        match s.last_nonempty_transcript_at {
-            Some(t) => t.elapsed() >= AFTER_WORDS_NO_MATCH_DISMISS_AFTER,
-            None => s.listening_started_at.elapsed() >= NO_WORDS_DISMISS_AFTER,
-        }
+    if s.listening_started_at.elapsed() >= MAX_LISTEN_DURATION {
+        return true;
     }
+    if s.last_speech_activity.is_some_and(|t| t.elapsed() < SILENCE_BEFORE_MATCH) {
+        return false;
+    }
+    if !s.nonempty_transcript_this_listen {
+        return s.listening_started_at.elapsed() >= NO_WORDS_DISMISS_AFTER;
+    }
+    let transcript_idle = s
+        .last_nonempty_transcript_at
+        .is_some_and(|t| t.elapsed() >= AFTER_WORDS_NO_MATCH_DISMISS_AFTER);
+    let revision_stable = s
+        .transcript_revision_changed_at
+        .is_some_and(|t| t.elapsed() >= AFTER_WORDS_NO_MATCH_DISMISS_AFTER);
+    transcript_idle || revision_stable
 }
 
 fn touch_speech_activity(rt: &SharedHud) {
@@ -932,6 +1067,7 @@ fn touch_speech_on_transcript(rt: &SharedHud, text: &str) {
         if s.visible && s.phase == HudPhase::Listening {
             let now = Instant::now();
             s.last_speech_activity = Some(now);
+            s.last_transcript_activity = Some(now);
             s.last_nonempty_transcript_at = Some(now);
             s.nonempty_transcript_this_listen = true;
         }
@@ -948,11 +1084,7 @@ fn touch_speech_on_amplitude(rt: &SharedHud, amplitude: f64) {
 /// Skips hide if the user reopened during the wait (`visible` or phase changed).
 /// Re-syncs webview background immediately before `hide()`.
 pub(crate) fn hide_hud_window(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window(HUD_WINDOW_LABEL) {
-        if let Err(e) = w.hide() {
-            warn!("hud hide: {e}");
-        }
-    }
+    hide_hud_window_on_main(app);
 }
 
 /// Command finished (no follow-up reopen): dismiss session and stop mic — do not linger on `Done`.
@@ -965,6 +1097,16 @@ pub(crate) fn finalize_command_run(
         warn!("finalize_command_run dismiss: {e}");
     }
     audio::stop_shared_pipeline(app, audio);
+}
+
+/// Stop mic + dismiss command HUD so dictation can start (e.g. hidden `executing` session).
+pub(crate) fn abort_command_hud_session(
+    app: &AppHandle,
+    rt: &SharedHud,
+    audio: &SharedAudioPipeline,
+) -> Result<(), String> {
+    audio::stop_shared_pipeline(app, audio);
+    dismiss_hud(app, rt)
 }
 
 /// After dictation dismiss the window stays dictation-sized until hidden; restore command geometry then.
@@ -1002,11 +1144,7 @@ fn schedule_hud_window_hide_when_still_dismissed(app: AppHandle, rt: SharedHud) 
         let rt_for_main = Arc::clone(&rt);
         if let Err(err) = app.run_on_main_thread(move || {
             sync_hud_webview_background(&app_for_main);
-            if let Some(w) = app_for_main.get_webview_window(HUD_WINDOW_LABEL) {
-                if let Err(e) = w.hide() {
-                    warn!("hud delayed hide: {e}");
-                }
-            }
+            hide_hud_window_on_main(&app_for_main);
             reset_hud_command_geometry_if_dictation_dismissed(&app_for_main, &rt_for_main);
         }) {
             warn!("hud delayed hide dispatch: {err:?}");
@@ -1059,26 +1197,47 @@ fn spawn_deferred_partial_match(
     expected_session_id: u64,
     expected_revision: u64,
 ) {
+    let cancel = {
+        let Ok(mut s) = rt.lock() else {
+            return;
+        };
+        if let Some(old) = s.deferred_match_cancel.take() {
+            old.store(true, Ordering::Relaxed);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        s.deferred_match_cancel = Some(cancel.clone());
+        cancel
+    };
     std::thread::spawn(move || {
-        std::thread::sleep(SILENCE_BEFORE_MATCH);
+        let started = Instant::now();
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            let quiet = rt
+                .lock()
+                .map(|s| command_match_quiet(&s))
+                .unwrap_or(false);
+            if quiet {
+                break;
+            }
+            if started.elapsed() >= MATCH_QUIET_MAX_WAIT {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
         let text = {
             let s = match rt.lock() {
                 Ok(g) => g,
                 Err(_) => return,
             };
-            if !should_attempt_command_match(&s) || s.session_id != expected_session_id {
-                return;
-            }
-            if s.transcript_revision != expected_revision {
-                return;
-            }
-            let Some(last) = s.last_speech_activity else {
-                return;
-            };
-            if last.elapsed() < SILENCE_BEFORE_MATCH {
-                return;
-            }
-            s.pending_transcript.clone()
+            deferred_partial_match_text(&s, expected_session_id, expected_revision)
+        };
+        let Some(text) = text else {
+            return;
         };
         let _ = commands::try_route_and_execute(&app, &rt, &audio, &text);
     });
@@ -1103,13 +1262,8 @@ pub(crate) fn await_follow_up_input(
         s.pending_follow_up_candidate = None;
         s.pending_follow_up_candidate_at = None;
     }
-    let window = app
-        .get_webview_window(HUD_WINDOW_LABEL)
-        .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
-    window
-        .show()
-        .map_err(|e| e.to_string())?;
     apply_hud_window_geometry(app, HudOverlayMode::Command)?;
+    present_hud_window_on_main(app, HudOverlayMode::Command)?;
     sync_hud_webview_background(app);
     sync_hud_window(app, HudPhase::AwaitingInput)?;
     emit_hud_phase(app);
@@ -1233,6 +1387,41 @@ fn process_transcript_update(
             should_attempt_match_for_update(&s, update.is_final),
         )
     };
+    if update.kind == TranscriptPartialKind::SilenceReset {
+        let route_text = {
+            let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+            if update.hud_session_id != s.session_id || !should_attempt_command_match(&s) {
+                None
+            } else {
+                let text = s.pending_transcript.trim();
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(text.to_string())
+                }
+            }
+        };
+        if let Some(text) = route_text {
+            debug!("flow: silence reset; commit pending transcript for routing");
+            if let Ok(mut s) = rt.lock() {
+                if s.session_id == update.hud_session_id {
+                    cancel_deferred_partial_match(&mut s);
+                }
+            }
+            commands::try_route_and_execute(app, rt, audio, &text)?;
+        }
+        if let Ok(mut s) = rt.lock() {
+            if s.session_id == update.hud_session_id && should_attempt_command_match(&s) {
+                debug!("flow: silence reset; clear pending transcript");
+                clear_pending_transcript_after_silence_reset(&mut s);
+            }
+        }
+        return Ok(());
+    }
+    if abort_tier2_routing_for_new_speech(rt, &update) {
+        debug!("flow: resumed listening during tier2 routing");
+        let _ = emit_hud_phase(app);
+    }
     if capture_follow_up_from_update(rt, &update) {
         return Ok(());
     }
@@ -1268,6 +1457,34 @@ fn process_transcript_update(
 }
 
 fn show_hud_from_hotkey(
+    app: &AppHandle,
+    rt: &SharedHud,
+    audio: &SharedAudioPipeline,
+    is_paused: &Arc<AtomicBool>,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        if objc2::MainThreadMarker::new().is_none() {
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            let app = app.clone();
+            let rt = Arc::clone(rt);
+            let audio = audio.clone();
+            let is_paused = Arc::clone(is_paused);
+            let app_for_main = app.clone();
+            app.run_on_main_thread(move || {
+                let result = show_hud_from_hotkey_impl(&app_for_main, &rt, &audio, &is_paused);
+                let _ = tx.send(result);
+            })
+            .map_err(|e| format!("hud hotkey main-thread dispatch: {e:?}"))?;
+            return rx
+                .recv()
+                .map_err(|e| format!("hud hotkey main-thread result: {e}"))?;
+        }
+    }
+    show_hud_from_hotkey_impl(app, rt, audio, is_paused)
+}
+
+fn show_hud_from_hotkey_impl(
     app: &AppHandle,
     rt: &SharedHud,
     audio: &SharedAudioPipeline,
@@ -1310,8 +1527,7 @@ fn show_hud_from_hotkey(
 
     if opening_listen {
         apply_hud_window_geometry(app, HudOverlayMode::Command)?;
-        window.show().map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
+        present_hud_window(app, &window, HudOverlayMode::Command)?;
     } else if defer_hud_window_hide {
         // closed via hotkey toggle — window hide scheduled below
     }
@@ -1363,8 +1579,7 @@ fn wake_request_hud(
         .get_webview_window(HUD_WINDOW_LABEL)
         .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
     apply_hud_window_geometry(app, HudOverlayMode::Command)?;
-    window.show().map_err(|e| e.to_string())?;
-    window.set_focus().map_err(|e| e.to_string())?;
+    present_hud_window(app, &window, HudOverlayMode::Command)?;
 
     sync_hud_webview_background(app);
 
@@ -1498,11 +1713,13 @@ fn prepare_dictation_overlay(s: &mut HudRuntime, session_id: u64) {
     s.overlay_mode = HudOverlayMode::Dictation;
     s.session_id = session_id;
     s.last_speech_activity = Some(now);
+    s.last_transcript_activity = None;
     s.listening_started_at = now;
     s.last_nonempty_transcript_at = None;
     s.nonempty_transcript_this_listen = false;
     s.pending_transcript.clear();
     s.transcript_revision = 0;
+    s.transcript_revision_changed_at = None;
     s.pending_follow_up_response = None;
     s.pending_follow_up_candidate = None;
     s.pending_follow_up_candidate_at = None;
@@ -1510,6 +1727,31 @@ fn prepare_dictation_overlay(s: &mut HudRuntime, session_id: u64) {
 }
 
 pub(crate) fn show_dictation_overlay(
+    app: &AppHandle,
+    rt: &SharedHud,
+    session_id: u64,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        if objc2::MainThreadMarker::new().is_none() {
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            let app = app.clone();
+            let rt = Arc::clone(rt);
+            let app_for_main = app.clone();
+            app.run_on_main_thread(move || {
+                let result = show_dictation_overlay_impl(&app_for_main, &rt, session_id);
+                let _ = tx.send(result);
+            })
+            .map_err(|e| format!("dictation hud main-thread dispatch: {e:?}"))?;
+            return rx
+                .recv()
+                .map_err(|e| format!("dictation hud main-thread result: {e}"))?;
+        }
+    }
+    show_dictation_overlay_impl(app, rt, session_id)
+}
+
+fn show_dictation_overlay_impl(
     app: &AppHandle,
     rt: &SharedHud,
     session_id: u64,
@@ -1523,7 +1765,7 @@ pub(crate) fn show_dictation_overlay(
         .get_webview_window(HUD_WINDOW_LABEL)
         .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
     apply_hud_window_geometry(app, HudOverlayMode::Dictation)?;
-    window.show().map_err(|e| e.to_string())?;
+    present_hud_window(app, &window, HudOverlayMode::Dictation)?;
     sync_hud_webview_background(app);
     sync_hud_window(app, HudPhase::Listening)?;
     emit_hud_phase(app);
@@ -1555,6 +1797,8 @@ pub(crate) fn hide_dictation_overlay(app: &AppHandle, rt: &SharedHud) -> Result<
 fn dismiss_hud(app: &AppHandle, rt: &SharedHud) -> Result<(), String> {
     let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
     mark_hud_dismissed(&mut s);
+    cancel_deferred_partial_match(&mut s);
+    cancel_tier2_routing(&mut s);
     s.phase = HudPhase::Stopped;
     s.visible = false;
     s.overlay_mode = HudOverlayMode::Command;
@@ -1609,11 +1853,13 @@ fn hud_set_phase(
                 s.overlay_mode = HudOverlayMode::Command;
                 s.session_id = s.session_id.wrapping_add(1);
                 s.last_speech_activity = Some(now);
+                s.last_transcript_activity = None;
                 s.listening_started_at = now;
                 s.last_nonempty_transcript_at = None;
                 s.nonempty_transcript_this_listen = false;
                 s.pending_transcript.clear();
                 s.transcript_revision = 0;
+                s.transcript_revision_changed_at = None;
                 s.pending_follow_up_response = None;
                 s.pending_follow_up_candidate = None;
                 s.pending_follow_up_candidate_at = None;
@@ -1621,6 +1867,8 @@ fn hud_set_phase(
             }
             HudPhase::Stopped => {
                 mark_hud_dismissed(&mut s);
+                cancel_deferred_partial_match(&mut s);
+                cancel_tier2_routing(&mut s);
                 s.visible = false;
                 s.overlay_mode = HudOverlayMode::Command;
                 s.session_id = s.session_id.wrapping_add(1);
@@ -1757,6 +2005,18 @@ fn reorder_commands(
     refresh_command_cache(&app, &command_cache)?;
     emit_editor_commands_changed(&app);
     Ok(())
+}
+
+#[tauri::command]
+fn open_microphone_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        return crate::macos::open_microphone_privacy_settings();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Microphone privacy settings are only available on macOS.".into())
+    }
 }
 
 #[tauri::command]
@@ -2522,7 +2782,7 @@ pub fn run() {
     let app_index_store: AppIndexStore = Arc::new(RwLock::new(Vec::new()));
     let app_icon_cache: AppIconCache = Arc::new(apps::IconCache::new());
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(Arc::clone(&hud_state))
         .manage(audio_pipeline.clone())
         .manage(Arc::clone(&is_paused))
@@ -2548,7 +2808,10 @@ pub fn run() {
         .manage(WakeSupervisorState::default())
         .manage(HudPositionGuard::default())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
+    builder
         .setup({
             let hud_state = Arc::clone(&hud_state);
             let audio_for_shortcut = audio_pipeline.clone();
@@ -2583,6 +2846,25 @@ pub fn run() {
                 log::info!(
                     "gpu-startup: whisper_preload={whisper_preload} whisper_use_gpu={whisper_use_gpu} defer_wake={defer_wake} router_warmup={router_warmup}"
                 );
+                #[cfg(target_os = "macos")]
+                macos::schedule_microphone_permission_request(app.handle());
+                #[cfg(target_os = "macos")]
+                if let Err(e) = macos::init_hud_panel(app.handle()) {
+                    warn!("hud panel init: {e}");
+                }
+                #[cfg(target_os = "macos")]
+                if let Err(e) = app
+                    .handle()
+                    .set_activation_policy(tauri::ActivationPolicy::Accessory)
+                {
+                    warn!("macos startup activation policy: {e}");
+                }
+                #[cfg(windows)]
+                if let Some(hud_window) = app.get_webview_window(HUD_WINDOW_LABEL) {
+                    if let Err(e) = hud_window.set_always_on_top(true) {
+                        warn!("hud always_on_top: {e}");
+                    }
+                }
                 refresh_app_index_on_startup(
                     app.handle(),
                     &app_index_for_setup,
@@ -2739,6 +3021,13 @@ pub fn run() {
 
                     let amp_hud = Arc::clone(&hud_state);
                     app.listen("amplitude-update", move |event| {
+                        let listening = amp_hud
+                            .lock()
+                            .map(|s| s.visible && s.phase == HudPhase::Listening)
+                            .unwrap_or(false);
+                        if !listening {
+                            return;
+                        }
                         let Ok(v) = serde_json::from_str::<serde_json::Value>(event.payload())
                         else {
                             return;
@@ -2828,12 +3117,14 @@ pub fn run() {
                                     return;
                                 }
                                 info!("voice HUD hotkey pressed ({hud_hotkey_for_handler})");
-                                let _ = show_hud_from_hotkey(
+                                if let Err(err) = show_hud_from_hotkey(
                                     app,
                                     &hud_state,
                                     &audio_for_shortcut,
                                     &is_paused_for_shortcut,
-                                );
+                                ) {
+                                    warn!("voice HUD hotkey failed: {err}");
+                                }
                             }
                         })
                         .build();
@@ -2857,6 +3148,13 @@ pub fn run() {
                     let hud_for_move = Arc::clone(&hud_state);
                     let app_for_move = app.handle().clone();
                     hud_window.on_window_event(move |event| {
+                        #[cfg(target_os = "macos")]
+                        if matches!(event, WindowEvent::Focused(true)) {
+                            if crate::is_hud_overlay_visible(&app_for_move) {
+                                crate::macos::reassert_hud_overlay(&app_for_move);
+                            }
+                            return;
+                        }
                         if !matches!(event, WindowEvent::Moved(_)) {
                             return;
                         }
@@ -2931,7 +3229,8 @@ pub fn run() {
             llm::tauri_cmds::cancel_generate_automation,
             update_settings,
             save_api_key,
-            delete_api_key
+            delete_api_key,
+            open_microphone_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -3120,7 +3419,27 @@ mod tests {
     #[test]
     fn partial_transcript_match_is_debounced_while_speaking() {
         let mut rt = HudRuntime::default();
+        rt.last_transcript_activity = Some(Instant::now());
+        assert!(!should_attempt_match_for_update(&rt, false));
+    }
+
+    #[test]
+    fn mic_amplitude_noise_does_not_block_match_after_transcript_idle() {
+        let mut rt = HudRuntime::default();
+        rt.nonempty_transcript_this_listen = true;
         rt.last_speech_activity = Some(Instant::now());
+        rt.last_transcript_activity =
+            Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
+        assert!(should_attempt_match_for_update(&rt, false));
+    }
+
+    #[test]
+    fn mic_amplitude_still_blocks_match_before_first_nonempty_transcript() {
+        let mut rt = HudRuntime::default();
+        rt.nonempty_transcript_this_listen = false;
+        rt.last_speech_activity = Some(Instant::now());
+        rt.last_transcript_activity =
+            Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
         assert!(!should_attempt_match_for_update(&rt, false));
     }
 
@@ -3128,6 +3447,8 @@ mod tests {
     fn partial_transcript_match_allowed_after_silence_gap() {
         let mut rt = HudRuntime::default();
         rt.nonempty_transcript_this_listen = true;
+        rt.last_transcript_activity =
+            Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
         rt.last_speech_activity =
             Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
         assert!(should_attempt_match_for_update(&rt, false));
@@ -3137,7 +3458,7 @@ mod tests {
     fn partial_transcript_never_matches_before_first_nonempty_stt_even_if_hud_idle() {
         let mut rt = HudRuntime::default();
         rt.nonempty_transcript_this_listen = false;
-        rt.last_speech_activity =
+        rt.last_transcript_activity =
             Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_secs(30));
         assert!(!should_attempt_match_for_update(&rt, false));
     }
@@ -3145,8 +3466,61 @@ mod tests {
     #[test]
     fn final_transcript_bypasses_match_debounce() {
         let mut rt = HudRuntime::default();
-        rt.last_speech_activity = Some(Instant::now());
+        rt.last_transcript_activity = Some(Instant::now());
         assert!(should_attempt_match_for_update(&rt, true));
+    }
+
+    #[test]
+    fn command_match_quiet_ignores_amplitude_after_transcript_idle() {
+        let mut rt = HudRuntime::default();
+        rt.nonempty_transcript_this_listen = true;
+        rt.last_speech_activity = Some(Instant::now());
+        rt.last_transcript_activity =
+            Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
+        assert!(command_match_quiet(&rt));
+    }
+
+    #[test]
+    fn deferred_partial_match_routes_on_stable_revision() {
+        let mut rt = HudRuntime::default();
+        rt.visible = true;
+        rt.phase = HudPhase::Listening;
+        rt.session_id = 5;
+        rt.pending_transcript = "open safari".to_string();
+        rt.transcript_revision = 3;
+        rt.last_speech_activity =
+            Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
+        rt.last_transcript_activity =
+            Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
+        let text = deferred_partial_match_text(&rt, 5, 3);
+        assert_eq!(text.as_deref(), Some("open safari"));
+    }
+
+    #[test]
+    fn deferred_partial_match_skips_when_revision_advanced() {
+        let mut rt = HudRuntime::default();
+        rt.visible = true;
+        rt.phase = HudPhase::Listening;
+        rt.session_id = 5;
+        rt.pending_transcript = "open safari".to_string();
+        rt.transcript_revision = 4;
+        assert!(deferred_partial_match_text(&rt, 5, 3).is_none());
+    }
+
+    #[test]
+    fn deferred_partial_match_routes_when_transcript_idle_despite_mic_noise() {
+        let mut rt = HudRuntime::default();
+        rt.visible = true;
+        rt.phase = HudPhase::Listening;
+        rt.session_id = 2;
+        rt.nonempty_transcript_this_listen = true;
+        rt.pending_transcript = "open safari".to_string();
+        rt.transcript_revision = 1;
+        rt.last_speech_activity = Some(Instant::now());
+        rt.last_transcript_activity =
+            Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
+        let text = deferred_partial_match_text(&rt, 2, 1);
+        assert_eq!(text.as_deref(), Some("open safari"));
     }
 
     #[test]
@@ -3173,6 +3547,47 @@ mod tests {
         assert!(no_match_idle_should_dismiss(&rt));
         rt.last_nonempty_transcript_at = Some(Instant::now());
         assert!(!no_match_idle_should_dismiss(&rt));
+    }
+
+    #[test]
+    fn no_match_idle_waits_while_mic_active() {
+        let mut rt = HudRuntime::default();
+        rt.visible = true;
+        rt.phase = HudPhase::Listening;
+        rt.nonempty_transcript_this_listen = true;
+        rt.last_nonempty_transcript_at = Some(
+            Instant::now() - AFTER_WORDS_NO_MATCH_DISMISS_AFTER - Duration::from_millis(50),
+        );
+        rt.transcript_revision_changed_at = Some(
+            Instant::now() - AFTER_WORDS_NO_MATCH_DISMISS_AFTER - Duration::from_millis(50),
+        );
+        rt.last_speech_activity = Some(Instant::now());
+        assert!(!no_match_idle_should_dismiss(&rt));
+    }
+
+    #[test]
+    fn no_match_idle_dismisses_when_revision_stable() {
+        let mut rt = HudRuntime::default();
+        rt.visible = true;
+        rt.phase = HudPhase::Listening;
+        rt.nonempty_transcript_this_listen = true;
+        rt.last_nonempty_transcript_at = Some(Instant::now());
+        rt.last_speech_activity =
+            Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
+        rt.transcript_revision_changed_at = Some(
+            Instant::now() - AFTER_WORDS_NO_MATCH_DISMISS_AFTER - Duration::from_millis(50),
+        );
+        assert!(no_match_idle_should_dismiss(&rt));
+    }
+
+    #[test]
+    fn no_match_idle_dismisses_at_max_listen_duration() {
+        let mut rt = HudRuntime::default();
+        rt.visible = true;
+        rt.phase = HudPhase::Listening;
+        rt.listening_started_at =
+            Instant::now() - MAX_LISTEN_DURATION - Duration::from_millis(50);
+        assert!(no_match_idle_should_dismiss(&rt));
     }
 
     #[test]

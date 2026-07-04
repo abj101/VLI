@@ -469,10 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn whisper_model_filename_matches_stt() {
-        assert_eq!(
-            whisper_model_filename("base.en"),
-            crate::audio::stt::whisper_model_filename("base.en")
-        );
+    fn whisper_model_filename_uses_ggml_prefix() {
+        assert_eq!(whisper_model_filename("base.en"), "ggml-base.en.bin");
     }
 }

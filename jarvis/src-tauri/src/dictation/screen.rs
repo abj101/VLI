@@ -13,6 +13,7 @@ impl ScreenModel {
         Self::default()
     }
 
+    #[cfg(test)]
     pub(crate) fn from_parts(text: String, typed_in_session: bool) -> Self {
         Self {
             text,
@@ -20,6 +21,7 @@ impl ScreenModel {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn into_parts(self) -> (String, bool) {
         (self.text, self.typed_in_session)
     }

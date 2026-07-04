@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { HudOverlayMode } from "../../types";
 import { useShallow } from "zustand/react/shallow";
 import { useDebounced } from "../../hooks/useDebounced";
@@ -18,6 +19,16 @@ import { HUD_SHELL_TRANSITION_MS, hudShellEase } from "./hudMotion";
 const TRANSCRIPT_ANNOUNCE_DEBOUNCE_MS = 380;
 
 const HUD_SHELL_TRANSITION_S = HUD_SHELL_TRANSITION_MS / 1000;
+
+/** Tauri drag script only checks `event.target`; delegate from child text/nodes up to the shell. */
+function handleHudDragPointerDown(e: ReactPointerEvent<HTMLElement>) {
+  if (e.button !== 0) return;
+  const target = e.target as HTMLElement;
+  if (!target.closest("[data-tauri-drag-region]")) return;
+  if (target.closest("[data-tauri-drag-region]") === target) return;
+  e.preventDefault();
+  void getCurrentWindow().startDragging().catch(() => {});
+}
 
 /** Fixed sleeve height for bars — CSS `transform`/`opacity` (no layout thrash). */
 const WAVE_BAR_SLEEVE_PX = 28;
@@ -203,6 +214,7 @@ function HudShell() {
         ref={shellRef}
         className="hud-root hud-root--dictation"
         data-tauri-drag-region
+        onPointerDown={handleHudDragPointerDown}
         role="region"
         aria-label="Dictation session"
         initial={shellInitial}
@@ -222,6 +234,7 @@ function HudShell() {
       ref={shellRef}
       className="hud-root"
       data-tauri-drag-region
+      onPointerDown={handleHudDragPointerDown}
       role="region"
       {...(phaseLabel
         ? { "aria-labelledby": "hud-phase-label" }
@@ -274,7 +287,11 @@ function HudBody() {
 
 export function HudPanel() {
   return (
-    <div className="hud-panel-fill">
+    <div
+      className="hud-panel-fill"
+      data-tauri-drag-region
+      onPointerDown={handleHudDragPointerDown}
+    >
       <HudBody />
     </div>
   );

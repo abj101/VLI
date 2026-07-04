@@ -48,6 +48,15 @@ fn spawn_pcm_drain(pcm_rx: Receiver<Vec<f32>>) -> JoinHandle<()> {
 pub struct AudioPipeline {
     capture: CaptureSession,
     stt: Option<JoinHandle<()>>,
+    /// Signals STT workers to skip further Whisper decode after stop/drop.
+    cancel: Arc<AtomicBool>,
+}
+
+impl AudioPipeline {
+    /// Tell the STT worker to skip further Whisper decode. Capture stops on drop.
+    pub fn signal_cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
 }
 
 impl AudioPipeline {
@@ -61,7 +70,8 @@ impl AudioPipeline {
         for_dictation: bool,
     ) -> Result<Self, String> {
         let (pcm_tx, pcm_rx) = std::sync::mpsc::channel();
-        let (capture, sample_rate) = capture::start_capture(app.clone(), pcm_tx)?;
+        let (capture, sample_rate) = capture::start_capture(app.clone(), pcm_tx, true)?;
+        let cancel = Arc::new(AtomicBool::new(false));
 
         let stt = match choice {
             SttPipelineChoice::Os => Some(spawn_os_stt_thread(app.clone(), pcm_rx, hud_session_id)),
@@ -91,10 +101,16 @@ impl AudioPipeline {
                     .unwrap_or_else(|| stt::DEFAULT_LOCAL_WHISPER_MODEL.to_string());
                 let app_load = app.clone();
                 let app_emit = app.clone();
+                let cancel_loader = Arc::clone(&cancel);
+                let cancel_stt = Arc::clone(&cancel);
                 let warmed = app
                     .try_state::<crate::WhisperModelCache>()
                     .and_then(|c| c.take_context());
                 Some(crate::gpu_startup::spawn_whisper_loader_thread("whisper-loader", move || {
+                    if cancel_loader.load(Ordering::Relaxed) {
+                        std::mem::forget(spawn_pcm_drain(pcm_rx));
+                        return;
+                    }
                     let model_path = match whisper_models::ensure_whisper_model(
                         &app_emit,
                         model_id.as_str(),
@@ -109,6 +125,10 @@ impl AudioPipeline {
                             return;
                         }
                     };
+                    if cancel_loader.load(Ordering::Relaxed) {
+                        std::mem::forget(spawn_pcm_drain(pcm_rx));
+                        return;
+                    }
                     let model_path_text = model_path.to_string_lossy().to_string();
                     let load_result = warmed
                         .map(|ctx| Ok((ctx, use_gpu)))
@@ -117,6 +137,10 @@ impl AudioPipeline {
                         });
                     match load_result {
                         Ok((ctx, effective_gpu)) => {
+                            if cancel_loader.load(Ordering::Relaxed) {
+                                std::mem::forget(spawn_pcm_drain(pcm_rx));
+                                return;
+                            }
                             if use_gpu && !effective_gpu {
                                 let _ = app_emit.emit(
                                     "audio-error",
@@ -132,6 +156,7 @@ impl AudioPipeline {
                                 effective_gpu,
                                 wake_preroll_16k,
                                 for_dictation,
+                                cancel_stt,
                             );
                             std::mem::forget(inner);
                         }
@@ -147,17 +172,20 @@ impl AudioPipeline {
             }
         };
 
-        Ok(Self { capture, stt })
+        Ok(Self {
+            capture,
+            stt,
+            cancel,
+        })
     }
 }
 
 impl Drop for AudioPipeline {
     fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
         self.capture.stop();
         if let Some(h) = self.stt.take() {
-            // Do not join: Whisper's final decode in `stt_loop` can take seconds and would block
-            // whatever thread runs this Drop (often the Tauri event path). Detach and let the STT
-            // thread finish in the background.
+            // Do not join: detach the worker; `cancel` tells it to skip further Whisper decode.
             std::mem::forget(h);
         }
     }
@@ -195,6 +223,9 @@ pub fn stop_shared_pipeline(app: &AppHandle, slot: &SharedAudioPipeline) {
     debug!("audio: stop_shared_pipeline (take pipeline, drop outside mutex)");
     let old = {
         let mut g = slot.lock().unwrap();
+        if let Some(pipeline) = g.as_ref() {
+            pipeline.signal_cancel();
+        }
         g.take()
     };
     drop(old);

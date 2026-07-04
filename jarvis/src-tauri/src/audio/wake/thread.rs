@@ -12,6 +12,10 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 const WAKE_RECV_TICK: Duration = Duration::from_millis(100);
+/// Consecutive mic open failures before surfacing `audio-error` to the HUD (30 × 100 ms).
+const WAKE_MIC_FAIL_EMIT_THRESHOLD: u32 = 30;
+/// Back off wake mic retries when permission is permanently denied.
+const WAKE_MIC_DENIED_BACKOFF: Duration = Duration::from_secs(5);
 
 /// Handle to stop and join the wake worker (live reload when settings change).
 pub struct WakeSupervisor {
@@ -105,16 +109,23 @@ fn wake_thread_main(
 
     let mut mic: Option<WakeMic> = None;
     let mut pending_i16: Vec<i16> = Vec::new();
+    let mut mic_open_failures: u32 = 0;
+    let mut mic_error_emitted = false;
+    let mut last_mic_error: Option<String> = None;
 
-    let open_mic = |app: &AppHandle| -> Option<WakeMic> {
+    let open_mic = |app: &AppHandle, last_err: &mut Option<String>| -> Option<WakeMic> {
         let (pcm_tx, pcm_rx) = std::sync::mpsc::channel();
-        match capture::start_capture(app.clone(), pcm_tx) {
-            Ok((session, sample_rate)) => Some(WakeMic {
-                session,
-                pcm_rx,
-                sample_rate,
-            }),
+        match capture::start_capture(app.clone(), pcm_tx, false) {
+            Ok((session, sample_rate)) => {
+                *last_err = None;
+                Some(WakeMic {
+                    session,
+                    pcm_rx,
+                    sample_rate,
+                })
+            }
             Err(e) => {
+                *last_err = Some(e.clone());
                 warn!("wake: could not open mic ({e}); retrying");
                 None
             }
@@ -126,20 +137,39 @@ fn wake_thread_main(
             break;
         }
 
-        if mic_suppressed.load(Ordering::Relaxed) {
+        if mic_suppressed.load(Ordering::Relaxed) || is_paused.load(Ordering::Relaxed) {
             if mic.take().is_some() {
                 pending_i16.clear();
             }
+            mic_open_failures = 0;
             std::thread::sleep(WAKE_RECV_TICK);
             continue;
         }
 
         if mic.is_none() {
-            mic = open_mic(&app);
+            mic = open_mic(&app, &mut last_mic_error);
             if mic.is_none() {
-                std::thread::sleep(WAKE_RECV_TICK);
+                mic_open_failures = mic_open_failures.saturating_add(1);
+                if !mic_error_emitted && mic_open_failures >= WAKE_MIC_FAIL_EMIT_THRESHOLD {
+                    if let Some(message) = last_mic_error.clone() {
+                        mic_error_emitted = true;
+                        let _ = app.emit(
+                            "audio-error",
+                            serde_json::json!({ "message": message }),
+                        );
+                    }
+                }
+                let backoff = if cfg!(target_os = "macos")
+                    && crate::macos::microphone_permission_is_denied()
+                {
+                    WAKE_MIC_DENIED_BACKOFF
+                } else {
+                    WAKE_RECV_TICK
+                };
+                std::thread::sleep(backoff);
                 continue;
             }
+            mic_open_failures = 0;
         }
 
         let WakeMic {
@@ -159,10 +189,6 @@ fn wake_thread_main(
                 continue;
             }
         };
-
-        if is_paused.load(Ordering::Relaxed) {
-            continue;
-        }
 
         let resampled = resample_mono_to_16k(&chunk, *sample_rate);
 

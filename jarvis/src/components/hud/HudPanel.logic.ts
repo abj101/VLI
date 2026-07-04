@@ -54,6 +54,13 @@ export function selectCenterContent(
 
   const transcript = input.transcript.trim();
 
+  if (
+    input.phase === "listening" &&
+    normalizedActionText === "No command matched"
+  ) {
+    return { kind: "error", text: normalizedActionText };
+  }
+
   if (input.phase === "listening" && normalizedActionText && transcript.length === 0) {
     return { kind: "action", text: normalizedActionText };
   }

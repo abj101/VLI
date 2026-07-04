@@ -17,10 +17,11 @@ pub fn snapshot_top_level_windows() -> WindowSnapshot {}
 
 pub fn place_window_after_app_launch(
     _exe_path: &str,
-    _zone: &str,
+    zone: &str,
     _monitor: &str,
     _before: &WindowSnapshot,
 ) -> Result<(), String> {
+    validate_placement_zone(zone)?;
     Err("window placement is only supported on Windows".to_string())
 }
 
@@ -33,7 +34,8 @@ pub fn focus_existing_app_window(
     Ok(false)
 }
 
-pub fn snap_foreground_window(_zone: &str, _monitor: &str) -> Result<(), String> {
+pub fn snap_foreground_window(zone: &str, _monitor: &str) -> Result<(), String> {
+    validate_placement_zone(zone)?;
     Err("window placement is only supported on Windows".to_string())
 }
 

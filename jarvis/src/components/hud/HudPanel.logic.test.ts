@@ -26,6 +26,15 @@ describe("selectCenterContent", () => {
     expect(out).toEqual({ kind: "transcript", text: "hello there" });
   });
 
+  it("shows no-match status while listening even with transcript visible", () => {
+    const out = selectCenterContent({
+      ...base("listening"),
+      transcript: "blah blah",
+      actionText: "No command matched",
+    });
+    expect(out).toEqual({ kind: "error", text: "No command matched" });
+  });
+
   it("shows router loading status while listening before transcript", () => {
     const out = selectCenterContent({
       ...base("listening"),

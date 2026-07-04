@@ -140,27 +140,8 @@ impl ActionRuntime for TauriActionRuntime<'_> {
     fn open_app(&self, path: &str) -> Result<(), String> {
         debug!("executor: open_app path={path:?}");
         let trimmed = path.trim();
-        let status = if trimmed
-            .to_ascii_lowercase()
-            .starts_with("shell:appsfolder\\")
-        {
-            let windir = std::env::var("WINDIR")
-                .or_else(|_| std::env::var("SystemRoot"))
-                .unwrap_or_else(|_| "C:\\Windows".to_string());
-            let explorer = Path::new(&windir).join("explorer.exe");
-            hidden_command(explorer)
-                .arg(trimmed)
-                .status()
-                .map_err(|e| format!("failed to launch app `{path}`: {e}"))?
-        } else {
-            hidden_command("cmd")
-                .arg("/C")
-                .arg("start")
-                .arg("")
-                .arg(trimmed)
-                .status()
-                .map_err(|e| format!("failed to launch app `{path}`: {e}"))?
-        };
+        let status = launch_app_process(trimmed)
+            .map_err(|e| format!("failed to launch app `{path}`: {e}"))?;
         if status.success() {
             Ok(())
         } else {
@@ -1301,6 +1282,43 @@ fn match_numbered_variable(bytes: &[u8], start: usize) -> Option<(usize, usize)>
         return None;
     }
     Some((idx, index))
+}
+
+fn launch_app_process(path: &str) -> std::io::Result<std::process::ExitStatus> {
+    #[cfg(windows)]
+    {
+        if path
+            .to_ascii_lowercase()
+            .starts_with("shell:appsfolder\\")
+        {
+            let windir = std::env::var("WINDIR")
+                .or_else(|_| std::env::var("SystemRoot"))
+                .unwrap_or_else(|_| "C:\\Windows".to_string());
+            let explorer = Path::new(&windir).join("explorer.exe");
+            return hidden_command(explorer).arg(path).status();
+        }
+        hidden_command("cmd")
+            .arg("/C")
+            .arg("start")
+            .arg("")
+            .arg(path)
+            .status()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if path.ends_with(".app") || path.contains('/') {
+            hidden_command("open").arg(path).status()
+        } else {
+            hidden_command("open").arg("-a").arg(path).status()
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "app launch is not supported on this platform",
+        ))
+    }
 }
 
 fn validate_open_app_path(path: &str) -> Result<(), String> {

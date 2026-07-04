@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "hud",
@@ -26,7 +27,6 @@
         "backgroundColor": "#00000000",
         "transparent": true,
         "decorations": false,
-        "alwaysOnTop": true,
         "skipTaskbar": true,
         "shadow": false
       },
@@ -56,6 +56,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "macOS": {
+      "entitlements": "./Entitlements.plist",
+      "hardenedRuntime": true
+    },
     "resources": [
       "resources/ggml-base.en.bin",
       "resources/ggml-tiny.en.bin",

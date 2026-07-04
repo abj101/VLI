@@ -17,7 +17,24 @@
 - Add to shell profile (for `bindgen`): `export LIBCLANG_PATH="$(brew --prefix llvm)/lib"`
 - Ensure Homebrew binaries are on PATH (Apple Silicon default): `export PATH="/opt/homebrew/bin:$PATH"`
 - **Piper TTS (`Speak` action):** install/download `piper` (no `.exe`) and one `.onnx` voice model; env vars and model path behavior are the same as Windows
-- **Microphone** permission for Terminal/IDE and the app
+- **Microphone** permission for the jarvis app (dev and packaged builds use bundle id **`com.jarvis.app`** in System Settings)
+- On first launch macOS should prompt for microphone access (`Info.plist` includes `NSMicrophoneUsageDescription`). If voice/dictation/wake word are silent and you never saw a prompt:
+  1. **Reset stale TCC** (required once after upgrading mic permission code): `tccutil reset Microphone com.jarvis.app`
+  2. Rebuild/restart: `npm run tauri dev` (dev binaries are ad-hoc signed with `com.jarvis.app` + mic entitlements on each link)
+  3. Allow the prompt, or open **System Settings → Privacy & Security → Microphone** and enable **jarvis**
+- If you run the binary with raw `cargo run` outside `npm run tauri dev`, you may also need to enable **Terminal** or **Cursor** in Microphone settings.
+- Global hotkeys (`ctrl+j` voice HUD if configured in Settings, `ctrl+shift+d` dictation) need the app running and not paused. **`ctrl+j` is often taken by Cursor/VS Code** (toggle panel) — change the voice HUD hotkey in Settings if it never fires while the editor is focused.
+
+### macOS microphone (production builds)
+
+After `npm run tauri build`, verify the bundled app includes mic permission keys:
+
+```bash
+plutil -p src-tauri/target/release/bundle/macos/jarvis.app/Contents/Info.plist | grep NSMicrophone
+codesign -d --entitlements - src-tauri/target/release/bundle/macos/jarvis.app 2>&1 | grep audio-input
+```
+
+Signed/notarized releases need a Developer ID certificate. Set `APPLE_SIGNING_IDENTITY` (or `bundle.macOS.signingIdentity` in `tauri.conf.json`) before building. See [Tauri macOS code signing](https://v2.tauri.app/distribute/sign/macos/). `Entitlements.plist` includes `com.apple.security.device.audio-input` and `hardenedRuntime` is enabled in `tauri.conf.json`.
 
 ## Whisper model (bundled path)
 
@@ -110,7 +127,26 @@ Convention: clone the repo, then `**cd jarvis**` for every Node/npm/Tauri comman
 - `npm run tauri build` — release bundle with auto-selected Whisper GPU backend (run `.\scripts\download-model.ps1` first so the Whisper weights are present)
 - `npm run tauri:dev` / `npm run tauri:build` — explicit aliases to the same wrapper behavior
 - `WHISPER_GPU_BACKEND=auto|metal|cuda|vulkan|none` — optional override for deterministic CI/repro builds (`auto` default)
-- **`npm run sync:cargo-win-env`** (runs on **`npm install`**) fills **`src-tauri/.cargo/config.local.toml`** with bindgen + **`CMAKE_GENERATOR`** for bare **`cargo check`** only. **`npm run tauri *`** sets generator via process env (not tracked **`config.toml`**) so whisper-cuda CMake cache stays warm (~1 min incremental dev). After CPU↔CUDA switches: **`npm run cargo -- clean -p whisper-rs-sys --manifest-path src-tauri/Cargo.toml`**. CUDA checks: **`npm run test:cargo-whisper-cuda`**. Env snapshot: **`npm run diagnose:build-env`**. Fresh clone / CI: **`npm run prebuild:gpu-cuda`** (see below).
+- **`npm run sync:cargo-win-env`** (runs on **`npm install`** on **Windows only**) fills **`src-tauri/.cargo/config.local.toml`** with bindgen + **`CMAKE_GENERATOR`** for bare **`cargo check`** only. **`npm run tauri *`** sets generator via process env (not tracked **`config.toml`**) so whisper-cuda CMake cache stays warm (~1 min incremental dev). After CPU↔CUDA switches: **`npm run cargo -- clean -p whisper-rs-sys --manifest-path src-tauri/Cargo.toml`**. CUDA checks: **`npm run test:cargo-whisper-cuda`**. Env snapshot: **`npm run diagnose:build-env`**. Fresh clone / CI: **`npm run prebuild:gpu-cuda`** (see below). Fast bare cargo: **`JARVIS_SKIP_MODEL_FETCH=1 npm run cargo -- check …`**.
+
+### Dev profiles (`--mac` / `--win` / `--audio`)
+
+Platform-scoped dev builds trim overlap between Mac and Windows workflows. Default **`npm run tauri dev`** is unchanged (full stack, auto GPU, `src-tauri/target/`).
+
+| Command | Host | Compile scope | Models fetched | Cargo target dir |
+| --- | --- | --- | --- | --- |
+| `npm run tauri dev` | any | full + auto GPU | all | `src-tauri/target/` |
+| `npm run tauri:dev:mac` / `tauri dev --mac` | macOS only | full + metal | all | `.cache/cargo-target/mac-full-metal` |
+| `npm run tauri:dev:win` / `tauri dev --win` | Windows only | full + cuda/vulkan | all | `.cache/cargo-target/win-full-*` |
+| `npm run tauri:dev:mac:audio` / `tauri dev --mac --audio` | macOS | oww + whisper-metal (no LLM) | wake + tiny whisper | `.cache/cargo-target/mac-audio-metal` |
+| `npm run tauri:dev:win:audio` / `tauri dev --win --audio` | Windows | oww + whisper GPU (no LLM) | wake + tiny whisper | `.cache/cargo-target/win-audio-*` |
+| `npm run tauri:dev:cpu` / `tauri dev --cpu` | any | full, CPU whisper | all | `.cache/cargo-target/{mac\|win}-cpu-full` |
+
+**`--mac` / `--win`** validate the host OS (no cross-compilation). **`--audio`** is for mic/wake/dictation iteration: skips `llm-local` compile and ~2 GB GGUF downloads. **`--audio` is dev-only** — release `tauri build` still expects full models in `tauri.conf.json`.
+
+Aliases: `tauri:build:mac`, `tauri:build:win`. Compose with `--cpu` / `--gpu` as needed.
+
+First run of a new profile uses a cold Cargo tree under `.cache/cargo-target/`; later runs are incremental within that profile and do not invalidate your default `target/` GPU cache.
 
 ### Windows GPU build env layers
 

@@ -2578,14 +2578,17 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   padding: 0;
   overflow: hidden;
   color: var(--editor-text);
-  background: transparent;
+  background: var(--color-surface-main);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   box-shadow: none;
   border: none;
   border-radius: 0;
-  /* Let shell glass show through the main column (pane default is ~94% opaque). */
-  --editor-settings-pane-bg: transparent;
+  /*
+   * Stable pane fill decoupled from shell glass alpha. A transparent pane inherits
+   * live --editor-material-alpha (incl. appearance slider) and flickers on repaint.
+   */
+  --editor-settings-pane-bg: var(--color-surface-main);
 }
 
 .editor-settings-pane--solo {

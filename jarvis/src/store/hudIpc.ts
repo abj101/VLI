@@ -105,6 +105,10 @@ export async function subscribeHudIpc(): Promise<() => void> {
       useHudStore.getState().applyIpc("action-error", e.payload);
     }),
     listen<{ amplitude: number }>("amplitude-update", (e) => {
+      const phase = useHudStore.getState().phase;
+      if (phase !== "listening") {
+        return;
+      }
       useHudStore.getState().applyIpc("amplitude-update", e.payload);
     }),
     listen<AudioErrorPayload>("audio-error", (e) => {

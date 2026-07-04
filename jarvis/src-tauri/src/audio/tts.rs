@@ -234,7 +234,7 @@ fn play_wav_blocking(wav_path: &Path) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        let output = Command::new("afplay")
+        let output = hidden_command("afplay")
             .arg(wav_path)
             .output()
             .map_err(|e| {

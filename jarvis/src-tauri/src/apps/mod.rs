@@ -1,7 +1,9 @@
-//! Installed-app index (Windows): scan → cache → fuzzy resolve for `OpenApp` without a path.
+//! Installed-app index: scan → cache → fuzzy resolve for `OpenApp` without a path.
 
 #[cfg(windows)]
 mod scanner_windows;
+#[cfg(target_os = "macos")]
+mod scanner_macos;
 
 pub mod intent;
 pub mod resolve_target;
@@ -55,7 +57,7 @@ pub fn resolve_app<'a>(query: &str, entries: &'a [AppEntry]) -> Option<&'a AppEn
         }
         let replace = match &best {
             None => true,
-            Some((score, prev)) if r > *score + 1e-9 => true,
+            Some((score, _)) if r > *score + 1e-9 => true,
             Some((score, prev)) if (r - score).abs() < 1e-9 => {
                 prefer_launch_path(&e.exe_path, &prev.exe_path) == std::cmp::Ordering::Less
             }
@@ -122,7 +124,7 @@ pub fn filter_app_entries_substring(entries: &[AppEntry], query_lower: &str, lim
     matched
 }
 
-/// Full scan (registry + Start Menu shortcuts on Windows; empty elsewhere).
+/// Full scan (registry + Start Menu on Windows; `.app` bundles on macOS).
 pub fn scan_installed_apps() -> Vec<AppEntry> {
     #[cfg(windows)]
     {
@@ -134,7 +136,17 @@ pub fn scan_installed_apps() -> Vec<AppEntry> {
             }
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        match scanner_macos::scan() {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("app index scan failed: {e}");
+                Vec::new()
+            }
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         Vec::new()
     }

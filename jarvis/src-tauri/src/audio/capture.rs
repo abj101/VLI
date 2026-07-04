@@ -9,6 +9,18 @@ use tauri::{AppHandle, Emitter};
 
 const AMPLITUDE_EMIT_MIN_INTERVAL: Duration = Duration::from_millis(48);
 
+#[cfg(target_os = "macos")]
+fn mic_failure_hint(detail: &str) -> String {
+    format!(
+        "{detail}. If you were not prompted, open System Settings → Privacy & Security → Microphone, enable jarvis, then restart."
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn mic_failure_hint(detail: &str) -> String {
+    detail.to_string()
+}
+
 /// Peak-of-window → roughly 0..1 for UI (quiet speech still visible).
 pub fn normalized_amplitude(mono_f32: &[f32]) -> f32 {
     if mono_f32.is_empty() {
@@ -61,22 +73,30 @@ impl Drop for CaptureSession {
     }
 }
 
-/// Opens default input device, streams mono `f32` PCM to `pcm_tx`, emits `amplitude-update`.
+/// Opens default input device, streams mono `f32` PCM to `pcm_tx`.
+///
+/// When `emit_amplitude` is true, throttled `amplitude-update` events go to the HUD (listen pipeline only).
+/// Wake-word capture should pass `false` — mic stays hot but UI/events stay quiet while idle.
 ///
 /// Returns capture handle + nominal sample rate for downstream resampling to 16 kHz.
 pub fn start_capture(
     app: AppHandle,
     pcm_tx: Sender<Vec<f32>>,
+    emit_amplitude: bool,
 ) -> Result<(CaptureSession, u32), String> {
+    #[cfg(target_os = "macos")]
+    crate::macos::require_microphone_for_capture(&app)?;
+
     let host = cpal::default_host();
     let device = match host.default_input_device() {
         Some(d) => d,
         None => {
+            let message = mic_failure_hint("no microphone input device found");
             let _ = app.emit(
                 "audio-error",
-                serde_json::json!({ "message": "no microphone input device found" }),
+                serde_json::json!({ "message": message }),
             );
-            return Err("no microphone input device found".into());
+            return Err(message.into());
         }
     };
 
@@ -88,7 +108,7 @@ pub fn start_capture(
     let channels = base_cfg.channels as usize;
     let sample_rate = base_cfg.sample_rate.0;
 
-    let last_amp_emit = Arc::new(Mutex::new(Instant::now() - AMPLITUDE_EMIT_MIN_INTERVAL));
+    let last_amp_emit = emit_amplitude.then(|| Arc::new(Mutex::new(Instant::now() - AMPLITUDE_EMIT_MIN_INTERVAL)));
 
     let stream = match sample_format {
         SampleFormat::F32 => {
@@ -104,7 +124,7 @@ pub fn start_capture(
 
     stream
         .play()
-        .map_err(|e| format!("failed to start mic stream: {e}"))?;
+        .map_err(|e| mic_failure_hint(&format!("failed to start mic stream: {e}")))?;
 
     Ok((
         CaptureSession {
@@ -120,7 +140,7 @@ fn build_stream<T>(
     channels: usize,
     app: AppHandle,
     pcm_tx: Sender<Vec<f32>>,
-    last_amp_emit: Arc<Mutex<Instant>>,
+    last_amp_emit: Option<Arc<Mutex<Instant>>>,
 ) -> Result<Stream, String>
 where
     T: cpal::Sample + cpal::SizedSample,
@@ -134,7 +154,7 @@ where
         );
     };
 
-    let app_amp = app.clone();
+    let app_amp = last_amp_emit.as_ref().map(|_| app.clone());
     let stream = device
         .build_input_stream(
             cfg,
@@ -144,22 +164,25 @@ where
                     return;
                 }
 
-                let amp = normalized_amplitude(&mono);
-                let emit_now = {
-                    let mut last = last_amp_emit.lock().unwrap();
-                    let now = Instant::now();
-                    if now.duration_since(*last) >= AMPLITUDE_EMIT_MIN_INTERVAL {
-                        *last = now;
-                        true
-                    } else {
-                        false
+                if let (Some(app_amp), Some(last_amp_emit)) = (app_amp.as_ref(), last_amp_emit.as_ref())
+                {
+                    let amp = normalized_amplitude(&mono);
+                    let emit_now = {
+                        let mut last = last_amp_emit.lock().unwrap();
+                        let now = Instant::now();
+                        if now.duration_since(*last) >= AMPLITUDE_EMIT_MIN_INTERVAL {
+                            *last = now;
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if emit_now {
+                        let _ = app_amp.emit(
+                            "amplitude-update",
+                            serde_json::json!({ "amplitude": amp as f64 }),
+                        );
                     }
-                };
-                if emit_now {
-                    let _ = app_amp.emit(
-                        "amplitude-update",
-                        serde_json::json!({ "amplitude": amp as f64 }),
-                    );
                 }
 
                 if pcm_tx.send(mono).is_err() {

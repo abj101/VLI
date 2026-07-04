@@ -9,6 +9,7 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "core:window:allow-start-dragging",
+    "core:window:deny-internal-toggle-maximize",
     "global-shortcut:allow-register",
     "opener:default",
     "shell:allow-open"

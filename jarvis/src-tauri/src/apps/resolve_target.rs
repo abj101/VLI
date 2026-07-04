@@ -209,6 +209,15 @@ pub fn resolve_target(
         };
     }
 
+    #[cfg(target_os = "macos")]
+    if super::intent::is_plausible_macos_app_name(query) {
+        return ResolvedTarget::App {
+            display_name: query.to_string(),
+            exe_path: query.to_string(),
+            placement,
+        };
+    }
+
     ResolvedTarget::Unknown {
         query: query.to_string(),
         placement,
@@ -544,6 +553,16 @@ mod tests {
     #[test]
     fn resolve_target_foobar_unknown_without_com_guess() {
         let resolved = resolve_target("foobar", &[], &[]);
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            resolved,
+            ResolvedTarget::App {
+                display_name: "foobar".into(),
+                exe_path: "foobar".into(),
+                placement: None,
+            }
+        );
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(
             resolved,
             ResolvedTarget::Unknown {

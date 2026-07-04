@@ -121,28 +121,12 @@ function writeConfigLocalToml(cargoDir, body) {
 }
 
 function main() {
-  const localToml = path.join(TAURI_CARGO_DIR, "config.local.toml");
-  const legacyRootCargo = path.join(JARVIS_ROOT, ".cargo", "config.local.toml");
-
   if (process.platform !== "win32") {
-    if (fs.existsSync(legacyRootCargo)) {
-      fs.unlinkSync(legacyRootCargo);
-      console.log(`sync-cargo-win-env: removed ${path.relative(JARVIS_ROOT, legacyRootCargo)}`);
-    }
-    const reset = writeConfigLocalToml(
-      TAURI_CARGO_DIR,
-      "# Non-Windows: no whisper-rs-sys bindgen env required.\n[env]\n",
-    );
-    if (reset.wrote) {
-      console.log(`sync-cargo-win-env: reset ${path.relative(JARVIS_ROOT, reset.out)}`);
-    }
-    const ra = path.join(JARVIS_ROOT, "rust-analyzer.toml");
-    if (fs.existsSync(ra)) {
-      fs.unlinkSync(ra);
-      console.log(`sync-cargo-win-env: removed ${path.relative(JARVIS_ROOT, ra)}`);
-    }
     return;
   }
+
+  const localToml = path.join(TAURI_CARGO_DIR, "config.local.toml");
+  const legacyRootCargo = path.join(JARVIS_ROOT, ".cargo", "config.local.toml");
 
   const check = validateWindowsWhisperBindgenEnv();
   if (!check.ok) {

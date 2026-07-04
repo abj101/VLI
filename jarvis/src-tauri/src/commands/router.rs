@@ -1,6 +1,7 @@
 //! Tiered command routing: pinned trigger match → on-device LLM router → tool clarify.
 
 use crate::{
+    assign_routing_cancel,
     audio::{self, SharedAudioPipeline},
     AppIndexStore,
     cancel_active_run_in_state,
@@ -406,17 +407,17 @@ fn execute_tier2_route(
 fn begin_tier2_routing(
     app: &AppHandle,
     rt: &SharedHud,
-    audio: &SharedAudioPipeline,
-) -> Result<u64, String> {
+    _audio: &SharedAudioPipeline,
+) -> Result<(u64, Arc<AtomicBool>), String> {
     listening_gate(rt)?;
     debug!("flow: tier2 routing");
-    audio::stop_shared_pipeline(app, audio);
+    let routing_cancel = assign_routing_cancel(rt);
     let routing_session_id = set_phase(app, rt, HudPhase::Routing)?;
     let _ = app.emit(
         "action-status",
         serde_json::json!({ "text": "Understanding…" }),
     );
-    Ok(routing_session_id)
+    Ok((routing_session_id, routing_cancel))
 }
 
 /// Tier 0: deterministic `open {target}` preflight before phrase match / LLM.
@@ -463,7 +464,15 @@ fn try_tier0_open_intent(
 
     let _ = set_phase(app, rt, HudPhase::Matched).ok()?;
 
-    let (executing_session_id, cancel_flag) = begin_execution_session(app, rt, audio, false).ok()?;
+    let (executing_session_id, cancel_flag) = match begin_execution_session(app, rt, audio, false) {
+        Ok(pair) => pair,
+        Err(err) if err == "skip" => {
+            warn!("flow: tier0 open intent could not start execution (phase/session changed)");
+            let _ = set_phase(app, rt, HudPhase::Listening);
+            return Some(Ok(()));
+        }
+        Err(err) => return Some(Err(err)),
+    };
     let app_h = app.clone();
     let rt_h = Arc::clone(rt);
     let audio_h = audio.clone();
@@ -535,6 +544,10 @@ pub fn try_route_and_execute(
 
     let Some((_settings, _model_path)) = tier2_prerequisites(app) else {
         debug!("flow: no trigger phrase matched");
+        let _ = app.emit(
+            "action-status",
+            serde_json::json!({ "text": "No command matched" }),
+        );
         return Ok(());
     };
 
@@ -545,8 +558,8 @@ pub fn try_route_and_execute(
         return Ok(());
     }
 
-    let routing_session_id = match begin_tier2_routing(app, rt, audio) {
-        Ok(id) => id,
+    let (routing_session_id, routing_cancel) = match begin_tier2_routing(app, rt, audio) {
+        Ok(pair) => pair,
         Err(err) if err == "skip" => return Ok(()),
         Err(err) => return Err(err),
     };
@@ -560,13 +573,17 @@ pub fn try_route_and_execute(
             .lock()
             .map(|s| s.session_id == routing_session_id && s.phase == HudPhase::Routing)
             .unwrap_or(false);
-        if !still_routing {
+        if !still_routing || routing_cancel.load(Ordering::Relaxed) {
             debug!("flow: skip tier2 (session changed before infer)");
             return;
         }
 
         match route_transcript_tier2(&app_bg, &transcript) {
             Ok(route) => {
+                if routing_cancel.load(Ordering::Relaxed) {
+                    debug!("flow: skip tier2 execute (cancelled after infer)");
+                    return;
+                }
                 if let Err(err) = execute_tier2_route(&app_bg, &rt_bg, &audio_bg, route) {
                     if err != "skip" {
                         warn!("flow: tier2 execute failed: {err}");
@@ -577,6 +594,9 @@ pub fn try_route_and_execute(
                 code: RouterErrorCode::LowConfidence,
                 message,
             }) => {
+                if routing_cancel.load(Ordering::Relaxed) {
+                    return;
+                }
                 debug!("flow: tier2 low confidence: {message}");
                 finalize_command_run(&app_bg, &rt_bg, &audio_bg);
             }
@@ -587,6 +607,9 @@ pub fn try_route_and_execute(
                 debug!("flow: tier2 gated: {message}");
             }
             Err(err) => {
+                if routing_cancel.load(Ordering::Relaxed) {
+                    return;
+                }
                 debug!("flow: tier2 route miss: {} ({:?})", err.message, err.code);
                 finalize_command_run(&app_bg, &rt_bg, &audio_bg);
             }
@@ -754,8 +777,28 @@ mod tests {
     #[test]
     fn tier0_open_unknown_fails_fast() {
         let result = tier0_open_classification("open foobar", &[], &[]).expect("tier0 hit");
+        #[cfg(target_os = "macos")]
+        assert!(matches!(result, Ok(OpenIntent::App { .. })));
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("foobar"));
+        }
+    }
+
+    #[test]
+    fn tier0_open_safari_classifies_on_mac_without_index() {
+        let result = tier0_open_classification("open safari", &[], &[]).expect("tier0 hit");
+        #[cfg(target_os = "macos")]
+        assert!(matches!(
+            result,
+            Ok(OpenIntent::App {
+                target,
+                ..
+            }) if target.eq_ignore_ascii_case("safari")
+        ));
+        #[cfg(not(target_os = "macos"))]
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("foobar"));
     }
 
     #[test]

@@ -53,40 +53,7 @@ impl TranscriptReconciler {
         &self.last_stt
     }
 
-    pub fn screen_text(&self) -> &str {
-        self.screen.text()
-    }
-
-    pub fn from_parts(
-        segment_injected: String,
-        last_stt: String,
-        session_typed: String,
-        typed_in_session: bool,
-    ) -> Self {
-        let screen = ScreenModel::from_parts(session_typed, typed_in_session);
-        Self {
-            segment_injected,
-            last_stt,
-            screen,
-        }
-    }
-
-    pub fn into_parts(self) -> (String, String, String, bool) {
-        let (text, typed_in_session) = self.screen.into_parts();
-        (
-            self.segment_injected,
-            self.last_stt,
-            text,
-            typed_in_session,
-        )
-    }
-
-    /// Reconcile one STT update; caller applies `ReconcileResult` via injector + screen.
-    pub fn apply(&mut self, new_stt: &str) -> ReconcileResult {
-        self.apply_with_kind(new_stt, TranscriptPartialKind::Growth)
-    }
-
-    /// Like [`Self::apply`] but honors typed partial semantics from the STT pipeline.
+    /// Like [`Self::apply_with_kind`] but honors typed partial semantics from the STT pipeline.
     pub fn apply_with_kind(&mut self, new_stt: &str, kind: TranscriptPartialKind) -> ReconcileResult {
         if matches!(kind, TranscriptPartialKind::Unchanged) {
             return ReconcileResult::Noop;
@@ -204,6 +171,41 @@ impl TranscriptReconciler {
             new_stt.to_string()
         };
         ReconcileResult::AppendUtterance(to_type)
+    }
+}
+
+#[cfg(test)]
+impl TranscriptReconciler {
+    pub fn screen_text(&self) -> &str {
+        self.screen.text()
+    }
+
+    pub fn from_parts(
+        segment_injected: String,
+        last_stt: String,
+        session_typed: String,
+        typed_in_session: bool,
+    ) -> Self {
+        let screen = ScreenModel::from_parts(session_typed, typed_in_session);
+        Self {
+            segment_injected,
+            last_stt,
+            screen,
+        }
+    }
+
+    pub fn into_parts(self) -> (String, String, String, bool) {
+        let (text, typed_in_session) = self.screen.into_parts();
+        (
+            self.segment_injected,
+            self.last_stt,
+            text,
+            typed_in_session,
+        )
+    }
+
+    pub fn apply(&mut self, new_stt: &str) -> ReconcileResult {
+        self.apply_with_kind(new_stt, TranscriptPartialKind::Growth)
     }
 }
 

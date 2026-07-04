@@ -19,3 +19,10 @@ CMAKE = { value = "cmake", force = false }
 # Default Windows thread stack is 1 MiB; whisper.cpp CUDA model load needs more in debug hosts.
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-Clink-arg=/STACK:16777216"]
+
+# Dev: stable TCC identity (com.jarvis.app) + mic entitlements on every link.
+[target.aarch64-apple-darwin]
+linker = ".cargo/link-macos.sh"
+
+[target.x86_64-apple-darwin]
+linker = ".cargo/link-macos.sh"

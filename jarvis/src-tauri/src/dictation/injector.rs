@@ -10,6 +10,7 @@ pub trait TextInjector {
 
 /// Pause after large tail deletes so the focused control finishes before retype.
 const BACKSPACE_SETTLE_THRESHOLD: usize = 12;
+#[cfg(windows)]
 const BACKSPACE_SETTLE_MS: u64 = 8;
 
 pub fn apply_delta(delta: &DeltaOps, injector: &mut impl TextInjector) -> Result<(), String> {
@@ -65,6 +66,7 @@ pub fn apply_transcript_with_kind(
 }
 
 /// Thin wrapper for callers still holding separate segment strings (tests / legacy).
+#[cfg(test)]
 pub fn apply_transcript_segment_with_kind(
     segment_injected: &mut String,
     last_stt: &mut String,

@@ -101,6 +101,16 @@ pub fn classify_open_target(
         };
     }
 
+    #[cfg(target_os = "macos")]
+    if is_plausible_macos_app_name(query) {
+        return OpenIntent::App {
+            target: query.to_string(),
+            display_name: query.to_string(),
+            exe_path: query.to_string(),
+            placement: zone,
+        };
+    }
+
     OpenIntent::Unknown {
         target: query.to_string(),
     }
@@ -153,6 +163,19 @@ fn prefix_match_byte_len_ci(hay: &str, needle: &str) -> Option<usize> {
         len += h.len_utf8();
     }
     Some(len)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn is_plausible_macos_app_name(query: &str) -> bool {
+    let t = query.trim();
+    if t.is_empty() || t.len() > 64 {
+        return false;
+    }
+    if t.contains("://") || t.contains('.') {
+        return false;
+    }
+    t.chars()
+        .all(|c| c.is_alphanumeric() || c.is_whitespace() || c == '-' || c == '_' || c == '+')
 }
 
 #[cfg(test)]
@@ -220,6 +243,9 @@ mod tests {
     #[test]
     fn classify_open_target_unknown_when_not_in_index() {
         let intent = classify_open_target("foobar", None, &[], &[]);
+        #[cfg(target_os = "macos")]
+        assert!(matches!(intent, OpenIntent::App { .. }));
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(
             intent,
             OpenIntent::Unknown {

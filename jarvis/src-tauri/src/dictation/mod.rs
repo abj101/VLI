@@ -6,7 +6,6 @@ mod screen;
 mod session;
 
 pub use injector::SystemTextInjector;
-pub use reconcile::TranscriptReconciler;
 pub use session::{DictationSessionController, HudSnapshot};
 use crate::audio::{self, stt::TranscriptUpdate, SharedAudioPipeline};
 use serde::Serialize;
@@ -99,8 +98,16 @@ pub fn start_dictation(
     hud: &crate::SharedHud,
     audio: &SharedAudioPipeline,
 ) -> Result<u64, String> {
+    audio::stop_shared_pipeline(app, audio);
     let snapshot = hud_snapshot(hud)?;
-    let session_id = with_controller(app, |ctrl| ctrl.start(snapshot))?;
+    if snapshot.blocks_dictation() {
+        crate::abort_command_hud_session(app, hud, audio)?;
+        if hud_snapshot(hud)?.blocks_dictation() {
+            return Err("cannot start dictation while voice HUD is active".into());
+        }
+    }
+
+    let session_id = with_controller(app, |ctrl| ctrl.start(hud_snapshot(hud)?))?;
 
     if let Some(suppressed) = app.try_state::<audio::WakeMicSuppressed>() {
         use std::sync::atomic::Ordering;
@@ -155,6 +162,7 @@ pub fn stop_for_hud(app: &AppHandle, hud: &crate::SharedHud, audio: &SharedAudio
 mod tests {
     use super::*;
     use crate::dictation::injector::{apply_transcript, apply_transcript_segment_with_kind, MockTextInjector};
+    use crate::dictation::reconcile::TranscriptReconciler;
 
     #[test]
     fn apply_stt_delta_matches_reconcile_module() {

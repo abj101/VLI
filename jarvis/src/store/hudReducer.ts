@@ -9,6 +9,9 @@ import type {
   TranscriptUpdate,
 } from "../types";
 
+/** Ignore sub-threshold mic level jitter so idle waveform does not re-render every tick. */
+const AMPLITUDE_UI_EPSILON = 0.02;
+
 export type HudWireTopic =
   | "hud-phase"
   | "transcript-update"
@@ -150,7 +153,11 @@ export function reduceHudState(
     case "amplitude-update": {
       const amp = (payload as { amplitude: number }).amplitude;
       const n = Number.isFinite(amp) ? amp : 0;
-      return { ...state, amplitude: Math.max(0, Math.min(1, n)) };
+      const clamped = Math.max(0, Math.min(1, n));
+      if (Math.abs(clamped - state.amplitude) < AMPLITUDE_UI_EPSILON) {
+        return state;
+      }
+      return { ...state, amplitude: clamped };
     }
     case "audio-error": {
       const { message } = payload as AudioErrorPayload;

@@ -6,6 +6,12 @@
       "sourceType": "github",
       "computedHash": "44722c0ec8698cc0b57b7e1813e4e4c18db22a8015b243c03d06c1c7a02606e0"
     },
+    "agent-eval": {
+      "source": "colbymchenry/codegraph",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/agent-eval/SKILL.md",
+      "computedHash": "7903292b07810d12d7a438da9c2117dcedbc8129c748c3f9321ba438f9a5d575"
+    },
     "animate": {
       "source": "pbakaus/impeccable",
       "sourceType": "github",
@@ -67,6 +73,12 @@
       "source": "pbakaus/impeccable",
       "sourceType": "github",
       "computedHash": "746432275018adb16be89276afa95cd6f868a38598cf7075294973ce0e757919"
+    },
+    "ln-021-codegraph": {
+      "source": "levnikolaevich/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/setup-environment/skills/ln-021-codegraph/SKILL.md",
+      "computedHash": "39afc78ea561e8c3d49c604682bdd2fe46ba05706c75dfe4628ac24208121a78"
     },
     "optimize": {
       "source": "pbakaus/impeccable",

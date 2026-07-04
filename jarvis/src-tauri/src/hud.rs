@@ -144,67 +144,126 @@ fn set_hud_position_guarded(
     result
 }
 
-pub fn position_hud_bottom_center(
-    window: &WebviewWindow,
-    margin_logical: f64,
-) -> Result<HudLogicalPosition, String> {
-    let monitor = match window.current_monitor().map_err(|e| e.to_string())? {
-        Some(m) => m,
-        None => window
-            .primary_monitor()
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "no monitor available for hud placement".to_string())?,
-    };
-    let scale = monitor.scale_factor();
-    let monitor_pos = monitor.position();
-    let screen = monitor.size();
-    let window_size = window.outer_size().map_err(|e| e.to_string())?;
-
-    let screen_w = screen.width as f64 / scale;
-    let screen_h = screen.height as f64 / scale;
-    let win_w = window_size.width as f64 / scale;
-    let win_h = window_size.height as f64 / scale;
-    let origin_x = monitor_pos.x as f64 / scale;
-    let origin_y = monitor_pos.y as f64 / scale;
-
-    let x = origin_x + (screen_w - win_w) / 2.0;
-    let y = origin_y + screen_h - win_h - margin_logical;
-
-    Ok(HudLogicalPosition { x, y })
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum HudPlacementAnchor {
+    Center,
+    Bottom { margin_logical: f64 },
 }
 
-pub fn position_hud_center(window: &WebviewWindow) -> Result<HudLogicalPosition, String> {
-    let monitor = match window.current_monitor().map_err(|e| e.to_string())? {
-        Some(m) => m,
-        None => window
-            .primary_monitor()
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "no monitor available for hud placement".to_string())?,
-    };
-    let scale = monitor.scale_factor();
-    let monitor_pos = monitor.position();
-    let screen = monitor.size();
-    let window_size = window.outer_size().map_err(|e| e.to_string())?;
-
-    let screen_w = screen.width as f64 / scale;
-    let screen_h = screen.height as f64 / scale;
-    let win_w = window_size.width as f64 / scale;
-    let win_h = window_size.height as f64 / scale;
-    let origin_x = monitor_pos.x as f64 / scale;
-    let origin_y = monitor_pos.y as f64 / scale;
-
-    Ok(HudLogicalPosition {
-        x: origin_x + (screen_w - win_w) / 2.0,
-        y: origin_y + (screen_h - win_h) / 2.0,
-    })
-}
-
-fn default_hud_position(window: &WebviewWindow, mode: HudOverlayMode) -> Result<HudLogicalPosition, String> {
-    match mode {
-        HudOverlayMode::Command => position_hud_center(window),
-        HudOverlayMode::Dictation => {
-            position_hud_bottom_center(window, HUD_DICTATION_BOTTOM_MARGIN)
+fn hud_placement_monitor(window: &WebviewWindow, app: &AppHandle) -> Result<tauri::Monitor, String> {
+    if let Ok(cursor) = app.cursor_position() {
+        if let Ok(Some(monitor)) = window.monitor_from_point(cursor.x, cursor.y) {
+            return Ok(monitor);
         }
+    }
+    if let Some(monitor) = window.current_monitor().map_err(|e| e.to_string())? {
+        return Ok(monitor);
+    }
+    window
+        .primary_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "no monitor available for hud placement".to_string())
+}
+
+fn has_saved_hud_position(app: &AppHandle, mode: HudOverlayMode) -> bool {
+    open_db_connection(app)
+        .ok()
+        .and_then(|conn| load_hud_position(&conn, mode))
+        .is_some()
+}
+
+/// Place within monitor work area (menu bar, dock, taskbar excluded) — matches Tauri `window.center()`.
+fn logical_position_in_work_area(
+    origin_x: f64,
+    origin_y: f64,
+    area_w: f64,
+    area_h: f64,
+    win_w: f64,
+    win_h: f64,
+    anchor: HudPlacementAnchor,
+) -> HudLogicalPosition {
+    let x = origin_x + (area_w - win_w) / 2.0;
+    let y = match anchor {
+        HudPlacementAnchor::Center => origin_y + (area_h - win_h) / 2.0,
+        HudPlacementAnchor::Bottom { margin_logical } => {
+            origin_y + area_h - win_h - margin_logical
+        }
+    };
+    HudLogicalPosition { x, y }
+}
+
+fn position_hud_in_work_area(
+    monitor: &tauri::Monitor,
+    win_w: f64,
+    win_h: f64,
+    anchor: HudPlacementAnchor,
+) -> HudLogicalPosition {
+    let scale = monitor.scale_factor();
+    let work = monitor.work_area();
+    let area_w = work.size.width as f64 / scale;
+    let area_h = work.size.height as f64 / scale;
+    let origin_x = work.position.x as f64 / scale;
+    let origin_y = work.position.y as f64 / scale;
+    logical_position_in_work_area(origin_x, origin_y, area_w, area_h, win_w, win_h, anchor)
+}
+
+fn default_hud_position(
+    window: &WebviewWindow,
+    app: &AppHandle,
+    mode: HudOverlayMode,
+) -> Result<HudLogicalPosition, String> {
+    let monitor = hud_placement_monitor(window, app)?;
+    let size = overlay_logical_size(mode);
+    let anchor = match mode {
+        HudOverlayMode::Command => HudPlacementAnchor::Center,
+        HudOverlayMode::Dictation => HudPlacementAnchor::Bottom {
+            margin_logical: HUD_DICTATION_BOTTOM_MARGIN,
+        },
+    };
+    Ok(position_hud_in_work_area(
+        &monitor,
+        size.width,
+        size.height,
+        anchor,
+    ))
+}
+
+fn resolve_hud_position(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    mode: HudOverlayMode,
+) -> Result<HudLogicalPosition, String> {
+    let saved = open_db_connection(app)
+        .ok()
+        .and_then(|conn| load_hud_position(&conn, mode));
+    match saved {
+        Some(pos) => Ok(pos),
+        None => default_hud_position(window, app, mode),
+    }
+}
+
+fn apply_hud_window_position(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    mode: HudOverlayMode,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if !has_saved_hud_position(app, mode) {
+        // Default placement uses native AppKit coordinates in `present_overlay_window`.
+        return Ok(());
+    }
+
+    let guard = app.state::<HudPositionGuard>();
+    let position = resolve_hud_position(app, window, mode)?;
+    set_hud_position_guarded(window, &guard, position)
+}
+
+fn macos_screen_placement(mode: HudOverlayMode) -> crate::macos::window::HudScreenPlacement {
+    match mode {
+        HudOverlayMode::Command => crate::macos::window::HudScreenPlacement::Center,
+        HudOverlayMode::Dictation => crate::macos::window::HudScreenPlacement::Bottom {
+            margin_logical: HUD_DICTATION_BOTTOM_MARGIN,
+        },
     }
 }
 
@@ -215,21 +274,13 @@ pub fn apply_hud_window_geometry(
     let window = app
         .get_webview_window(HUD_WINDOW_LABEL)
         .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
-    let guard = app.state::<HudPositionGuard>();
 
     let size = overlay_logical_size(mode);
     window
         .set_size(size)
         .map_err(|e| format!("hud set_size: {e}"))?;
 
-    let saved = open_db_connection(app)
-        .ok()
-        .and_then(|conn| load_hud_position(&conn, mode));
-    let position = match saved {
-        Some(pos) => pos,
-        None => default_hud_position(&window, mode)?,
-    };
-    set_hud_position_guarded(&window, &guard, position)
+    apply_hud_window_position(app, &window, mode)
 }
 
 pub fn persist_hud_window_position(app: &AppHandle, mode: HudOverlayMode) -> Result<(), String> {
@@ -348,6 +399,115 @@ pub fn sync_hud_webview_background(app: &AppHandle) {
     }
 }
 
+/// Like [`present_hud_window`] but hops to the main thread when required (macOS AppKit).
+pub fn present_hud_window_on_main(app: &AppHandle, mode: HudOverlayMode) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        if objc2::MainThreadMarker::new().is_none() {
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            let app_for_main = app.clone();
+            app.run_on_main_thread(move || {
+                let result = present_hud_window_resolved(&app_for_main, mode);
+                let _ = tx.send(result);
+            })
+            .map_err(|e| format!("hud present main-thread dispatch: {e:?}"))?;
+            return rx
+                .recv()
+                .map_err(|e| format!("hud present main-thread result: {e}"))?;
+        }
+    }
+    present_hud_window_resolved(app, mode)
+}
+
+/// Hide the HUD native window. macOS NSPanel / activation policy must run on the main thread.
+pub fn hide_hud_window_on_main(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        if objc2::MainThreadMarker::new().is_none() {
+            let app_for_main = app.clone();
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            if let Err(e) = app.run_on_main_thread(move || {
+                crate::macos::window::hide_hud_overlay(&app_for_main);
+                let _ = tx.send(());
+            }) {
+                warn!("hud hide main-thread dispatch: {e:?}");
+                return;
+            }
+            if let Err(e) = rx.recv() {
+                warn!("hud hide main-thread result: {e}");
+            }
+            return;
+        }
+        crate::macos::window::hide_hud_overlay(app);
+        return;
+    }
+    #[cfg(not(target_os = "macos"))]
+    if let Some(w) = app.get_webview_window(HUD_WINDOW_LABEL) {
+        if let Err(e) = w.hide() {
+            warn!("hud hide: {e}");
+        }
+    }
+}
+
+fn present_hud_window_resolved(app: &AppHandle, mode: HudOverlayMode) -> Result<(), String> {
+    let window = app
+        .get_webview_window(HUD_WINDOW_LABEL)
+        .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
+    present_hud_window(app, &window, mode)
+}
+
+/// Show/focus the HUD native window. On macOS tray/dev builds, `show()` alone can land behind other apps.
+pub fn present_hud_window(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    mode: HudOverlayMode,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let size = overlay_logical_size(mode);
+        let window_size = (size.width, size.height);
+        let use_native_placement = !has_saved_hud_position(app, mode);
+        let guard = app.state::<HudPositionGuard>();
+        let guard_ref = if use_native_placement {
+            Some(&guard.0)
+        } else {
+            None
+        };
+        crate::macos::window::present_overlay_window(
+            app,
+            window,
+            macos_screen_placement(mode),
+            window_size,
+            use_native_placement,
+            guard_ref,
+        )?;
+        if use_native_placement {
+            let placement = macos_screen_placement(mode);
+            let app_defer = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                let guard = app_defer.state::<HudPositionGuard>();
+                let _ = crate::macos::window::place_hud_on_screen(
+                    &app_defer,
+                    placement,
+                    window_size,
+                    Some(&guard.0),
+                );
+                crate::macos::reassert_hud_overlay(&app_defer);
+            });
+        }
+        if !use_native_placement {
+            apply_hud_window_position(app, window, mode)?;
+        }
+        return Ok(());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -379,6 +539,38 @@ mod tests {
         let size = overlay_logical_size(HudOverlayMode::Dictation);
         assert!(size.width < super::HUD_COMMAND_WIDTH);
         assert!(size.height < super::HUD_COMMAND_HEIGHT);
+    }
+
+    #[test]
+    fn work_area_center_offsets_below_menu_bar() {
+        let pos = super::logical_position_in_work_area(
+            0.0,
+            25.0,
+            1440.0,
+            875.0,
+            480.0,
+            172.0,
+            super::HudPlacementAnchor::Center,
+        );
+        assert_eq!(pos.x, 480.0);
+        assert_eq!(pos.y, 376.5);
+    }
+
+    #[test]
+    fn work_area_bottom_center_respects_margin() {
+        let pos = super::logical_position_in_work_area(
+            0.0,
+            25.0,
+            1440.0,
+            875.0,
+            200.0,
+            88.0,
+            super::HudPlacementAnchor::Bottom {
+                margin_logical: 48.0,
+            },
+        );
+        assert_eq!(pos.x, 620.0);
+        assert_eq!(pos.y, 764.0);
     }
 
     #[test]
