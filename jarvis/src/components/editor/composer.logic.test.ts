@@ -3,6 +3,7 @@ import {
   modelFromGeneratedResult,
   parseComposerInvokeError,
   canComposerGenerate,
+  composerPlaceholdersForPlatform,
   composerTriggerPayload,
   shouldOfferRegenerateWithFix,
   shouldShowFormulaAfterGenerate,
@@ -138,5 +139,23 @@ describe("composer.logic", () => {
     expect(composerTriggerPayload("  open notepad  ")).toBe("open notepad");
     expect(composerTriggerPayload("   ")).toBeNull();
     expect(composerTriggerPayload("")).toBeNull();
+  });
+
+  it("returns macOS composer placeholders", () => {
+    expect(composerPlaceholdersForPlatform("macos")).toEqual({
+      trigger: "e.g. open TextEdit",
+      description: "e.g. open TextEdit, create a new note, and paste hello world",
+    });
+  });
+
+  it("returns Windows composer placeholders by default", () => {
+    expect(composerPlaceholdersForPlatform("windows")).toEqual({
+      trigger: "e.g. open notepad",
+      description: "e.g. launch Notepad snapped left",
+    });
+    expect(composerPlaceholdersForPlatform(undefined)).toEqual({
+      trigger: "e.g. open notepad",
+      description: "e.g. launch Notepad snapped left",
+    });
   });
 });

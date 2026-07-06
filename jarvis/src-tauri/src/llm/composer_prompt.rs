@@ -12,6 +12,12 @@ if_else(condition, then[], else[]) — branch on text
 wait(ms) — pause
 sub_prompt(prompt) — voice follow-up"#;
 
+#[cfg(target_os = "macos")]
+const PLATFORM_RULES: &str = r#"Platform: macOS. Use TextEdit for simple notes (not Notepad). App targets use display names (e.g. TextEdit, Chrome). Shortcut notation: ^ means Command (e.g. ^n new document, ^v paste)."#;
+
+#[cfg(not(target_os = "macos"))]
+const PLATFORM_RULES: &str = r#"Platform: Windows. Use Notepad for simple notes. Shortcut notation: ^ means Ctrl (e.g. ^n new document, ^v paste)."#;
+
 const TEMPLATE_RULES: &str = r#"Template vars: {{remainder}} (words after prefix trigger), {{last_result}}, {{step_N}}.
 Use match_mode "prefix" when words after the trigger are input; "phrase" for fixed phrases.
 Put the exact voice activation phrase in "trigger" — only the words the user speaks to start the command, never the action steps.
@@ -21,6 +27,26 @@ When I say <trigger> then <actions>: <trigger> goes in "trigger" only; <actions>
 Timers → wait(ms); e.g. "30 seconds" = 30000.
 New document → send_keys("^n") before paste."#;
 
+#[cfg(target_os = "macos")]
+const FEW_SHOTS: &str = r#"User: When I say open TextEdit, launch TextEdit snapped left
+{"kind":"command","confidence":0.9,"summary":"Open TextEdit on the left","command":{"trigger":"open TextEdit","match_mode":"phrase","actions":[{"open_target":{"target":"TextEdit","placement":"left_half"}}]}}
+
+User: Say fetch then open the URL I give you
+{"kind":"command","confidence":0.85,"summary":"Fetch URL from speech then open it","command":{"trigger":"fetch","match_mode":"prefix","actions":[{"http_get":{"url":"{{remainder}}"}},{"open_target":{"target":"{{last_result}}"}}]}}
+
+User: Open Chrome and wait two seconds then speak done
+{"kind":"command","confidence":0.88,"summary":"Open Chrome, pause, speak","command":{"trigger":"open chrome","match_mode":"phrase","actions":[{"open_target":{"target":"chrome"}},{"wait":{"ms":2000}},{"speak":{"text":"done"}}]}}
+
+User: When I say notes, open TextEdit, create a new note, and paste hello world
+{"kind":"command","confidence":0.9,"summary":"Open TextEdit, new note, paste hello world","command":{"trigger":"notes","match_mode":"phrase","actions":[{"open_target":{"target":"TextEdit"}},{"send_keys":{"keys":"^n"}},{"set_clipboard":{"text":"hello world"}},{"send_keys":{"keys":"^v"}}]}}
+
+User: When I say open TextEdit then open TextEdit
+{"kind":"command","confidence":0.9,"summary":"Open TextEdit","command":{"trigger":"open TextEdit","match_mode":"phrase","actions":[{"open_target":{"target":"TextEdit"}}]}}
+
+User: When I say TextEdit, open TextEdit fullscreen, new note, paste Hello World, 30 second timer
+{"kind":"command","confidence":0.9,"summary":"Open TextEdit fullscreen, new note, paste Hello World, wait 30s","command":{"trigger":"TextEdit","match_mode":"phrase","actions":[{"open_target":{"target":"TextEdit","placement":"maximize"}},{"send_keys":{"keys":"^n"}},{"set_clipboard":{"text":"Hello World"}},{"send_keys":{"keys":"^v"}},{"wait":{"ms":30000}}]}}"#;
+
+#[cfg(not(target_os = "macos"))]
 const FEW_SHOTS: &str = r#"User: When I say open notepad, launch Notepad snapped left
 {"kind":"command","confidence":0.9,"summary":"Open Notepad on the left","command":{"trigger":"open notepad","match_mode":"phrase","actions":[{"open_target":{"target":"notepad","placement":"left_half"}}]}}
 
@@ -54,6 +80,7 @@ pub fn build_composer_prompt(description: &str, trigger: Option<&str>) -> String
     };
     format!(
         "You compose voice automations as JSON.\n\n\
+         {PLATFORM_RULES}\n\n\
          Actions:\n{ACTION_CATALOG}\n\n\
          {TEMPLATE_RULES}\n\n\
          Examples:\n{FEW_SHOTS}\n\n\
@@ -70,9 +97,28 @@ mod tests {
     fn prompt_includes_catalog_and_few_shots() {
         let prompt = build_composer_prompt("open notepad", None);
         assert!(prompt.contains("open_target"));
-        assert!(prompt.contains("open notepad"));
         assert!(prompt.contains(r#""kind":"command""#));
         assert!(prompt.contains("{{remainder}}"));
+        #[cfg(target_os = "macos")]
+        assert!(prompt.contains("TextEdit"));
+        #[cfg(not(target_os = "macos"))]
+        assert!(prompt.contains("open notepad"));
+    }
+
+    #[test]
+    fn prompt_includes_platform_rules() {
+        let prompt = build_composer_prompt("test", None);
+        #[cfg(target_os = "macos")]
+        {
+            assert!(prompt.contains("Platform: macOS"));
+            assert!(prompt.contains("TextEdit"));
+            assert!(!prompt.contains("Platform: Windows"));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert!(prompt.contains("Platform: Windows"));
+            assert!(prompt.contains("Notepad"));
+        }
     }
 
     #[test]
@@ -88,23 +134,27 @@ mod tests {
     fn prompt_includes_template_rules_and_new_few_shots() {
         let prompt = build_composer_prompt("test", None);
 
-        // Template rules
         assert!(prompt.contains("Never duplicate the trigger as an action"));
         assert!(prompt.contains(r#""then" and "and then" separate steps"#));
         assert!(prompt.contains(r#""30 seconds" = 30000"#));
         assert!(prompt.contains(r#"New document → send_keys("^n") before paste"#));
-
-        // Few-shot: trigger-then-action dedup
-        assert!(prompt.contains("When I say open notepad then open notepad"));
-        assert!(prompt.contains(
-            r#""trigger":"open notepad","match_mode":"phrase","actions":[{"open_target":{"target":"notepad"}}]"#
-        ));
+        assert!(prompt.contains(r#"{"send_keys":{"keys":"^n"}}"#));
+        assert!(prompt.contains(r#"{"wait":{"ms":30000}}"#));
         assert!(prompt.contains(r#""trigger":"voice phrase""#));
         assert!(prompt.contains("Put the exact voice activation phrase in \"trigger\""));
 
-        // Few-shot: fullscreen + new note + paste + timer
-        assert!(prompt.contains("30 second timer"));
-        assert!(prompt.contains(r#"{"send_keys":{"keys":"^n"}}"#));
-        assert!(prompt.contains(r#"{"wait":{"ms":30000}}"#));
+        #[cfg(target_os = "macos")]
+        {
+            assert!(prompt.contains("create a new note, and paste hello world"));
+            assert!(prompt.contains(r#""target":"TextEdit""#));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert!(prompt.contains("When I say open notepad then open notepad"));
+            assert!(prompt.contains(
+                r#""trigger":"open notepad","match_mode":"phrase","actions":[{"open_target":{"target":"notepad"}}]"#
+            ));
+            assert!(prompt.contains("30 second timer"));
+        }
     }
 }

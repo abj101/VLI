@@ -28,7 +28,7 @@
     "tauri:build:mac": "node scripts/whisper-gpu/run-tauri.mjs build --mac",
     "tauri:build:win": "node scripts/whisper-gpu/run-tauri.mjs build --win",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run && node scripts/test-composer.mjs",
     "test:wake": "vitest run scripts/fetch-wake-models.config.test.mjs && cargo test --manifest-path src-tauri/Cargo.toml --features oww audio::wake::oww",
     "cargo": "node scripts/cargo-win-env.mjs",
     "test:cargo-whisper-vulkan": "node scripts/cargo-win-env.mjs check --manifest-path src-tauri/Cargo.toml --no-default-features --features whisper-vulkan,oww",

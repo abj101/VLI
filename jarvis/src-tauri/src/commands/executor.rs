@@ -176,24 +176,7 @@ impl ActionRuntime for TauriActionRuntime<'_> {
 
     fn send_keys(&self, keys: &str) -> Result<(), String> {
         debug!("executor: send_keys keys={keys:?}");
-        let escaped = keys.replace('\'', "''");
-        let command = format!(
-            "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('{escaped}')"
-        );
-        let status = hidden_command("powershell")
-            .arg("-NoProfile")
-            .arg("-NonInteractive")
-            .arg("-Command")
-            .arg(command)
-            .status()
-            .map_err(|e| format!("failed to send keys `{keys}`: {e}"))?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "failed to send keys `{keys}`: powershell exited with {status}"
-            ))
-        }
+        crate::input::send_keys::send_keys(keys)
     }
 
     fn wait_ms(&self, ms: u64) -> Result<(), String> {

@@ -175,6 +175,7 @@ export interface ComposerStatus {
   ready: boolean;
   loading: boolean;
   message: string | null;
+  platform: string;
 }
 
 export type ResolvedTargetPreview =

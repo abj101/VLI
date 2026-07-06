@@ -2,6 +2,7 @@
   {
     "id": "trigger_then_echo",
     "description": "when I say open notepad then open notepad",
+    "platform": "windows",
     "mock_output": "{\"kind\":\"command\",\"confidence\":0.9,\"summary\":\"Open Notepad on the left\",\"command\":{\"trigger\":\"open notepad\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"notepad\",\"placement\":\"left_half\"}},{\"open_target\":{\"target\":\"notepad\",\"placement\":\"left_half\"}}]}}",
     "expect": {
       "kind": "command",
@@ -18,6 +19,7 @@
   {
     "id": "trigger_quoted",
     "description": "When I say \"open notepad\", launch notepad",
+    "platform": "windows",
     "mock_output": "{\"kind\":\"tool\",\"confidence\":0.8,\"summary\":\"Open notepad\",\"tool\":{\"name\":\"open_notepad\",\"display_name\":\"Open Notepad\",\"description\":\"Launch notepad\",\"parameters\":[],\"actions\":[{\"open_target\":{\"target\":\"notepad\"}}]}}",
     "expect": {
       "kind": "command",
@@ -32,6 +34,7 @@
   {
     "id": "multistep_notepad_paste",
     "description": "When I say notepad, open notepad in fullscreen and paste \"Hello World\" into a new note.",
+    "platform": "windows",
     "mock_output": "{\"kind\":\"command\",\"confidence\":0.9,\"summary\":\"Open Notepad fullscreen and paste Hello World\",\"command\":{\"trigger\":\"notepad\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"notepad\",\"placement\":\"maximize\"}},{\"set_clipboard\":{\"text\":\"Hello World\"}},{\"send_keys\":{\"keys\":\"^v\"}}]}}",
     "expect": {
       "kind": "command",
@@ -48,6 +51,7 @@
   {
     "id": "multistep_new_note",
     "description": "When I say note, open notepad and create a new note with the text Meeting notes",
+    "platform": "windows",
     "mock_output": "{\"kind\":\"command\",\"confidence\":0.88,\"summary\":\"Open Notepad and paste into a new note\",\"command\":{\"trigger\":\"note\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"notepad\"}},{\"send_keys\":{\"keys\":\"^n\"}},{\"set_clipboard\":{\"text\":\"Meeting notes\"}},{\"send_keys\":{\"keys\":\"^v\"}}]}}",
     "expect": {
       "kind": "command",
@@ -65,6 +69,7 @@
   {
     "id": "multistep_timer",
     "description": "When I say timer, open notepad and wait 30 seconds then speak done",
+    "platform": "windows",
     "mock_output": "{\"kind\":\"command\",\"confidence\":0.87,\"summary\":\"Open Notepad, pause, speak done\",\"command\":{\"trigger\":\"timer\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"notepad\"}},{\"wait\":{\"ms\":30000}},{\"speak\":{\"text\":\"done\"}}]}}",
     "expect": {
       "kind": "command",
@@ -81,6 +86,7 @@
   {
     "id": "full_combo",
     "description": "When I say demo, open notepad fullscreen, create a new note, paste Demo text, wait 2 seconds, then speak finished",
+    "platform": "windows",
     "mock_output": "{\"kind\":\"command\",\"confidence\":0.91,\"summary\":\"Full Notepad demo chain\",\"command\":{\"trigger\":\"demo\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"notepad\",\"placement\":\"maximize\"}},{\"send_keys\":{\"keys\":\"^n\"}},{\"set_clipboard\":{\"text\":\"Demo text\"}},{\"send_keys\":{\"keys\":\"^v\"}},{\"wait\":{\"ms\":2000}},{\"speak\":{\"text\":\"finished\"}}]}}",
     "expect": {
       "kind": "command",
@@ -142,6 +148,7 @@
   {
     "id": "placement_from_text",
     "description": "When I say notepad open notepad in fullscreen",
+    "platform": "windows",
     "mock_output": "{\"kind\":\"command\",\"confidence\":0.9,\"summary\":\"Open Notepad fullscreen\",\"command\":{\"trigger\":\"notepad\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"notepad\"}}]}}",
     "expect": {
       "kind": "command",
@@ -167,6 +174,57 @@
       "max_actions": 1,
       "forbid_duplicate_actions": true,
       "warnings_contain": ["duplicate"]
+    }
+  },
+  {
+    "id": "mac_textedit_new_note_paste",
+    "description": "open TextEdit, create a new note, and paste hello world",
+    "platform": "macos",
+    "mock_output": "{\"kind\":\"command\",\"confidence\":0.9,\"summary\":\"Open TextEdit, new note, paste hello world\",\"command\":{\"trigger\":\"notes\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"TextEdit\"}},{\"send_keys\":{\"keys\":\"^n\"}},{\"set_clipboard\":{\"text\":\"hello world\"}},{\"send_keys\":{\"keys\":\"^v\"}}]}}",
+    "expect": {
+      "kind": "command",
+      "trigger_phrases": ["notes"],
+      "match_mode": "phrase",
+      "action_checks": [
+        {"kind": "open_target", "target": "TextEdit"},
+        {"kind": "send_keys", "keys": "^n"},
+        {"kind": "set_clipboard", "text": "hello world"},
+        {"kind": "send_keys", "keys": "^v"}
+      ],
+      "max_actions": 4
+    }
+  },
+  {
+    "id": "mac_textedit_left_half",
+    "description": "When I say open TextEdit, launch TextEdit snapped left",
+    "platform": "macos",
+    "mock_output": "{\"kind\":\"command\",\"confidence\":0.9,\"summary\":\"Open TextEdit on the left\",\"command\":{\"trigger\":\"open TextEdit\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"TextEdit\",\"placement\":\"left_half\"}}]}}",
+    "expect": {
+      "kind": "command",
+      "trigger_phrases": ["open TextEdit"],
+      "match_mode": "phrase",
+      "action_checks": [
+        {"kind": "open_target", "target": "TextEdit", "placement": "left_half"}
+      ],
+      "max_actions": 1
+    }
+  },
+  {
+    "id": "mac_notepad_alias_rewrite",
+    "description": "open notepad, create a new note, and paste hello world",
+    "platform": "macos",
+    "mock_output": "{\"kind\":\"command\",\"confidence\":0.9,\"summary\":\"Open notepad and paste\",\"command\":{\"trigger\":\"notes\",\"match_mode\":\"phrase\",\"actions\":[{\"open_target\":{\"target\":\"notepad\"}},{\"send_keys\":{\"keys\":\"^n\"}},{\"set_clipboard\":{\"text\":\"hello world\"}},{\"send_keys\":{\"keys\":\"^v\"}}]}}",
+    "expect": {
+      "kind": "command",
+      "trigger_phrases": ["notes"],
+      "match_mode": "phrase",
+      "action_checks": [
+        {"kind": "open_target", "target": "TextEdit"},
+        {"kind": "send_keys", "keys": "^n"},
+        {"kind": "set_clipboard", "text": "hello world"},
+        {"kind": "send_keys", "keys": "^v"}
+      ],
+      "max_actions": 4
     }
   }
 ]

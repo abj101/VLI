@@ -56,6 +56,7 @@ import { EditorCloseXIcon } from "./EditorCloseXIcon";
 import { EditorPlusIcon } from "./EditorPlusIcon";
 import {
   canComposerGenerate,
+  composerPlaceholdersForPlatform,
   composerTriggerPayload,
   modelFromGeneratedResult,
   parseComposerInvokeError,
@@ -499,6 +500,7 @@ export function CommandFormulaRow({
 type DraftRowProps = {
   onDiscard: () => void;
   onCreated: () => void;
+  initialComposerStatus?: ComposerStatus | null;
 };
 
 function DraftBusyIcon() {
@@ -511,7 +513,7 @@ function DraftBusyIcon() {
   );
 }
 
-export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
+export function CommandDraftRow({ onDiscard, onCreated, initialComposerStatus = null }: DraftRowProps) {
   const [model, setModel] = useState<FormModel>(() => ({
     ...modelFromNode(null),
     triggerPhrases: [],
@@ -520,7 +522,7 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
   const [composerTrigger, setComposerTrigger] = useState("");
   const [description, setDescription] = useState("");
   const [generating, setGenerating] = useState(false);
-  const [composerStatus, setComposerStatus] = useState<ComposerStatus | null>(null);
+  const [composerStatus, setComposerStatus] = useState<ComposerStatus | null>(initialComposerStatus);
   const [generateResult, setGenerateResult] = useState<GenerateAutomationResult | null>(null);
   const [formulaVisible, setFormulaVisible] = useState(false);
   const [toolPreviewVisible, setToolPreviewVisible] = useState(false);
@@ -680,14 +682,11 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
   };
   const followUpVariableMeta = useMemo(() => deriveFollowUpVariableMap(model.actions), [model.actions]);
 
+  const composerPlaceholders = composerPlaceholdersForPlatform(composerStatus?.platform);
+
   return (
     <li className="editor-command-item editor-command-item--draft">
       <div className="editor-command-card">
-        {toastText && (
-          <div className="editor-inline-toast editor-command-row-toast" role="alert">
-            {toastText}
-          </div>
-        )}
         <div
           className="editor-composer-panel"
           aria-busy={composerBusy}
@@ -701,7 +700,7 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
             className="editor-composer-input"
             value={composerTrigger}
             onChange={(e) => setComposerTrigger(e.target.value)}
-            placeholder='e.g. open notepad'
+            placeholder={composerPlaceholders.trigger}
             disabled={generating}
             autoComplete="off"
             spellCheck={false}
@@ -714,10 +713,15 @@ export function CommandDraftRow({ onDiscard, onCreated }: DraftRowProps) {
             className="editor-composer-textarea"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="e.g. launch Notepad snapped left"
-            rows={3}
+            placeholder={composerPlaceholders.description}
+            rows={2}
             disabled={generating}
           />
+          {toastText ? (
+            <div className="editor-composer-error" role="alert">
+              {toastText}
+            </div>
+          ) : null}
           <div className="editor-composer-actions">
             {generating ? (
               <button

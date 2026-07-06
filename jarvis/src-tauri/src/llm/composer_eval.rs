@@ -10,10 +10,23 @@ struct EvalCase {
     description: String,
     mock_output: String,
     expect: ComposerExpectation,
+    #[serde(default)]
+    platform: Option<String>,
 }
 
 const FIXTURES: &str = include_str!("composer_eval_cases.json");
 const BUILTINS: &[&str] = &["open_url", "open_target", "snap_window"];
+
+fn current_platform() -> &'static str {
+    std::env::consts::OS
+}
+
+fn case_matches_platform(case: &EvalCase) -> bool {
+    match case.platform.as_deref() {
+        None | Some("") => true,
+        Some(required) => required == current_platform(),
+    }
+}
 
 struct MockInfer(String);
 
@@ -30,6 +43,9 @@ fn load_fixtures() -> Vec<EvalCase> {
 #[test]
 fn eval_all_fixtures_with_mock() {
     for case in load_fixtures() {
+        if !case_matches_platform(&case) {
+            continue;
+        }
         let result = generate_automation_with_infer(
             &case.description,
             None,
@@ -89,17 +105,5 @@ fn bad_json_repair_fixture() {
 #[ignore = "requires llm-local feature and composer GGUF model"]
 #[cfg(feature = "llm-local")]
 fn composer_live_eval_all_fixtures() {
-    struct LiveInfer;
-
-    impl ComposerInfer for LiveInfer {
-        fn infer(&self, _prompt: &str) -> Result<String, String> {
-            Err("composer live eval harness not wired yet — use mock fixtures for CI".into())
-        }
-    }
-
-    for case in load_fixtures() {
-        let _result = generate_automation_with_infer(&case.description, None, &LiveInfer, BUILTINS);
-        // When wired: assert_result_matches on real model output.
-        let _ = case.id;
-    }
+    panic!("composer live eval harness not wired yet — use `npm run test:composer` mock fixtures for CI");
 }

@@ -203,7 +203,9 @@ html[data-theme="dark"] {
   .editor-action-card :is(input, textarea),
   .editor-subprompt-panel :is(input, textarea),
   .editor-settings-section :is(input, textarea),
-  .editor-formula-input {
+  .editor-formula-input,
+  .editor-composer-input,
+  .editor-composer-textarea {
     background: var(--glass-surface);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
@@ -3813,6 +3815,7 @@ html[data-theme="dark"] .editor-formula-suggest {
 
 .editor-composer-input,
 .editor-composer-textarea {
+  box-sizing: border-box;
   width: 100%;
   padding: 10px 12px;
   font: inherit;
@@ -3835,16 +3838,38 @@ html[data-theme="dark"] .editor-formula-suggest {
   box-shadow: 0 0 0 2px color-mix(in oklch, var(--editor-accent) 22%, transparent);
 }
 
+.editor-composer-input:focus-visible,
+.editor-composer-textarea:focus-visible {
+  outline: none;
+}
+
 .editor-composer-textarea {
-  min-height: 72px;
+  min-height: 2.5em;
+  max-height: 12em;
+  field-sizing: content;
   resize: vertical;
+}
+
+.editor-composer-error {
+  margin: 0;
+  border: 1px solid var(--editor-toast-error-border);
+  background: var(--editor-toast-error-bg);
+  color: var(--editor-toast-error-text);
+  border-radius: var(--radius-control);
+  padding: 8px 10px;
+  font-size: 12px;
 }
 
 .editor-composer-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.editor-composer-actions > .editor-composer-btn--ghost:first-child {
+  margin-right: auto;
 }
 
 .editor-composer-btn {

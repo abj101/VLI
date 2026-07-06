@@ -542,6 +542,7 @@ pub struct ComposerStatus {
     pub ready: bool,
     pub loading: bool,
     pub message: Option<String>,
+    pub platform: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -625,6 +626,7 @@ fn composer_status_inner(app: &AppHandle) -> ComposerStatus {
         ready,
         loading,
         message,
+        platform: std::env::consts::OS.to_string(),
     }
 }
 

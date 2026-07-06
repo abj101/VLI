@@ -69,6 +69,24 @@ export function composerTriggerPayload(trigger: string): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+export type ComposerPlatform = "macos" | "windows" | "linux" | string;
+
+export function composerPlaceholdersForPlatform(platform?: ComposerPlatform | null): {
+  trigger: string;
+  description: string;
+} {
+  if (platform === "macos") {
+    return {
+      trigger: "e.g. open TextEdit",
+      description: "e.g. open TextEdit, create a new note, and paste hello world",
+    };
+  }
+  return {
+    trigger: "e.g. open notepad",
+    description: "e.g. launch Notepad snapped left",
+  };
+}
+
 const COMPOSER_VALIDATION_ERROR_CODES = new Set(["schema_invalid", "invalid_json"]);
 
 export type ParsedComposerError = {

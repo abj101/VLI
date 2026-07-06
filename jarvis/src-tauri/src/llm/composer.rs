@@ -130,6 +130,7 @@ pub fn finalize_automation_result(
 
     if let Some(cmd) = command.as_mut() {
         apply_description_placement_to_command(cmd, user_description);
+        rewrite_platform_app_targets(cmd, user_description);
         warnings.extend(align_trigger_from_description(cmd, user_description));
         warnings.extend(dedupe_consecutive_actions(&mut cmd.actions));
         warnings.extend(composer_semantic_check(user_description, cmd));
@@ -356,17 +357,42 @@ fn composer_semantic_check(description: &str, cmd: &NewCommandNode) -> Vec<Strin
         matches!(action, Action::SendKeys { keys } if send_keys_is_new_document(keys))
     });
     if mentions_new_doc && !has_new_doc_keys {
-        warnings.push(
-            "Description mentions a new note or document, but no Ctrl+N send_keys was included."
-                .into(),
-        );
+        #[cfg(target_os = "macos")]
+        let shortcut_hint = "Cmd+N";
+        #[cfg(not(target_os = "macos"))]
+        let shortcut_hint = "Ctrl+N";
+        warnings.push(format!(
+            "Description mentions a new note or document, but no {shortcut_hint} send_keys was included."
+        ));
     }
     warnings
 }
 
 fn send_keys_is_new_document(keys: &str) -> bool {
     let lower = keys.to_ascii_lowercase();
-    lower.contains("^n") || lower.contains("ctrl+n")
+    lower.contains("^n") || lower.contains("ctrl+n") || lower.contains("cmd+n")
+}
+
+/// On macOS, rewrite Windows-centric `notepad` targets when the user mentioned notepad.
+fn rewrite_platform_app_targets(cmd: &mut NewCommandNode, description: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        let lower = description.to_ascii_lowercase();
+        if !lower.contains("notepad") {
+            return;
+        }
+        for action in cmd.actions.iter_mut() {
+            if let Action::OpenTarget { target, .. } = action {
+                if target.eq_ignore_ascii_case("notepad") {
+                    *target = "TextEdit".to_string();
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (cmd, description);
+    }
 }
 
 fn synthesize_command_from_tool(tool: &NewToolDefinition, trigger: &str) -> NewCommandNode {
@@ -663,9 +689,13 @@ mod tests {
         assert!((result.confidence - 0.92).abs() < 0.001);
         let cmd = result.command.unwrap();
         assert_eq!(cmd.trigger_phrases, vec!["open notepad"]);
+        #[cfg(target_os = "macos")]
+        let expected_target = "TextEdit";
+        #[cfg(not(target_os = "macos"))]
+        let expected_target = "notepad";
         assert!(matches!(
             &cmd.actions[0],
-            Action::OpenTarget { target, .. } if target == "notepad"
+            Action::OpenTarget { target, .. } if target == expected_target
         ));
     }
 
@@ -1001,5 +1031,81 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.contains("Adjusted trigger")));
+    }
+
+    #[test]
+    fn parse_rejects_malformed_json() {
+        let err = parse_composer_output(r#"{"kind":"command","confidence":0.9"#).unwrap_err();
+        assert_eq!(err.code, ComposerErrorCode::InvalidJson);
+        assert!(err.message.contains("not valid JSON"));
+    }
+
+    #[test]
+    fn parse_rejects_unknown_kind() {
+        let raw = parse_composer_output(
+            r#"{"kind":"workflow","confidence":0.9,"summary":"x","command":{"trigger":"a","match_mode":"phrase","actions":[]}}"#,
+        )
+        .expect("json parses");
+        let err = finalize_automation_result(raw, "x", BUILTINS).unwrap_err();
+        assert_eq!(err.code, ComposerErrorCode::UnsupportedKind);
+    }
+
+    #[test]
+    fn parse_extracts_json_from_prose_wrapper() {
+        let wrapped = r#"Here is the JSON:
+{"kind":"command","confidence":0.9,"summary":"Hi","command":{"trigger":"hi","match_mode":"phrase","actions":[{"speak":{"text":"hi"}}]}}
+Done."#;
+        let raw = parse_composer_output(wrapped).expect("extract json");
+        assert_eq!(raw.kind, "command");
+    }
+
+    #[test]
+    fn semantic_warning_when_new_note_missing_cmd_n() {
+        let json = r#"{"kind":"command","confidence":0.9,"summary":"Note","command":{"trigger":"note","match_mode":"phrase","actions":[{"open_target":{"target":"TextEdit"}},{"set_clipboard":{"text":"hello"}},{"send_keys":{"keys":"^v"}}]}}"#;
+        let raw = parse_composer_output(json).unwrap();
+        let result = finalize_automation_result(
+            raw,
+            "open TextEdit, create a new note, and paste hello",
+            BUILTINS,
+        )
+        .unwrap();
+        #[cfg(target_os = "macos")]
+        let needle = "Cmd+N";
+        #[cfg(not(target_os = "macos"))]
+        let needle = "Ctrl+N";
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.contains(needle) && w.contains("new note")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rewrites_notepad_target_to_textedit_on_macos() {
+        let json = r#"{"kind":"command","confidence":0.9,"summary":"Open notepad","command":{"trigger":"notes","match_mode":"phrase","actions":[{"open_target":{"target":"notepad"}}]}}"#;
+        let raw = parse_composer_output(json).unwrap();
+        let result = finalize_automation_result(
+            raw,
+            "open notepad and create a new note",
+            BUILTINS,
+        )
+        .unwrap();
+        let cmd = result.command.unwrap();
+        assert!(matches!(
+            &cmd.actions[0],
+            Action::OpenTarget { target, .. } if target == "TextEdit"
+        ));
+    }
+
+    #[test]
+    fn repair_failure_surfaces_error() {
+        struct AlwaysBad;
+        impl ComposerInfer for AlwaysBad {
+            fn infer(&self, _prompt: &str) -> Result<String, String> {
+                Ok(r#"{"kind":"command","confidence":0.8,"summary":"bad","command":{"trigger":"","trigger_phrases":[],"match_mode":"phrase","actions":[{"speak":{"text":"hi"}}]}}"#.to_string())
+            }
+        }
+        let err = generate_automation_with_infer("say hi", None, &AlwaysBad, BUILTINS).unwrap_err();
+        assert_eq!(err.code, ComposerErrorCode::SchemaInvalid);
     }
 }
