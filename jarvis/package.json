@@ -19,10 +19,10 @@
     "test:composer:live": "node scripts/test-composer.mjs --live",
     "eval:composer": "node scripts/composer-eval.mjs",
     "lint": "eslint .",
-    "tauri": "node scripts/tauri.mjs",
-    "tauri:dev": "node scripts/tauri.mjs dev",
-    "tauri:dev:cpu": "node scripts/tauri.mjs dev --cpu",
-    "tauri:build": "node scripts/tauri.mjs build"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "predev": "node scripts/fetch-models.mjs"
   },
   "dependencies": {
     "@fontsource/work-sans": "^5.2.8",

@@ -21,7 +21,7 @@ Not every implementation detail or roadmap item lives in this README. The deeper
 | ---------------------- | --------------------------------------------------------------------------------------------------------- |
 | **Desktop shell**      | [Tauri](https://tauri.app/) for a lightweight native desktop host with Rust under the hood                |
 | **Frontend**           | [React](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/) + [Vite](https://vitejs.dev/) |
-| **Speech recognition** | Local Whisper-based ASR through [`whisper-rs`](https://github.com/tazz4843/whisper-rs) / whisper.cpp      |
+| **Speech recognition** | Local Whisper ASR through the prebuilt whisper.cpp server |
 | **Wake words**         | Modular wake-word backends, including ONNX-compatible pipelines                                           |
 | **Voice output**       | [Piper](https://github.com/rhasspy/piper) TTS                                                             |
 | **Persistence**        | [SQLite](https://sqlite.org/) for commands, settings, and automation data                                 |
