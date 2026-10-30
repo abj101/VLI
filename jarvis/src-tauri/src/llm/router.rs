@@ -28,7 +28,6 @@ pub struct RouterRouteResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RouterErrorCode {
-    FeatureDisabled,
     Tier2Disabled,
     ModelMissing,
     ModelLoading,
@@ -368,14 +367,9 @@ mod tests {
         let mock = MockInfer(
             r#"{"tool":"open_target","args":{"target":"brave","placement":"left_half"},"confidence":0.92}"#,
         );
-        let result = route_transcript_with_infer(
-            &conn,
-            &[tool],
-            "put brave on the left",
-            0.7,
-            &mock,
-        )
-        .expect("route");
+        let result =
+            route_transcript_with_infer(&conn, &[tool], "put brave on the left", 0.7, &mock)
+                .expect("route");
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].tool, "open_target");
         assert_eq!(
@@ -393,10 +387,10 @@ mod tests {
     fn low_confidence_rejected() {
         let (_dir, conn) = test_conn();
         let tool = open_target_tool(&conn);
-        let mock = MockInfer(
-            r#"{"tool":"open_target","args":{"target":"brave"},"confidence":0.4}"#,
-        );
-        let err = route_transcript_with_infer(&conn, &[tool], "open brave", 0.7, &mock).unwrap_err();
+        let mock =
+            MockInfer(r#"{"tool":"open_target","args":{"target":"brave"},"confidence":0.4}"#);
+        let err =
+            route_transcript_with_infer(&conn, &[tool], "open brave", 0.7, &mock).unwrap_err();
         assert_eq!(err.code, RouterErrorCode::LowConfidence);
     }
 

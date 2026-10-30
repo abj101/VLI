@@ -424,7 +424,7 @@ impl ComposerModelCache {
 
     fn worker_for_path(
         &self,
-        app: &AppHandle,
+        _app: &AppHandle,
         model_path: &str,
         use_gpu: bool,
     ) -> Result<(), String> {
@@ -442,7 +442,7 @@ impl ComposerModelCache {
                 .is_none_or(|slot| *slot != Some(use_gpu));
         if needs_reload {
             self.invalidate_worker();
-            let worker = ComposerInferWorker::spawn_with_app(app, model_path.to_string(), use_gpu)?;
+            let worker = ComposerInferWorker::spawn(model_path.to_string(), use_gpu)?;
             if let Ok(mut slot) = self.worker.lock() {
                 *slot = Some(worker);
             }
@@ -454,7 +454,7 @@ impl ComposerModelCache {
             }
             self.warmed.store(true, Ordering::SeqCst);
         } else if !self.is_warmed() {
-            let worker = ComposerInferWorker::spawn_with_app(app, model_path.to_string(), use_gpu)?;
+            let worker = ComposerInferWorker::spawn(model_path.to_string(), use_gpu)?;
             if let Ok(mut slot) = self.worker.lock() {
                 *slot = Some(worker);
             }
@@ -536,16 +536,13 @@ impl ComposerInfer for WorkerInfer<'_> {
 
 fn composer_status_inner(app: &AppHandle) -> ComposerStatus {
     let runtime_available = llm_gpu_runtime_available(app);
-    let (composer_enabled, custom_model_path) = match open_db(app).and_then(|conn| {
+    let (composer_enabled, custom_model_path) = open_db(app).and_then(|conn| {
         let settings = get_app_settings(&conn).map_err(|e| e.to_string())?;
         Ok((
             settings.llm_composer_enabled,
             settings.llm_composer_model_path,
         ))
-    }) {
-        Ok(v) => v,
-        Err(_) => (false, None),
-    };
+    }).unwrap_or_default();
     let model_path = resolve_composer_model_path(app, custom_model_path.as_deref()).ok();
     let model_present = model_path.is_some();
     let (ready, loading) = app

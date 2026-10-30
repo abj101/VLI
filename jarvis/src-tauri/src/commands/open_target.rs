@@ -93,7 +93,7 @@ fn resolve_open_target_input(
     let explicit_placement = placement
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .and_then(|z| crate::apps::resolve_target::normalize_placement_zone(z));
+        .and_then(crate::apps::resolve_target::normalize_placement_zone);
     let (clean_target, suffix_placement) = strip_placement_suffix(target);
     let zone = explicit_placement.or(suffix_placement);
     let mut resolved = resolve_target(&clean_target, app_entries, aliases);
@@ -134,9 +134,8 @@ fn clarify_and_resolve(
         };
         app_strong
     });
-    let resolved = ambiguous_to_choice(ambiguous, choose_app).ok_or_else(|| {
-        format!("Could not interpret follow-up for `{response}`")
-    })?;
+    let resolved = ambiguous_to_choice(ambiguous, choose_app)
+        .ok_or_else(|| format!("Could not interpret follow-up for `{response}`"))?;
     learn_alias_from_clarify(runtime, ambiguous, choose_app);
     Ok(resolved)
 }
@@ -334,9 +333,7 @@ fn status_message_for(resolved: &ResolvedTarget) -> String {
             placement,
             ..
         } => format_opening_status(display_name, placement.as_deref()),
-        ResolvedTarget::Url { url, placement } => {
-            format_opening_status(url, placement.as_deref())
-        }
+        ResolvedTarget::Url { url, placement } => format_opening_status(url, placement.as_deref()),
         ResolvedTarget::Ambiguous { query, .. } => format!("Ambiguous target `{query}`"),
         ResolvedTarget::Unknown { query, .. } => format!("Couldn't find {query}"),
     }
@@ -344,11 +341,7 @@ fn status_message_for(resolved: &ResolvedTarget) -> String {
 
 fn format_opening_status(label: &str, placement: Option<&str>) -> String {
     match placement.filter(|z| !z.trim().is_empty()) {
-        Some(zone) => format!(
-            "Opening {} ({})…",
-            label,
-            placement_status_label(zone)
-        ),
+        Some(zone) => format!("Opening {} ({})…", label, placement_status_label(zone)),
         None => format!("Opening {label}…"),
     }
 }

@@ -14,6 +14,7 @@ use crate::{
     },
 };
 use log::debug;
+use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -21,7 +22,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use rusqlite::Connection;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
@@ -62,11 +62,8 @@ pub struct ToolCallContext {
 }
 
 impl ToolCallContext {
-    #[allow(dead_code)]
     pub fn from_args(args: &HashMap<String, String>) -> Self {
-        Self {
-            args: args.clone(),
-        }
+        Self { args: args.clone() }
     }
 
     pub fn with_remainder(remainder: &str) -> Self {
@@ -245,14 +242,14 @@ impl ActionRuntime for TauriActionRuntime<'_> {
     fn start_dictation(&self) -> Result<(), String> {
         let hud = self.app.state::<crate::SharedHud>();
         let audio = self.app.state::<crate::SharedAudioPipeline>();
-        crate::dictation::start_dictation(self.app, &*hud, &*audio)?;
+        crate::dictation::start_dictation(self.app, &hud, &audio)?;
         Ok(())
     }
 
     fn stop_dictation(&self) -> Result<(), String> {
         let hud = self.app.state::<crate::SharedHud>();
         let audio = self.app.state::<crate::SharedAudioPipeline>();
-        crate::dictation::stop_dictation(self.app, &*hud, &*audio)
+        crate::dictation::stop_dictation(self.app, &hud, &audio)
     }
 
     fn persist_target_alias(&self, alias: &TargetAlias) -> Result<(), String> {
@@ -289,7 +286,6 @@ pub fn execute_command_with_context(
     debug!("executor: execute_command finished node_id={}", node.id);
 }
 
-#[allow(dead_code)]
 pub fn execute_resolved_actions(
     actions: &[Action],
     runtime: &impl ActionRuntime,
@@ -335,6 +331,10 @@ pub fn test_command_actions(
     TestCommandResult { steps }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Execution context is threaded through the existing action runner"
+)]
 fn execute_actions(
     actions: &[Action],
     runtime: &impl ActionRuntime,
@@ -380,11 +380,7 @@ fn execute_actions(
                 run_state,
                 step_collector.as_deref_mut(),
             )
-        } else if let Action::RunCommand {
-            command_id,
-            input,
-        } = &resolved
-        {
+        } else if let Action::RunCommand { command_id, input } = &resolved {
             run_nested_command(
                 *command_id,
                 input.as_deref(),
@@ -398,13 +394,7 @@ fn execute_actions(
                 step_collector.as_deref_mut(),
             )
         } else {
-            execute_one_action(
-                &resolved,
-                runtime,
-                app_index,
-                target_aliases,
-                script_conn,
-            )
+            execute_one_action(&resolved, runtime, app_index, target_aliases, script_conn)
         };
         match outcome {
             Ok(outcome) => {
@@ -467,6 +457,10 @@ fn execute_actions(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Nested execution preserves the existing runtime and connection lifetimes"
+)]
 fn run_nested_command(
     command_id: i64,
     input: Option<&str>,
@@ -530,6 +524,10 @@ fn run_nested_command(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "If/else execution threads shared borrowed runtime state through the action runner"
+)]
 fn run_if_else_branch(
     condition: IfConditionKind,
     text: &str,
@@ -683,12 +681,7 @@ fn execute_one_action(
                 validate_open_app_path(trimmed)?;
                 (trimmed.to_string(), name.clone())
             };
-            if focus_existing_app_window(
-                &launch_path,
-                &display,
-                placement_ref,
-                DEFAULT_MONITOR,
-            )? {
+            if focus_existing_app_window(&launch_path, &display, placement_ref, DEFAULT_MONITOR)? {
                 return Ok(outcome_from_status(match placement_ref {
                     Some(zone) => format!("Focused {display} ({zone})..."),
                     None => format!("Focused {display}..."),
@@ -836,10 +829,7 @@ fn execute_one_action(
                 .get("name")
                 .map(Value::coerce_to_text)
                 .unwrap_or_default();
-            Ok(dict_outcome(
-                meta,
-                format!("Metadata for {name}"),
-            ))
+            Ok(dict_outcome(meta, format!("Metadata for {name}")))
         }
         Action::Screenshot { path } => {
             let saved = capture_screenshot(path.as_deref())?;
@@ -862,9 +852,7 @@ fn execute_one_action(
             runtime.stop_dictation()?;
             Ok(nothing_outcome("Stopped dictation".into()))
         }
-        Action::RunCommand { .. } => {
-            Err("RunCommand is handled by execute_actions".to_string())
-        }
+        Action::RunCommand { .. } => Err("RunCommand is handled by execute_actions".to_string()),
     }
 }
 
@@ -920,9 +908,7 @@ pub fn resolve_action_templates(
             command_id: *command_id,
             input: input.as_ref().map(|value| render(value)),
         },
-        Action::ReadFile { path } => Action::ReadFile {
-            path: render(path),
-        },
+        Action::ReadFile { path } => Action::ReadFile { path: render(path) },
         Action::HttpGet { url } => Action::HttpGet { url: render(url) },
         Action::GetClipboard {} => Action::GetClipboard {},
         Action::ShowNotification { title, body } => Action::ShowNotification {
@@ -942,16 +928,12 @@ pub fn resolve_action_templates(
             separator: render(separator),
         },
         Action::SetClipboard { text } => Action::SetClipboard { text: render(text) },
-        Action::ListFolder { path } => Action::ListFolder {
-            path: render(path),
-        },
+        Action::ListFolder { path } => Action::ListFolder { path: render(path) },
         Action::WriteFile { path, content } => Action::WriteFile {
             path: render(path),
             content: render(content),
         },
-        Action::GetFileMetadata { path } => Action::GetFileMetadata {
-            path: render(path),
-        },
+        Action::GetFileMetadata { path } => Action::GetFileMetadata { path: render(path) },
         Action::Screenshot { path } => Action::Screenshot {
             path: path.as_ref().map(|value| render(value)),
         },
@@ -1565,11 +1547,7 @@ pub fn list_folder_entries(path: &str) -> Result<Vec<String>, String> {
     }
     let mut names = std::fs::read_dir(path)
         .map_err(|e| format!("ListFolder failed to read `{path}`: {e}"))?
-        .filter_map(|entry| {
-            entry
-                .ok()
-                .and_then(|e| e.file_name().into_string().ok())
-        })
+        .filter_map(|entry| entry.ok().and_then(|e| e.file_name().into_string().ok()))
         .collect::<Vec<_>>();
     names.sort();
     Ok(names)
@@ -1815,20 +1793,22 @@ mod tests {
 
     impl MockRuntime {
         fn with_failures(fail_app_paths: Vec<&str>, fail_urls: Vec<&str>) -> Self {
-            let mut s = MockState::default();
-            s.fail_app_paths = fail_app_paths.into_iter().map(str::to_string).collect();
-            s.fail_urls = fail_urls.into_iter().map(str::to_string).collect();
             Self {
-                state: Arc::new(Mutex::new(s)),
+            state: Arc::new(Mutex::new(MockState {
+                fail_app_paths: fail_app_paths.into_iter().map(str::to_string).collect(),
+                fail_urls: fail_urls.into_iter().map(str::to_string).collect(),
+                ..MockState::default()
+            })),
             }
         }
 
         fn with_action_failures(fail_scripts: Vec<&str>, fail_keys: Vec<&str>) -> Self {
-            let mut s = MockState::default();
-            s.fail_scripts = fail_scripts.into_iter().map(str::to_string).collect();
-            s.fail_keys = fail_keys.into_iter().map(str::to_string).collect();
             Self {
-                state: Arc::new(Mutex::new(s)),
+            state: Arc::new(Mutex::new(MockState {
+                fail_scripts: fail_scripts.into_iter().map(str::to_string).collect(),
+                fail_keys: fail_keys.into_iter().map(str::to_string).collect(),
+                ..MockState::default()
+            })),
             }
         }
 
@@ -1837,26 +1817,29 @@ mod tests {
         }
 
         fn with_cancelled() -> Self {
-            let mut s = MockState::default();
-            s.cancelled = true;
             Self {
-                state: Arc::new(Mutex::new(s)),
+            state: Arc::new(Mutex::new(MockState {
+                cancelled: true,
+                ..MockState::default()
+            })),
             }
         }
 
         fn with_follow_up_answers(answers: Vec<&str>) -> Self {
-            let mut s = MockState::default();
-            s.follow_up_answers = answers.into_iter().map(str::to_string).collect();
             Self {
-                state: Arc::new(Mutex::new(s)),
+            state: Arc::new(Mutex::new(MockState {
+                follow_up_answers: answers.into_iter().map(str::to_string).collect(),
+                ..MockState::default()
+            })),
             }
         }
 
         fn with_follow_up_failure(prompt: &str) -> Self {
-            let mut s = MockState::default();
-            s.fail_follow_up_prompt = Some(prompt.to_string());
             Self {
-                state: Arc::new(Mutex::new(s)),
+            state: Arc::new(Mutex::new(MockState {
+                fail_follow_up_prompt: Some(prompt.to_string()),
+                ..MockState::default()
+            })),
             }
         }
     }
@@ -1986,10 +1969,7 @@ mod tests {
     #[test]
     fn executor_start_dictation_action() {
         let runtime = MockRuntime::default();
-        let node = node_with_actions(vec![
-            Action::StartDictation {},
-            Action::StopDictation {},
-        ]);
+        let node = node_with_actions(vec![Action::StartDictation {}, Action::StopDictation {}]);
         execute_command_with_context(&node, &runtime, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.dictation_starts, 1);
@@ -2395,12 +2375,11 @@ mod tests {
 
     #[test]
     fn tool_arg_templates_substitute_param_placeholders() {
-        let ctx = ToolCallContext::from_args(&[(
-            "url".to_string(),
-            "https://example.com".to_string(),
-        )]
-        .into_iter()
-        .collect());
+        let ctx = ToolCallContext::from_args(
+            &[("url".to_string(), "https://example.com".to_string())]
+                .into_iter()
+                .collect(),
+        );
         let exec_ctx = ExecutionContext::from_tool_context(Some(&ctx));
         let resolved = resolve_action_templates(
             &Action::OpenUrl {
@@ -2871,9 +2850,7 @@ mod tests {
     fn if_else_runs_else_branch_when_text_is_empty() {
         let runtime = MockRuntime::default();
         let node = node_with_actions(vec![
-            Action::TextTrim {
-                text: "   ".into(),
-            },
+            Action::TextTrim { text: "   ".into() },
             Action::IfElse {
                 condition: IfConditionKind::TextIsEmpty,
                 text: "{{last_result}}".into(),

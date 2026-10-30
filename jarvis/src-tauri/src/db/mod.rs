@@ -2,8 +2,8 @@
 
 mod app_index;
 mod models;
-pub mod settings;
 mod registered_scripts;
+pub mod settings;
 mod target_aliases;
 mod tools;
 
@@ -12,21 +12,19 @@ pub use models::{
     Action, CommandNode, IfConditionKind, MatchMode, NewCommandNode, NewToolDefinition,
     ToolDefinition, ToolParameter,
 };
-pub use registered_scripts::{
-    get_registered_script, verify_registered_script_file,
-};
+pub use registered_scripts::{get_registered_script, verify_registered_script_file};
 #[cfg(test)]
 pub use registered_scripts::{hash_file, upsert_registered_script, RegisteredScript};
+pub use settings::{
+    apply_settings_patch, get_app_settings, get_setting, set_key_stored_flag, set_setting,
+    AppSettings, SettingsPatch,
+};
 pub use target_aliases::{
     delete_target_alias, get_all_target_aliases, get_target_alias, upsert_target_alias,
     TargetAlias, TargetAliasKind,
 };
 pub use tools::{
     delete_tool, get_all_tools, get_tool_by_id, get_tool_by_name, insert_tool, update_tool,
-};
-pub use settings::{
-    apply_settings_patch, get_app_settings, get_setting, set_key_stored_flag, set_setting,
-    AppSettings, SettingsPatch,
 };
 
 use rusqlite::Connection;
@@ -226,10 +224,7 @@ fn seed_builtin_open_command(conn: &Connection) -> Result<(), DbError> {
 
 fn purge_legacy_shipped_sample_commands(conn: &Connection) -> Result<(), DbError> {
     for tp in legacy_shipped_sample_trigger_json() {
-        conn.execute(
-            "DELETE FROM command_nodes WHERE trigger_phrases = ?1",
-            [tp],
-        )?;
+        conn.execute("DELETE FROM command_nodes WHERE trigger_phrases = ?1", [tp])?;
     }
     Ok(())
 }
@@ -259,7 +254,6 @@ pub fn get_all_commands(conn: &Connection) -> Result<Vec<CommandNode>, DbError> 
     Ok(out)
 }
 
-#[allow(dead_code)] // reserved for Phase 2+ editor flows
 pub fn update_command(conn: &Connection, id: i64, row: &NewCommandNode) -> Result<bool, DbError> {
     let trigger_phrases = serde_json::to_string(&row.trigger_phrases)?;
     let actions = serde_json::to_string(&row.actions)?;
@@ -273,7 +267,6 @@ pub fn update_command(conn: &Connection, id: i64, row: &NewCommandNode) -> Resul
     Ok(n > 0)
 }
 
-#[allow(dead_code)] // used in tests and upcoming editor APIs
 pub fn get_command_by_id(conn: &Connection, id: i64) -> Result<Option<CommandNode>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT id, name, trigger_phrases, actions, enabled, fuzzy_threshold_pct, match_mode, created_at FROM command_nodes WHERE id = ?1",
@@ -286,7 +279,6 @@ pub fn get_command_by_id(conn: &Connection, id: i64) -> Result<Option<CommandNod
     }
 }
 
-#[allow(dead_code)] // used in unit tests; reserved for Phase 3 editor
 pub fn delete_command(conn: &Connection, id: i64) -> Result<bool, DbError> {
     let n = conn.execute("DELETE FROM command_nodes WHERE id = ?1", [id])?;
     Ok(n > 0)

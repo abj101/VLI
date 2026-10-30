@@ -385,6 +385,7 @@ impl Default for HudRuntime {
 pub(crate) type SharedHud = Arc<Mutex<HudRuntime>>;
 
 /// Whether the HUD session is marked visible (macOS overlay reassert guard).
+#[cfg(target_os = "macos")]
 pub(crate) fn is_hud_overlay_visible(app: &AppHandle) -> bool {
     app.try_state::<SharedHud>()
         .and_then(|rt| rt.lock().ok().map(|s| s.visible))
@@ -1351,7 +1352,7 @@ fn process_transcript_update(
     }
     if abort_tier2_routing_for_new_speech(rt, &update) {
         debug!("flow: resumed listening during tier2 routing");
-        let _ = emit_hud_phase(app);
+        emit_hud_phase(app);
     }
     if capture_follow_up_from_update(rt, &update) {
         return Ok(());
@@ -1428,11 +1429,7 @@ fn show_hud_from_hotkey_impl(
     let mut listening_session_id: Option<u64> = None;
     let mut defer_hud_window_hide = false;
     let mut opening_listen = false;
-    if !s.visible {
-        let sid = prepare_hud_listening_session(&mut s);
-        listening_session_id = Some(sid);
-        opening_listen = true;
-    } else if reopen_listening_when_visible(s.phase) {
+    if !s.visible || reopen_listening_when_visible(s.phase) {
         let sid = prepare_hud_listening_session(&mut s);
         listening_session_id = Some(sid);
         opening_listen = true;
@@ -2275,14 +2272,14 @@ fn set_dictation_hotkey_mode(
 fn start_dictation_cmd(app: AppHandle) -> Result<u64, String> {
     let hud = app.state::<SharedHud>();
     let audio = app.state::<SharedAudioPipeline>();
-    dictation::start_dictation(&app, &*hud, &*audio)
+    dictation::start_dictation(&app, &hud, &audio)
 }
 
 #[tauri::command]
 fn stop_dictation_cmd(app: AppHandle) -> Result<(), String> {
     let hud = app.state::<SharedHud>();
     let audio = app.state::<SharedAudioPipeline>();
-    dictation::stop_dictation(&app, &*hud, &*audio)
+    dictation::stop_dictation(&app, &hud, &audio)
 }
 
 #[tauri::command]
@@ -3003,8 +3000,10 @@ mod tests {
 
     #[test]
     fn command_match_requires_listening_visible() {
-        let mut rt = HudRuntime::default();
-        rt.visible = true;
+        let mut rt = HudRuntime {
+            visible: true,
+            ..HudRuntime::default()
+        };
         rt.phase = HudPhase::Listening;
         assert!(should_attempt_command_match(&rt));
         rt.phase = HudPhase::Done;
@@ -3047,15 +3046,19 @@ mod tests {
 
     #[test]
     fn partial_transcript_match_is_debounced_while_speaking() {
-        let mut rt = HudRuntime::default();
-        rt.last_transcript_activity = Some(Instant::now());
+        let rt = HudRuntime {
+            last_transcript_activity: Some(Instant::now()),
+            ..HudRuntime::default()
+        };
         assert!(!should_attempt_match_for_update(&rt, false));
     }
 
     #[test]
     fn mic_amplitude_noise_does_not_block_match_after_transcript_idle() {
-        let mut rt = HudRuntime::default();
-        rt.nonempty_transcript_this_listen = true;
+        let mut rt = HudRuntime {
+            nonempty_transcript_this_listen: true,
+            ..HudRuntime::default()
+        };
         rt.last_speech_activity = Some(Instant::now());
         rt.last_transcript_activity =
             Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
@@ -3064,8 +3067,10 @@ mod tests {
 
     #[test]
     fn mic_amplitude_still_blocks_match_before_first_nonempty_transcript() {
-        let mut rt = HudRuntime::default();
-        rt.nonempty_transcript_this_listen = false;
+        let mut rt = HudRuntime {
+            nonempty_transcript_this_listen: false,
+            ..HudRuntime::default()
+        };
         rt.last_speech_activity = Some(Instant::now());
         rt.last_transcript_activity =
             Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
@@ -3074,8 +3079,10 @@ mod tests {
 
     #[test]
     fn partial_transcript_match_allowed_after_silence_gap() {
-        let mut rt = HudRuntime::default();
-        rt.nonempty_transcript_this_listen = true;
+        let mut rt = HudRuntime {
+            nonempty_transcript_this_listen: true,
+            ..HudRuntime::default()
+        };
         rt.last_transcript_activity =
             Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
         rt.last_speech_activity =
@@ -3085,8 +3092,10 @@ mod tests {
 
     #[test]
     fn partial_transcript_never_matches_before_first_nonempty_stt_even_if_hud_idle() {
-        let mut rt = HudRuntime::default();
-        rt.nonempty_transcript_this_listen = false;
+        let mut rt = HudRuntime {
+            nonempty_transcript_this_listen: false,
+            ..HudRuntime::default()
+        };
         rt.last_transcript_activity =
             Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_secs(30));
         assert!(!should_attempt_match_for_update(&rt, false));
@@ -3094,15 +3103,19 @@ mod tests {
 
     #[test]
     fn final_transcript_bypasses_match_debounce() {
-        let mut rt = HudRuntime::default();
-        rt.last_transcript_activity = Some(Instant::now());
+        let rt = HudRuntime {
+            last_transcript_activity: Some(Instant::now()),
+            ..HudRuntime::default()
+        };
         assert!(should_attempt_match_for_update(&rt, true));
     }
 
     #[test]
     fn command_match_quiet_ignores_amplitude_after_transcript_idle() {
-        let mut rt = HudRuntime::default();
-        rt.nonempty_transcript_this_listen = true;
+        let mut rt = HudRuntime {
+            nonempty_transcript_this_listen: true,
+            ..HudRuntime::default()
+        };
         rt.last_speech_activity = Some(Instant::now());
         rt.last_transcript_activity =
             Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
@@ -3111,8 +3124,10 @@ mod tests {
 
     #[test]
     fn deferred_partial_match_routes_on_stable_revision() {
-        let mut rt = HudRuntime::default();
-        rt.visible = true;
+        let mut rt = HudRuntime {
+            visible: true,
+            ..HudRuntime::default()
+        };
         rt.phase = HudPhase::Listening;
         rt.session_id = 5;
         rt.pending_transcript = "open safari".to_string();
@@ -3127,8 +3142,10 @@ mod tests {
 
     #[test]
     fn deferred_partial_match_skips_when_revision_advanced() {
-        let mut rt = HudRuntime::default();
-        rt.visible = true;
+        let mut rt = HudRuntime {
+            visible: true,
+            ..HudRuntime::default()
+        };
         rt.phase = HudPhase::Listening;
         rt.session_id = 5;
         rt.pending_transcript = "open safari".to_string();
@@ -3138,8 +3155,10 @@ mod tests {
 
     #[test]
     fn deferred_partial_match_routes_when_transcript_idle_despite_mic_noise() {
-        let mut rt = HudRuntime::default();
-        rt.visible = true;
+        let mut rt = HudRuntime {
+            visible: true,
+            ..HudRuntime::default()
+        };
         rt.phase = HudPhase::Listening;
         rt.session_id = 2;
         rt.nonempty_transcript_this_listen = true;
@@ -3154,8 +3173,10 @@ mod tests {
 
     #[test]
     fn no_match_idle_no_words_uses_listen_start_deadline() {
-        let mut rt = HudRuntime::default();
-        rt.visible = true;
+        let mut rt = HudRuntime {
+            visible: true,
+            ..HudRuntime::default()
+        };
         rt.phase = HudPhase::Listening;
         rt.nonempty_transcript_this_listen = false;
         rt.listening_started_at =
@@ -3167,8 +3188,10 @@ mod tests {
 
     #[test]
     fn no_match_idle_after_words_uses_last_transcript_deadline() {
-        let mut rt = HudRuntime::default();
-        rt.visible = true;
+        let mut rt = HudRuntime {
+            visible: true,
+            ..HudRuntime::default()
+        };
         rt.phase = HudPhase::Listening;
         rt.nonempty_transcript_this_listen = true;
         rt.last_nonempty_transcript_at =
@@ -3180,8 +3203,10 @@ mod tests {
 
     #[test]
     fn no_match_idle_waits_while_mic_active() {
-        let mut rt = HudRuntime::default();
-        rt.visible = true;
+        let mut rt = HudRuntime {
+            visible: true,
+            ..HudRuntime::default()
+        };
         rt.phase = HudPhase::Listening;
         rt.nonempty_transcript_this_listen = true;
         rt.last_nonempty_transcript_at =
@@ -3194,8 +3219,10 @@ mod tests {
 
     #[test]
     fn no_match_idle_dismisses_when_revision_stable() {
-        let mut rt = HudRuntime::default();
-        rt.visible = true;
+        let mut rt = HudRuntime {
+            visible: true,
+            ..HudRuntime::default()
+        };
         rt.phase = HudPhase::Listening;
         rt.nonempty_transcript_this_listen = true;
         rt.last_nonempty_transcript_at = Some(Instant::now());
@@ -3208,8 +3235,10 @@ mod tests {
 
     #[test]
     fn no_match_idle_dismisses_at_max_listen_duration() {
-        let mut rt = HudRuntime::default();
-        rt.visible = true;
+        let mut rt = HudRuntime {
+            visible: true,
+            ..HudRuntime::default()
+        };
         rt.phase = HudPhase::Listening;
         rt.listening_started_at = Instant::now() - MAX_LISTEN_DURATION - Duration::from_millis(50);
         assert!(no_match_idle_should_dismiss(&rt));
@@ -3217,8 +3246,10 @@ mod tests {
 
     #[test]
     fn no_match_timeout_requires_same_session_and_listening() {
-        let mut rt = HudRuntime::default();
-        rt.visible = true;
+        let mut rt = HudRuntime {
+            visible: true,
+            ..HudRuntime::default()
+        };
         rt.phase = HudPhase::Listening;
         rt.session_id = 7;
         assert!(should_fire_no_match_timeout(&rt, 7));
@@ -3229,8 +3260,10 @@ mod tests {
 
     #[test]
     fn follow_up_happy_path_consumes_response_once() {
-        let mut rt = HudRuntime::default();
-        rt.visible = true;
+        let mut rt = HudRuntime {
+            visible: true,
+            ..HudRuntime::default()
+        };
         rt.phase = HudPhase::AwaitingInput;
         rt.session_id = 42;
         rt.pending_follow_up_response = Some("open docs".to_string());
@@ -3242,8 +3275,10 @@ mod tests {
 
     #[test]
     fn follow_up_candidate_promotes_after_stable_silence() {
-        let mut rt = HudRuntime::default();
-        rt.pending_follow_up_candidate = Some("rust tauri".to_string());
+        let mut rt = HudRuntime {
+            pending_follow_up_candidate: Some("rust tauri".to_string()),
+            ..HudRuntime::default()
+        };
         rt.pending_follow_up_candidate_at = Some(Instant::now() - SILENCE_BEFORE_MATCH);
         maybe_promote_follow_up_candidate(&mut rt, Instant::now());
         assert_eq!(
@@ -3255,8 +3290,10 @@ mod tests {
 
     #[test]
     fn follow_up_wait_times_out_after_deadline() {
-        let mut rt = HudRuntime::default();
-        rt.visible = true;
+        let mut rt = HudRuntime {
+            visible: true,
+            ..HudRuntime::default()
+        };
         rt.phase = HudPhase::AwaitingInput;
         rt.session_id = 7;
 
@@ -3270,8 +3307,10 @@ mod tests {
 
     #[test]
     fn follow_up_wait_cancels_on_escape_or_session_change() {
-        let mut rt = HudRuntime::default();
-        rt.visible = true;
+        let mut rt = HudRuntime {
+            visible: true,
+            ..HudRuntime::default()
+        };
         rt.phase = HudPhase::AwaitingInput;
         rt.session_id = 3;
         let now = Instant::now();
@@ -3289,8 +3328,10 @@ mod tests {
 
     #[test]
     fn finalize_execution_requires_matching_active_session() {
-        let mut rt = HudRuntime::default();
-        rt.visible = true;
+        let mut rt = HudRuntime {
+            visible: true,
+            ..HudRuntime::default()
+        };
         rt.phase = HudPhase::Executing;
         rt.session_id = 11;
         rt.active_run_session_id = Some(11);
@@ -3304,8 +3345,10 @@ mod tests {
     #[test]
     fn cancel_active_run_sets_flag_and_clears_tracking() {
         let cancel = Arc::new(AtomicBool::new(false));
-        let mut rt = HudRuntime::default();
-        rt.active_run_cancel = Some(cancel.clone());
+        let mut rt = HudRuntime {
+            active_run_cancel: Some(cancel.clone()),
+            ..HudRuntime::default()
+        };
         rt.active_run_session_id = Some(2);
         cancel_active_run_in_state(&mut rt);
         assert!(cancel.load(Ordering::Relaxed));
@@ -3381,7 +3424,7 @@ mod tests {
             node.trigger_phrases,
             vec!["open app".to_string(), "launch app".to_string()]
         );
-        assert_eq!(node.enabled, false);
+        assert!(!node.enabled);
         assert_eq!(node.fuzzy_threshold_pct, 90);
         assert_eq!(
             node.actions,

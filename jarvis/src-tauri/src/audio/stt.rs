@@ -312,6 +312,7 @@ impl SilenceResetTracker {
     }
 }
 
+#[expect(clippy::too_many_arguments, reason = "existing STT pipeline API")]
 pub fn spawn_stt_thread(
     app: AppHandle,
     model_id: String,
@@ -357,6 +358,7 @@ pub fn spawn_stt_thread(
     })
 }
 
+#[expect(clippy::too_many_arguments, reason = "existing STT pipeline API")]
 fn stt_loop(
     app: AppHandle,
     model_path: PathBuf,

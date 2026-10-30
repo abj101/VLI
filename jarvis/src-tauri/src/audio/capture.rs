@@ -92,11 +92,8 @@ pub fn start_capture(
         Some(d) => d,
         None => {
             let message = mic_failure_hint("no microphone input device found");
-            let _ = app.emit(
-                "audio-error",
-                serde_json::json!({ "message": message }),
-            );
-            return Err(message.into());
+            let _ = app.emit("audio-error", serde_json::json!({ "message": message }));
+            return Err(message);
         }
     };
 

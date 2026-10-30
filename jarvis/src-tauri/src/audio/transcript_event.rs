@@ -20,10 +20,11 @@
 use serde::{Deserialize, Serialize};
 
 /// How a partial STT emission relates to the previous partial in the same listen session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TranscriptPartialKind {
     /// Same segment; `text` is a longer rolling window than the last partial.
+    #[default]
     Growth,
     /// Same segment window but non-prefix change (Whisper revised earlier words).
     Revision,
@@ -31,12 +32,6 @@ pub enum TranscriptPartialKind {
     SilenceReset,
     /// Duplicate partial suppressed at source (not emitted on the wire).
     Unchanged,
-}
-
-impl Default for TranscriptPartialKind {
-    fn default() -> Self {
-        Self::Growth
-    }
 }
 
 fn starts_with_ci(haystack: &str, needle: &str) -> bool {

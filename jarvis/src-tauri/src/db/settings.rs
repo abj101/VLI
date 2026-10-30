@@ -124,9 +124,7 @@ pub fn parse_dictation_hotkey_mode(raw: Option<&str>) -> String {
         .map(|s| s.to_ascii_lowercase())
         .as_deref()
     {
-        Some("push_to_talk") | Some("push-to-talk") | Some("ptt") => {
-            "push_to_talk".to_string()
-        }
+        Some("push_to_talk") | Some("push-to-talk") | Some("ptt") => "push_to_talk".to_string(),
         _ => DEFAULT_DICTATION_HOTKEY_MODE.to_string(),
     }
 }
@@ -204,10 +202,7 @@ pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
             SETTING_REMOTE_STT_TIMEOUT_SECS,
         )?),
         remote_stt_key_stored: bool_from_setting(get_setting(conn, SETTING_REMOTE_STT_KEY_STORED)?),
-        local_whisper_use_gpu: bool_from_setting(get_setting(
-            conn,
-            SETTING_LOCAL_WHISPER_USE_GPU,
-        )?),
+        local_whisper_use_gpu: bool_from_setting(get_setting(conn, SETTING_LOCAL_WHISPER_USE_GPU)?),
         local_whisper_model: parse_local_whisper_model_str(get_setting(
             conn,
             SETTING_LOCAL_WHISPER_MODEL,
@@ -327,10 +322,7 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
     }
     if let Some(ref raw) = patch.local_whisper_model {
         let normalized = raw.trim();
-        if !crate::audio::stt::LOCAL_WHISPER_MODEL_IDS
-            .iter()
-            .any(|id| *id == normalized)
-        {
+        if !crate::audio::stt::LOCAL_WHISPER_MODEL_IDS.contains(&normalized) {
             return Err(DbError::Validation(format!(
                 "invalid local_whisper_model `{normalized}`"
             )));
@@ -396,7 +388,9 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
     if let Some(ref hotkey) = patch.dictation_hotkey {
         let trimmed = hotkey.trim();
         if trimmed.is_empty() {
-            return Err(DbError::Validation("dictation_hotkey cannot be empty".into()));
+            return Err(DbError::Validation(
+                "dictation_hotkey cannot be empty".into(),
+            ));
         }
         set_setting(conn, SETTING_DICTATION_HOTKEY, trimmed)?;
     }
@@ -458,9 +452,14 @@ mod tests {
         set_setting(&conn, "porcupine_key_stored", "1").expect("seed legacy flag");
         set_setting(&conn, SETTING_WAKE_ENGINE, "porcupine").expect("seed legacy engine");
         prune_legacy_settings(&conn).expect("prune");
-        assert_eq!(get_setting(&conn, "porcupine_key_stored").expect("get"), None);
         assert_eq!(
-            get_setting(&conn, SETTING_WAKE_ENGINE).expect("get").as_deref(),
+            get_setting(&conn, "porcupine_key_stored").expect("get"),
+            None
+        );
+        assert_eq!(
+            get_setting(&conn, SETTING_WAKE_ENGINE)
+                .expect("get")
+                .as_deref(),
             Some("oww")
         );
     }

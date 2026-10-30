@@ -62,9 +62,7 @@ pub enum ResolvedTarget {
 /// Collapse whitespace and drop trailing STT punctuation before suffix matching.
 fn normalize_for_placement_strip(input: &str) -> String {
     let trimmed = input.trim();
-    let no_trail_punct = trimmed.trim_end_matches(|c: char| {
-        matches!(c, '.' | ',' | '!' | '?' | ';' | ':' | '…')
-    });
+    let no_trail_punct = trimmed.trim_end_matches(['.', ',', '!', '?', ';', ':', '…']);
     no_trail_punct
         .split_whitespace()
         .collect::<Vec<_>>()

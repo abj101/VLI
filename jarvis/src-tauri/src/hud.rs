@@ -150,7 +150,10 @@ enum HudPlacementAnchor {
     Bottom { margin_logical: f64 },
 }
 
-fn hud_placement_monitor(window: &WebviewWindow, app: &AppHandle) -> Result<tauri::Monitor, String> {
+fn hud_placement_monitor(
+    window: &WebviewWindow,
+    app: &AppHandle,
+) -> Result<tauri::Monitor, String> {
     if let Ok(cursor) = app.cursor_position() {
         if let Ok(Some(monitor)) = window.monitor_from_point(cursor.x, cursor.y) {
             return Ok(monitor);
@@ -165,6 +168,7 @@ fn hud_placement_monitor(window: &WebviewWindow, app: &AppHandle) -> Result<taur
         .ok_or_else(|| "no monitor available for hud placement".to_string())
 }
 
+#[cfg(target_os = "macos")]
 fn has_saved_hud_position(app: &AppHandle, mode: HudOverlayMode) -> bool {
     open_db_connection(app)
         .ok()
@@ -185,9 +189,7 @@ fn logical_position_in_work_area(
     let x = origin_x + (area_w - win_w) / 2.0;
     let y = match anchor {
         HudPlacementAnchor::Center => origin_y + (area_h - win_h) / 2.0,
-        HudPlacementAnchor::Bottom { margin_logical } => {
-            origin_y + area_h - win_h - margin_logical
-        }
+        HudPlacementAnchor::Bottom { margin_logical } => origin_y + area_h - win_h - margin_logical,
     };
     HudLogicalPosition { x, y }
 }
@@ -268,10 +270,7 @@ fn macos_screen_placement(mode: HudOverlayMode) -> crate::macos::window::HudScre
     }
 }
 
-pub fn apply_hud_window_geometry(
-    app: &AppHandle,
-    mode: HudOverlayMode,
-) -> Result<(), String> {
+pub fn apply_hud_window_geometry(app: &AppHandle, mode: HudOverlayMode) -> Result<(), String> {
     let window = app
         .get_webview_window(HUD_WINDOW_LABEL)
         .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
@@ -513,8 +512,8 @@ pub fn present_hud_window(
 #[cfg(test)]
 mod tests {
     use super::{
-        ignore_cursor_for_phase, parse_hud_position, HudLogicalPosition, HudOverlayMode,
-        HudPhase, overlay_logical_size,
+        ignore_cursor_for_phase, overlay_logical_size, parse_hud_position, HudLogicalPosition,
+        HudOverlayMode, HudPhase,
     };
 
     #[test]

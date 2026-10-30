@@ -11,7 +11,7 @@ pub struct Sidecar {
     child: Child,
     pub port: u16,
     #[cfg(windows)]
-    job: std::os::windows::io::OwnedHandle,
+    _job: std::os::windows::io::OwnedHandle,
 }
 
 impl Drop for Sidecar {
@@ -86,7 +86,7 @@ pub fn spawn_at(
         child,
         port,
         #[cfg(windows)]
-        job,
+        _job: job,
     };
 
     let stderr_tail = Arc::new(Mutex::new(std::collections::VecDeque::new()));

@@ -1,6 +1,5 @@
 //! Allowlisted user scripts for LLM `run_registered_script` tool (path + content hash).
 
-#![allow(dead_code)]
 
 use super::DbError;
 use rusqlite::Connection;
@@ -34,18 +33,6 @@ pub fn ensure_registered_scripts_schema(conn: &Connection) -> Result<(), DbError
     Ok(())
 }
 
-pub fn get_all_registered_scripts(conn: &Connection) -> Result<Vec<RegisteredScript>, DbError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, path, hash, display_name, arg_names FROM registered_scripts ORDER BY display_name ASC",
-    )?;
-    let mut rows = stmt.query([])?;
-    let mut out = Vec::new();
-    while let Some(row) = rows.next()? {
-        out.push(row_to_script(row)?);
-    }
-    Ok(out)
-}
-
 pub fn get_registered_script(
     conn: &Connection,
     id: &str,
@@ -65,6 +52,7 @@ pub fn get_registered_script(
     }
 }
 
+#[cfg(test)]
 pub fn upsert_registered_script(
     conn: &Connection,
     script: &RegisteredScript,
@@ -86,13 +74,6 @@ pub fn upsert_registered_script(
     Ok(())
 }
 
-pub fn delete_registered_script(conn: &Connection, id: &str) -> Result<bool, DbError> {
-    let n = conn.execute(
-        "DELETE FROM registered_scripts WHERE id = ?1",
-        [id.trim()],
-    )?;
-    Ok(n > 0)
-}
 
 /// SHA-256 hex digest of file bytes (used at register + run time).
 pub fn hash_file(path: &Path) -> Result<String, String> {
@@ -126,6 +107,7 @@ fn row_to_script(row: &rusqlite::Row<'_>) -> Result<RegisteredScript, DbError> {
     })
 }
 
+#[cfg(test)]
 fn validate_script(script: &RegisteredScript) -> Result<(), DbError> {
     if script.id.trim().is_empty() {
         return Err(DbError::Validation("script id is required".into()));
@@ -146,7 +128,9 @@ fn validate_script(script: &RegisteredScript) -> Result<(), DbError> {
         return Err(DbError::Validation("script hash is required".into()));
     }
     if script.display_name.trim().is_empty() {
-        return Err(DbError::Validation("script display_name is required".into()));
+        return Err(DbError::Validation(
+            "script display_name is required".into(),
+        ));
     }
     Ok(())
 }
@@ -154,40 +138,9 @@ fn validate_script(script: &RegisteredScript) -> Result<(), DbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
-    use rusqlite::Connection;
     use std::io::Write;
     use tempfile::tempdir;
 
-    fn open_temp() -> (tempfile::TempDir, Connection) {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("scripts.db");
-        init_db(&path).unwrap();
-        (dir, Connection::open(&path).unwrap())
-    }
-
-    #[test]
-    fn registered_script_crud_round_trip() {
-        let (_dir, conn) = open_temp();
-        upsert_registered_script(
-            &conn,
-            &RegisteredScript {
-                id: "deploy".into(),
-                path: r"C:\scripts\deploy.ps1".into(),
-                hash: "abc123".into(),
-                display_name: "Deploy staging".into(),
-                arg_names: vec!["env".into()],
-            },
-        )
-        .unwrap();
-
-        let one = get_registered_script(&conn, "deploy").unwrap().expect("row");
-        assert_eq!(one.display_name, "Deploy staging");
-        assert_eq!(one.arg_names, vec!["env".to_string()]);
-
-        assert!(delete_registered_script(&conn, "deploy").unwrap());
-        assert!(get_registered_script(&conn, "deploy").unwrap().is_none());
-    }
 
     #[test]
     fn hash_file_matches_content() {

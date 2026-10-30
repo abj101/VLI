@@ -698,7 +698,7 @@ fn is_skippable_subdir(name_lower: &str) -> bool {
 /// BUG FIX #2: Previously dropped every exe whose stem wasn't in the display
 /// name, then only fell back to single-exe case. Now we keep a secondary
 /// "any non-skipped exe" bucket so multi-exe dirs still resolve.
-#[allow(dead_code)]
+#[cfg(test)]
 fn install_dir_primary_exe(install_loc: &str, display_name: &str) -> Option<String> {
     let dir = Path::new(install_loc.trim());
     if !dir.is_dir() {
@@ -2497,7 +2497,7 @@ mod tests {
             None,
             SourcePriority::Uninstall,
         );
-        let e = map.get(&r"c:\apps\foo.exe".to_string()).unwrap();
+        let e = map.get(r"c:\apps\foo.exe").unwrap();
         assert_eq!(e.inner.display_name, "Foo Uninstall");
     }
 
@@ -2518,7 +2518,7 @@ mod tests {
             Some("data:image/png;base64,AAA=".into()),
             SourcePriority::ExeScan,
         );
-        let e = map.get(&r"c:\apps\foo.exe".to_string()).unwrap();
+        let e = map.get(r"c:\apps\foo.exe").unwrap();
         // Name should be preserved from higher priority source
         assert_eq!(e.inner.display_name, "Good Name");
         // But icon should be backfilled

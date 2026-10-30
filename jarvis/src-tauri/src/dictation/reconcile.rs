@@ -1,7 +1,7 @@
 //! STT transcript reconciliation — overlap, delta, revision, and segment policy.
 
-use crate::audio::transcript_event::TranscriptPartialKind;
 use super::screen::ScreenModel;
+use crate::audio::transcript_event::TranscriptPartialKind;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DeltaOps {
@@ -54,7 +54,11 @@ impl TranscriptReconciler {
     }
 
     /// Like [`Self::apply_with_kind`] but honors typed partial semantics from the STT pipeline.
-    pub fn apply_with_kind(&mut self, new_stt: &str, kind: TranscriptPartialKind) -> ReconcileResult {
+    pub fn apply_with_kind(
+        &mut self,
+        new_stt: &str,
+        kind: TranscriptPartialKind,
+    ) -> ReconcileResult {
         if matches!(kind, TranscriptPartialKind::Unchanged) {
             return ReconcileResult::Noop;
         }
@@ -196,12 +200,7 @@ impl TranscriptReconciler {
 
     pub fn into_parts(self) -> (String, String, String, bool) {
         let (text, typed_in_session) = self.screen.into_parts();
-        (
-            self.segment_injected,
-            self.last_stt,
-            text,
-            typed_in_session,
-        )
+        (self.segment_injected, self.last_stt, text, typed_in_session)
     }
 
     pub fn apply(&mut self, new_stt: &str) -> ReconcileResult {
@@ -383,9 +382,7 @@ fn trailing_offset_word_overlap(session_typed: &str, new_stt: &str) -> Option<(u
             let new_prefix = &new_tail[..k];
             if words_equal_ci(session_suffix, new_prefix) {
                 let candidate = (k, skip);
-                let better = best.map_or(true, |prev| {
-                    k > prev.0 || (k == prev.0 && skip < prev.1)
-                });
+                let better = best.is_none_or(|prev| k > prev.0 || (k == prev.0 && skip < prev.1));
                 if better {
                     best = Some(candidate);
                 }
@@ -421,7 +418,11 @@ fn try_segment_revision_replace(
         return None;
     }
 
-    Some(segment_replace_delta(segment_injected, session_typed, new_stt))
+    Some(segment_replace_delta(
+        segment_injected,
+        session_typed,
+        new_stt,
+    ))
 }
 
 fn apply_overlap_merge(session_typed: &str, new_stt: &str) -> Option<DeltaOps> {

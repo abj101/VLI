@@ -166,7 +166,7 @@ fn base_url(port: u16) -> String {
 }
 
 fn response_json(
-    response: Result<ureq::Response, ureq::Error>,
+    response: Result<ureq::Response, String>,
     endpoint: &str,
 ) -> Result<serde_json::Value, String> {
     let response = response.map_err(|e| format!("llama-server {endpoint} request failed: {e}"))?;
@@ -182,14 +182,15 @@ fn post_json(
     endpoint: &str,
     body: &serde_json::Value,
     timeout: Duration,
-) -> Result<ureq::Response, ureq::Error> {
+) -> Result<ureq::Response, String> {
     let body = serde_json::to_string(body).expect("JSON value serialization cannot fail");
     ureq::AgentBuilder::new()
         .timeout(timeout)
         .build()
         .post(&format!("{}{endpoint}", base_url(port)))
         .set("Content-Type", "application/json")
-        .send_string(&body)
+    .send_string(&body)
+    .map_err(|e| e.to_string())
 }
 
 fn render_prompt(
@@ -331,11 +332,7 @@ impl ComposerInferWorker {
         Self::spawn_with_app(app, model_path, use_gpu)
     }
 
-    pub fn spawn_with_app(
-        app: &AppHandle,
-        model_path: String,
-        use_gpu: bool,
-    ) -> Result<Self, String> {
+    pub fn spawn_with_app(app: &AppHandle, model_path: String, use_gpu: bool) -> Result<Self, String> {
         let sidecar = sidecar::spawn(
             app,
             LLAMA_SERVER_EXE,
@@ -346,6 +343,7 @@ impl ComposerInferWorker {
         Self::from_sidecar(sidecar)
     }
 
+    #[cfg(test)]
     pub fn spawn_with_resource_root(
         resource_root: &std::path::Path,
         model_path: String,

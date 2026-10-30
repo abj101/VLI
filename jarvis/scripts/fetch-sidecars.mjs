@@ -62,6 +62,8 @@ if (process.platform === "darwin") {
     }
     if (result.error || result.status !== 0) throw result.error ?? new Error(`${exe} exited with code ${result.status}`);
   }
+  await mkdir(binDir, { recursive: true });
+  await writeFile(path.join(binDir, ".sidecars-path"), "PATH-managed\n");
 } else if (process.platform !== "win32") {
   throw new Error("Prebuilt Jarvis sidecars are currently configured for Windows; install whisper.cpp and llama.cpp on this platform.");
 } else {
