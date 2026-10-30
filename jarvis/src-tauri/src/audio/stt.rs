@@ -223,10 +223,9 @@ fn run_decode(
     params.set_print_timestamps(false);
     params.set_n_threads(whisper_decode_thread_count(use_accelerator));
     state.full(params, &audio)?;
-    let n = state.full_n_segments()?;
     let mut s = String::new();
-    for i in 0..n {
-        let seg = state.full_get_segment_text(i)?;
+    for segment in state.as_iter() {
+        let seg = segment.to_str()?;
         let t = seg.trim();
         if t.is_empty() {
             continue;

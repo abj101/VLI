@@ -24,6 +24,7 @@ target/
 
 # Bundled Whisper weights (fetch locally; see jarvis/scripts in later tasks)
 *.bin
+/jarvis/src-tauri/resources/bin/
 
 # Tauri / Vite output (also per-package .gitignore under jarvis/)
 dist/

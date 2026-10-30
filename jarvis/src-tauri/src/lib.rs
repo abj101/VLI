@@ -11,6 +11,7 @@ mod keychain;
 #[cfg(target_os = "macos")]
 mod macos;
 mod process;
+mod sidecar;
 mod tray;
 mod window;
 #[cfg(windows)]

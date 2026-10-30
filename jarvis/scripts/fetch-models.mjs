@@ -80,6 +80,7 @@ export async function fetchModelsForSets(modelSets) {
   if (sets.has("llm")) {
     await runNodeScript("fetch-llm-models.mjs");
   }
+  await runNodeScript("fetch-sidecars.mjs");
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
