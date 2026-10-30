@@ -1,12 +1,11 @@
 //! Tauri IPC for the on-device LLM router and command composer.
 
 use crate::db::{
-    get_all_tools, get_app_settings,
-    settings::DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD,
+    get_all_tools, get_app_settings, settings::DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD,
 };
 use crate::llm::{
-    generate_automation_with_infer, infer_composer_completion, infer_router_completion,
-    llm_compile_backend, llm_gpu_runtime_available, resolve_composer_model_path,
+    ensure_router_server, generate_automation_with_infer, infer_composer_completion,
+    infer_router_completion, llm_gpu_runtime_available, resolve_composer_model_path,
     resolve_router_model_path, route_transcript_with_infer, ComposerError, ComposerErrorCode,
     ComposerInfer, ComposerInferWorker, GenerateAutomationResult, RouterError, RouterErrorCode,
     RouterInfer, RouterRouteResult, COMPOSER_DEFAULT_MAX_TOKENS, COMPOSER_INFER_TIMEOUT,
@@ -99,7 +98,7 @@ fn finish_router_warmup_emit(app: &AppHandle, payload: &RouterWarmupPayload) {
 /// Start background router warmup when Tier 2 is enabled and the GGUF is present.
 pub fn spawn_router_preload(app: &AppHandle) -> bool {
     let status = router_status_inner(app);
-    if !status.feature_compiled || !status.model_present {
+    if !status.model_present {
         return false;
     }
     let Some(cache) = app.try_state::<RouterModelCache>() else {
@@ -120,7 +119,7 @@ pub fn spawn_router_preload(app: &AppHandle) -> bool {
 /// Blocking router warmup for the launch coordinator (caller is already on a background thread).
 pub(crate) fn run_router_warmup_at_launch_blocking(app: &AppHandle) {
     let status = router_status_inner(app);
-    if !status.feature_compiled || !status.model_present {
+    if !status.model_present {
         return;
     }
     let Some(cache) = app.try_state::<RouterModelCache>() else {
@@ -149,8 +148,6 @@ impl Default for RouterModelCache {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RouterStatus {
-    pub feature_compiled: bool,
-    pub compile_backend: String,
     pub runtime_available: bool,
     pub model_present: bool,
     pub model_path: Option<String>,
@@ -182,25 +179,8 @@ fn open_db(app: &AppHandle) -> Result<rusqlite::Connection, String> {
     rusqlite::Connection::open(dir.join("jarvis.db")).map_err(|e| e.to_string())
 }
 
-fn llm_backend_label(backend: &str) -> &'static str {
-    match backend {
-        "metal" => "Metal",
-        "cuda" => "CUDA",
-        "vulkan" => "Vulkan",
-        _ => "CPU",
-    }
-}
-
 fn router_status_inner(app: &AppHandle) -> RouterStatus {
-    let feature_compiled = cfg!(feature = "llm-local");
-    let compile_backend = if feature_compiled {
-        llm_compile_backend().to_string()
-    } else {
-        "none".to_string()
-    };
-    let runtime_available =
-        feature_compiled && llm_gpu_runtime_available(llm_compile_backend());
-
+    let runtime_available = llm_gpu_runtime_available(app);
     let (tier2_enabled, confidence_threshold, custom_model_path) =
         match open_db(app).and_then(|conn| {
             let settings = get_app_settings(&conn).map_err(|e| e.to_string())?;
@@ -213,35 +193,16 @@ fn router_status_inner(app: &AppHandle) -> RouterStatus {
             Ok(v) => v,
             Err(_) => (false, DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD, None),
         };
-
-    let model_path = if feature_compiled {
-        resolve_router_model_path(app, custom_model_path.as_deref()).ok()
-    } else {
-        None
-    };
+    let model_path = resolve_router_model_path(app, custom_model_path.as_deref()).ok();
     let model_present = model_path.is_some();
-
-    let message = if !feature_compiled {
-        Some("This build was compiled without the `llm-local` feature.".into())
-    } else if !model_present {
+    let message = if !model_present {
         Some("Router model not found. Run npm run fetch-models.".into())
-    } else if compile_backend != "none" && runtime_available {
-        Some(format!(
-            "Router GPU backend ready: {}.",
-            llm_backend_label(&compile_backend)
-        ))
-    } else if compile_backend != "none" {
-        Some(format!(
-            "{} backend is compiled, but runtime was not detected; router will use CPU.",
-            llm_backend_label(&compile_backend)
-        ))
+    } else if runtime_available {
+        Some("Router GPU acceleration available.".into())
     } else {
         Some("Router will run on CPU.".into())
     };
-
     RouterStatus {
-        feature_compiled,
-        compile_backend,
         runtime_available,
         model_present,
         model_path: model_path.map(|p| p.display().to_string()),
@@ -258,15 +219,7 @@ pub fn router_status(app: AppHandle) -> RouterStatus {
 
 pub(crate) fn warmup_router_blocking(app: AppHandle) -> RouterWarmupPayload {
     let status = router_status_inner(&app);
-    if !status.feature_compiled {
-        if let Some(cache) = app.try_state::<RouterModelCache>() {
-            cache.finish_loading(false, None);
-        }
-        return RouterWarmupPayload {
-            ready: false,
-            message: "This build has no LLM router feature.".into(),
-        };
-    }
+
     let model_path = match status.model_path {
         Some(p) => p,
         None => {
@@ -280,7 +233,9 @@ pub(crate) fn warmup_router_blocking(app: AppHandle) -> RouterWarmupPayload {
         }
     };
     let use_gpu = status.runtime_available;
-    match infer_router_completion(&model_path, "warmup", use_gpu) {
+    match ensure_router_server(&app, &model_path, use_gpu)
+        .and_then(|()| infer_router_completion(&model_path, "warmup", use_gpu))
+    {
         Ok(_) => {
             if let Some(cache) = app.try_state::<RouterModelCache>() {
                 cache.mark_warmed(model_path);
@@ -289,7 +244,11 @@ pub(crate) fn warmup_router_blocking(app: AppHandle) -> RouterWarmupPayload {
                 ready: true,
                 message: format!(
                     "Router model ready ({}).",
-                    llm_backend_label(&status.compile_backend)
+                    if status.runtime_available {
+                        "GPU"
+                    } else {
+                        "CPU"
+                    }
                 ),
             }
         }
@@ -308,12 +267,7 @@ pub(crate) fn warmup_router_blocking(app: AppHandle) -> RouterWarmupPayload {
 #[tauri::command]
 pub fn router_warmup(app: AppHandle, cache: State<'_, RouterModelCache>) -> RouterWarmupPayload {
     let status = router_status_inner(&app);
-    if !status.feature_compiled {
-        return RouterWarmupPayload {
-            ready: false,
-            message: "This build has no LLM router feature.".into(),
-        };
-    }
+
     if !status.model_present {
         return RouterWarmupPayload {
             ready: false,
@@ -346,36 +300,22 @@ pub fn router_warmup(app: AppHandle, cache: State<'_, RouterModelCache>) -> Rout
 
 #[tauri::command]
 pub fn route_transcript(app: AppHandle, transcript: String) -> Result<RouterRouteResult, String> {
-    if !cfg!(feature = "llm-local") {
-        return Err(
-            RouterError {
-                code: RouterErrorCode::FeatureDisabled,
-                message: "LLM router is not compiled into this build.".into(),
-            }
-            .into_string(),
-        );
-    }
-
     let conn = open_db(&app)?;
     let settings = get_app_settings(&conn).map_err(|e| e.to_string())?;
     if !settings.llm_router_tier2_enabled {
-        return Err(
-            RouterError {
-                code: RouterErrorCode::Tier2Disabled,
-                message: "Tier 2 LLM routing is disabled in settings.".into(),
-            }
-            .into_string(),
-        );
+        return Err(RouterError {
+            code: RouterErrorCode::Tier2Disabled,
+            message: "Tier 2 LLM routing is disabled in settings.".into(),
+        }
+        .into_string());
     }
     if !router_model_ready(&app) {
         let _ = spawn_router_preload(&app);
-        return Err(
-            RouterError {
-                code: RouterErrorCode::ModelLoading,
-                message: ROUTER_LOADING_STATUS.into(),
-            }
-            .into_string(),
-        );
+        return Err(RouterError {
+            code: RouterErrorCode::ModelLoading,
+            message: ROUTER_LOADING_STATUS.into(),
+        }
+        .into_string());
     }
 
     let model_path = resolve_router_model_path(&app, settings.llm_router_model_path.as_deref())
@@ -388,7 +328,7 @@ pub fn route_transcript(app: AppHandle, transcript: String) -> Result<RouterRout
         })?;
 
     let tools = get_all_tools(&conn).map_err(|e| e.to_string())?;
-    let use_gpu = llm_gpu_runtime_available(llm_compile_backend());
+    let use_gpu = llm_gpu_runtime_available(&app);
     let infer = LocalInfer {
         model_path: model_path.display().to_string(),
         use_gpu,
@@ -409,6 +349,7 @@ pub fn route_transcript(app: AppHandle, transcript: String) -> Result<RouterRout
 pub struct ComposerModelCache {
     worker: Mutex<Option<ComposerInferWorker>>,
     path: Mutex<Option<String>>,
+    use_gpu: Mutex<Option<bool>>,
     warmed: AtomicBool,
     loading: AtomicBool,
     cancel_flag: Mutex<Arc<AtomicBool>>,
@@ -419,6 +360,7 @@ impl ComposerModelCache {
         Self {
             worker: Mutex::new(None),
             path: Mutex::new(None),
+            use_gpu: Mutex::new(None),
             warmed: AtomicBool::new(false),
             loading: AtomicBool::new(false),
             cancel_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
@@ -442,7 +384,12 @@ impl ComposerModelCache {
             .is_ok()
     }
 
-    fn finish_loading(&self, warmed: bool, path: Option<String>, worker: Option<ComposerInferWorker>) {
+    fn finish_loading(
+        &self,
+        warmed: bool,
+        path: Option<String>,
+        worker: Option<ComposerInferWorker>,
+    ) {
         if warmed {
             if let Some(p) = path {
                 if let Ok(mut slot) = self.path.lock() {
@@ -466,27 +413,48 @@ impl ComposerModelCache {
         if let Ok(mut slot) = self.path.lock() {
             *slot = None;
         }
+        if let Ok(mut slot) = self.use_gpu.lock() {
+            *slot = None;
+        }
     }
 
-    fn worker_for_path(&self, model_path: &str, use_gpu: bool) -> Result<(), String> {
+    pub fn shutdown(&self) {
+        self.invalidate_worker();
+    }
+
+    fn worker_for_path(
+        &self,
+        app: &AppHandle,
+        model_path: &str,
+        use_gpu: bool,
+    ) -> Result<(), String> {
         let needs_reload = self
             .path
             .lock()
             .ok()
             .and_then(|slot| slot.clone())
             .is_none_or(|p| p != model_path);
+        let needs_reload = needs_reload
+            || self
+                .use_gpu
+                .lock()
+                .ok()
+                .is_none_or(|slot| *slot != Some(use_gpu));
         if needs_reload {
             self.invalidate_worker();
-            let worker = ComposerInferWorker::spawn(model_path.to_string(), use_gpu)?;
+            let worker = ComposerInferWorker::spawn_with_app(app, model_path.to_string(), use_gpu)?;
             if let Ok(mut slot) = self.worker.lock() {
                 *slot = Some(worker);
             }
             if let Ok(mut slot) = self.path.lock() {
                 *slot = Some(model_path.to_string());
             }
+            if let Ok(mut slot) = self.use_gpu.lock() {
+                *slot = Some(use_gpu);
+            }
             self.warmed.store(true, Ordering::SeqCst);
         } else if !self.is_warmed() {
-            let worker = ComposerInferWorker::spawn(model_path.to_string(), use_gpu)?;
+            let worker = ComposerInferWorker::spawn_with_app(app, model_path.to_string(), use_gpu)?;
             if let Ok(mut slot) = self.worker.lock() {
                 *slot = Some(worker);
             }
@@ -533,8 +501,6 @@ impl Default for ComposerModelCache {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComposerStatus {
-    pub feature_compiled: bool,
-    pub compile_backend: String,
     pub runtime_available: bool,
     pub model_present: bool,
     pub model_path: Option<String>,
@@ -569,56 +535,37 @@ impl ComposerInfer for WorkerInfer<'_> {
 }
 
 fn composer_status_inner(app: &AppHandle) -> ComposerStatus {
-    let feature_compiled = cfg!(feature = "llm-local");
-    let compile_backend = if feature_compiled {
-        llm_compile_backend().to_string()
-    } else {
-        "none".to_string()
-    };
-    let runtime_available =
-        feature_compiled && llm_gpu_runtime_available(llm_compile_backend());
-
+    let runtime_available = llm_gpu_runtime_available(app);
     let (composer_enabled, custom_model_path) = match open_db(app).and_then(|conn| {
         let settings = get_app_settings(&conn).map_err(|e| e.to_string())?;
-        Ok((settings.llm_composer_enabled, settings.llm_composer_model_path))
+        Ok((
+            settings.llm_composer_enabled,
+            settings.llm_composer_model_path,
+        ))
     }) {
         Ok(v) => v,
         Err(_) => (false, None),
     };
-
-    let model_path = if feature_compiled {
-        resolve_composer_model_path(app, custom_model_path.as_deref()).ok()
-    } else {
-        None
-    };
+    let model_path = resolve_composer_model_path(app, custom_model_path.as_deref()).ok();
     let model_present = model_path.is_some();
     let (ready, loading) = app
         .try_state::<ComposerModelCache>()
         .map(|c| (c.is_warmed(), c.is_loading()))
         .unwrap_or((false, false));
-
-    let message = if !feature_compiled {
-        Some("This build was compiled without the `llm-local` feature.".into())
-    } else if !composer_enabled {
-        Some("Command composer is disabled in settings.".into())
+    let message = if !composer_enabled {
+        Some("Command composer disabled in settings.".into())
     } else if !model_present {
         Some("Composer model not found. Run npm run fetch-models.".into())
     } else if loading {
         Some(COMPOSER_LOADING_STATUS.into())
     } else if ready {
         Some("Composer model ready.".into())
-    } else if compile_backend != "none" && runtime_available {
-        Some(format!(
-            "Composer GPU backend ready: {}.",
-            llm_backend_label(&compile_backend)
-        ))
+    } else if runtime_available {
+        Some("Composer GPU acceleration available.".into())
     } else {
-        Some("Composer will run on CPU (slow for 3B — GPU recommended).".into())
+        Some("Composer will run on CPU (GPU recommended for 3B).".into())
     };
-
     ComposerStatus {
-        feature_compiled,
-        compile_backend,
         runtime_available,
         model_present,
         model_path: model_path.map(|p| p.display().to_string()),
@@ -631,31 +578,23 @@ fn composer_status_inner(app: &AppHandle) -> ComposerStatus {
 }
 
 fn finish_composer_warmup_emit(app: &AppHandle, payload: &ComposerWarmupPayload) {
-  if payload.ready {
-    let _ = app.emit("composer-warmup", payload);
-  } else {
-    if let Some(cache) = app.try_state::<ComposerModelCache>() {
-      cache.finish_loading(false, None, None);
+    if payload.ready {
+        let _ = app.emit("composer-warmup", payload);
+    } else {
+        if let Some(cache) = app.try_state::<ComposerModelCache>() {
+            cache.finish_loading(false, None, None);
+        }
+        let _ = app.emit(
+            "action-error",
+            serde_json::json!({ "message": payload.message }),
+        );
+        let _ = app.emit("composer-warmup", payload);
     }
-    let _ = app.emit(
-      "action-error",
-      serde_json::json!({ "message": payload.message }),
-    );
-    let _ = app.emit("composer-warmup", payload);
-  }
 }
 
 pub(crate) fn warmup_composer_blocking(app: &AppHandle) -> ComposerWarmupPayload {
     let status = composer_status_inner(app);
-    if !status.feature_compiled {
-        if let Some(cache) = app.try_state::<ComposerModelCache>() {
-            cache.finish_loading(false, None, None);
-        }
-        return ComposerWarmupPayload {
-            ready: false,
-            message: "This build has no LLM composer feature.".into(),
-        };
-    }
+
     if !status.composer_enabled {
         if let Some(cache) = app.try_state::<ComposerModelCache>() {
             cache.finish_loading(false, None, None);
@@ -685,18 +624,22 @@ pub(crate) fn warmup_composer_blocking(app: &AppHandle) -> ComposerWarmupPayload
         };
     };
     let cancel = cache.fresh_cancel_flag();
-    match cache.worker_for_path(&model_path, use_gpu).and_then(|()| {
-        cache.with_worker(|worker| {
-            infer_composer_completion(worker, "warmup", 8, cancel)
-        })
-    }) {
+    match cache
+        .worker_for_path(app, &model_path, use_gpu)
+        .and_then(|()| {
+            cache.with_worker(|worker| infer_composer_completion(worker, "warmup", 8, cancel))
+        }) {
         Ok(Ok(_)) => {
             cache.finish_loading(true, Some(model_path), None);
             ComposerWarmupPayload {
                 ready: true,
                 message: format!(
                     "Composer model ready ({}).",
-                    llm_backend_label(&status.compile_backend)
+                    if status.runtime_available {
+                        "GPU"
+                    } else {
+                        "CPU"
+                    }
                 ),
             }
         }
@@ -712,7 +655,7 @@ pub(crate) fn warmup_composer_blocking(app: &AppHandle) -> ComposerWarmupPayload
 
 pub fn spawn_composer_preload(app: &AppHandle) -> bool {
     let status = composer_status_inner(app);
-    if !status.feature_compiled || !status.model_present || !status.composer_enabled {
+    if !status.model_present || !status.composer_enabled {
         return false;
     }
     let Some(cache) = app.try_state::<ComposerModelCache>() else {
@@ -740,12 +683,7 @@ pub fn composer_warmup(
     cache: State<'_, ComposerModelCache>,
 ) -> ComposerWarmupPayload {
     let status = composer_status_inner(&app);
-    if !status.feature_compiled {
-        return ComposerWarmupPayload {
-            ready: false,
-            message: "This build has no LLM composer feature.".into(),
-        };
-    }
+
     if !status.composer_enabled {
         return ComposerWarmupPayload {
             ready: false,
@@ -794,37 +732,23 @@ pub fn generate_automation(
     trigger: Option<String>,
     cache: State<'_, ComposerModelCache>,
 ) -> Result<GenerateAutomationResult, String> {
-    if !cfg!(feature = "llm-local") {
-        return Err(
-            ComposerError {
-                code: ComposerErrorCode::FeatureDisabled,
-                message: "LLM composer is not compiled into this build.".into(),
-            }
-            .into_string(),
-        );
-    }
-
     let trimmed = description.trim();
     if trimmed.is_empty() {
-        return Err(
-            ComposerError {
-                code: ComposerErrorCode::SchemaInvalid,
-                message: "description cannot be empty".into(),
-            }
-            .into_string(),
-        );
+        return Err(ComposerError {
+            code: ComposerErrorCode::SchemaInvalid,
+            message: "description cannot be empty".into(),
+        }
+        .into_string());
     }
 
     let conn = open_db(&app)?;
     let settings = get_app_settings(&conn).map_err(|e| e.to_string())?;
     if !settings.llm_composer_enabled {
-        return Err(
-            ComposerError {
-                code: ComposerErrorCode::FeatureDisabled,
-                message: "Command composer is disabled in settings.".into(),
-            }
-            .into_string(),
-        );
+        return Err(ComposerError {
+            code: ComposerErrorCode::FeatureDisabled,
+            message: "Command composer is disabled in settings.".into(),
+        }
+        .into_string());
     }
 
     let model_path = resolve_composer_model_path(&app, settings.llm_composer_model_path.as_deref())
@@ -837,13 +761,11 @@ pub fn generate_automation(
         })?;
 
     if cache.is_loading() && !cache.is_warmed() {
-        return Err(
-            ComposerError {
-                code: ComposerErrorCode::ModelLoading,
-                message: COMPOSER_LOADING_STATUS.into(),
-            }
-            .into_string(),
-        );
+        return Err(ComposerError {
+            code: ComposerErrorCode::ModelLoading,
+            message: COMPOSER_LOADING_STATUS.into(),
+        }
+        .into_string());
     }
 
     let tools = get_all_tools(&conn).map_err(|e| e.to_string())?;
@@ -853,7 +775,7 @@ pub fn generate_automation(
         .map(|tool| tool.name.clone())
         .collect();
 
-    let use_gpu = llm_gpu_runtime_available(llm_compile_backend());
+    let use_gpu = llm_gpu_runtime_available(&app);
     let model_path_str = model_path.display().to_string();
     let cancel = cache.fresh_cancel_flag();
     let (tx, rx) = mpsc::channel();
@@ -873,12 +795,12 @@ pub fn generate_automation(
                     code: ComposerErrorCode::InferFailed,
                     message: "composer cache unavailable".into(),
                 })?;
-            cache.worker_for_path(&model_path_str, use_gpu).map_err(|message| {
-                ComposerError {
+            cache
+                .worker_for_path(&app_bg, &model_path_str, use_gpu)
+                .map_err(|message| ComposerError {
                     code: ComposerErrorCode::InferFailed,
                     message,
-                }
-            })?;
+                })?;
             cache
                 .with_worker(|worker| {
                     let infer = WorkerInfer {
@@ -905,20 +827,16 @@ pub fn generate_automation(
         Ok(Err(err)) => Err(err.into_string()),
         Err(mpsc::RecvTimeoutError::Timeout) => {
             cache.signal_cancel();
-            Err(
-                ComposerError {
-                    code: ComposerErrorCode::TimedOut,
-                    message: "Composer inference timed out after 90 seconds.".into(),
-                }
-                .into_string(),
-            )
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err(
-            ComposerError {
-                code: ComposerErrorCode::InferFailed,
-                message: "Composer inference thread ended unexpectedly.".into(),
+            Err(ComposerError {
+                code: ComposerErrorCode::TimedOut,
+                message: "Composer inference timed out after 90 seconds.".into(),
             }
-            .into_string(),
-        ),
+            .into_string())
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(ComposerError {
+            code: ComposerErrorCode::InferFailed,
+            message: "Composer inference thread ended unexpectedly.".into(),
+        }
+        .into_string()),
     }
 }

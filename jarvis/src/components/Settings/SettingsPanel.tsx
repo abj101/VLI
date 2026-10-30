@@ -65,8 +65,6 @@ type AppSettingsPayload = {
 };
 
 type RouterStatusPayload = {
-  featureCompiled: boolean;
-  compileBackend: "none" | "vulkan" | "cuda" | "metal" | string;
   runtimeAvailable: boolean;
   modelPresent: boolean;
   modelPath: string | null;
@@ -131,8 +129,6 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
   const [routerPreparing, setRouterPreparing] = useState(false);
   const [routerPrepMessage, setRouterPrepMessage] = useState<string | null>(null);
   const [routerStatus, setRouterStatus] = useState<RouterStatusPayload>({
-    featureCompiled: false,
-    compileBackend: "none",
     runtimeAvailable: false,
     modelPresent: false,
     modelPath: null,
@@ -257,17 +253,14 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
     setDictationHotkeyMode(normalizeDictationHotkeyMode(app.dictationHotkeyMode));
   };
 
-  const routerFeatureCompiled = routerStatus.featureCompiled;
   const routerModelPresent = routerStatus.modelPresent;
-  const routerRuntimeReady = routerFeatureCompiled && routerModelPresent;
+  const routerRuntimeReady = routerModelPresent;
   const routerTier2StatusMessage = routerPreparing
     ? (routerPrepMessage ?? "Preparing model…")
     : (routerPrepMessage ??
-      (!routerFeatureCompiled
-        ? "This build has no llm-local feature — rebuild with llm-local to route at runtime."
-        : !routerModelPresent
-          ? "Router model missing — run npm run fetch-models from the jarvis folder."
-          : routerStatus.message));
+      (!routerModelPresent
+        ? "Router model missing — run npm run fetch-models from the jarvis folder."
+        : routerStatus.message));
 
   useEffect(() => {
     let mounted = true;
@@ -607,9 +600,7 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
       setLlmRouterTier2Enabled(s.llmRouterTier2Enabled);
       if (next && s.llmRouterTier2Enabled && !routerRuntimeReady) {
         showSettingsNotice(
-          !routerFeatureCompiled
-            ? "Tier 2 saved. Rebuild Jarvis with the llm-local Cargo feature to activate routing."
-            : "Tier 2 saved. Run npm run fetch-models to download the router GGUF.",
+          "Tier 2 saved. Run npm run fetch-models to download the router GGUF.",
         );
       }
       if (next && s.llmRouterTier2Enabled && routerRuntimeReady) {
@@ -1101,7 +1092,7 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
                         <SettingsLabelWithInfo
                           id="editor-llm-router-tier2-label"
                           tipId="tip-llm-router-tier2"
-                          tip="Routes natural speech to tools with a small on-device model. Requires the router GGUF and an llm-local build."
+                          tip="Routes natural speech to tools with a small on-device model. Requires the router GGUF."
                         >
                           Enable Tier 2 routing
                         </SettingsLabelWithInfo>

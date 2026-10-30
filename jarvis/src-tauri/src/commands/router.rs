@@ -17,7 +17,7 @@ use crate::{
     hide_hud_window,
     hud::HudPhase,
     llm::{
-        infer_router_completion, llm_compile_backend, llm_gpu_runtime_available,
+    infer_router_completion, llm_gpu_runtime_available,
         normalize_router_tool_calls, resolve_router_model_path, route_transcript_with_infer,
         RouterError, RouterErrorCode, RouterInfer, RouterRouteResult,
     },
@@ -249,10 +249,6 @@ fn execute_tier1_match(
 }
 
 fn tier2_prerequisites(app: &AppHandle) -> Option<(db::AppSettings, String)> {
-    if !cfg!(feature = "llm-local") {
-        debug!("flow: tier2 unavailable (llm-local not compiled)");
-        return None;
-    }
     let conn = open_db_connection(app).ok()?;
     let settings = get_app_settings(&conn).ok()?;
     if !settings.llm_router_tier2_enabled {
@@ -302,7 +298,7 @@ pub(crate) fn route_transcript_tier2(
         .into_iter()
         .filter(|t| t.enabled)
         .collect();
-    let use_gpu = llm_gpu_runtime_available(llm_compile_backend());
+    let use_gpu = llm_gpu_runtime_available(app);
     let infer = LocalInfer {
         model_path: model_path.display().to_string(),
         use_gpu,

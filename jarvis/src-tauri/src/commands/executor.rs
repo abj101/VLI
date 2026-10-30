@@ -2517,7 +2517,7 @@ mod tests {
     }
 
     fn spawn_test_http_server(body: &str) -> String {
-        use std::io::Write;
+        use std::io::{BufRead, BufReader, Write};
         use std::net::TcpListener;
         use std::thread;
 
@@ -2530,6 +2530,15 @@ mod tests {
         thread::spawn(move || {
             for _ in 0..200 {
                 if let Ok((mut stream, _)) = listener.accept() {
+                    stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                    let mut request = BufReader::new(&stream);
+                    let mut line = String::new();
+                    loop {
+                        line.clear();
+                        if request.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                            break;
+                        }
+                    }
                     let response = format!(
                         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                         body.len(),

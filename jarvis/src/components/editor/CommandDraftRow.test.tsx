@@ -25,8 +25,6 @@ describe("CommandDraftRow", () => {
         onDiscard={() => {}}
         onCreated={() => {}}
         initialComposerStatus={{
-          featureCompiled: true,
-          compileBackend: "metal",
           runtimeAvailable: true,
           modelPresent: true,
           modelPath: "/tmp/model.gguf",

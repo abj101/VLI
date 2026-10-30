@@ -154,8 +154,6 @@ export interface GenerateAutomationResult {
 
 /** Status from `composer_status`. */
 export interface ComposerStatus {
-  featureCompiled: boolean;
-  compileBackend: string;
   runtimeAvailable: boolean;
   modelPresent: boolean;
   modelPath: string | null;

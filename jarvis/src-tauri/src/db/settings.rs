@@ -100,7 +100,7 @@ fn parse_llm_router_confidence_threshold(raw: Option<String>) -> f32 {
 
 fn parse_llm_composer_enabled(raw: Option<String>) -> bool {
     raw.map(|v| v.trim() == "1")
-        .unwrap_or(cfg!(feature = "llm-local"))
+        .unwrap_or(true)
 }
 
 fn parse_remote_stt_timeout_secs(raw: Option<String>) -> u32 {
@@ -485,7 +485,7 @@ mod tests {
         );
         assert!(!s.llm_router_tier2_enabled);
         assert!(!s.llm_router_warmup_on_launch);
-        assert_eq!(s.llm_composer_enabled, cfg!(feature = "llm-local"));
+        assert!(s.llm_composer_enabled);
         assert_eq!(s.llm_composer_model_path, None);
         assert!(!s.llm_composer_warmup_on_launch);
     }

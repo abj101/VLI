@@ -2,7 +2,12 @@
 
 use crate::llm::composer::{generate_automation_with_infer, ComposerInfer};
 use crate::llm::composer_expect::{assert_result_matches, ComposerExpectation};
+use crate::llm::local::{
+    infer_composer_completion, ComposerInferWorker, COMPOSER_DEFAULT_MAX_TOKENS,
+};
 use serde::Deserialize;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 #[derive(Debug, Deserialize)]
 struct EvalCase {
@@ -52,16 +57,10 @@ fn eval_all_fixtures_with_mock() {
             &MockInfer(case.mock_output),
             BUILTINS,
         )
-        .unwrap_or_else(|err| {
-            panic!(
-                "case `{}` failed to generate: {}",
-                case.id, err.message
-            )
-        });
+        .unwrap_or_else(|err| panic!("case `{}` failed to generate: {}", case.id, err.message));
 
-        assert_result_matches(&result, &case.expect).unwrap_or_else(|err| {
-            panic!("case `{}` assertion failed: {err}", case.id)
-        });
+        assert_result_matches(&result, &case.expect)
+            .unwrap_or_else(|err| panic!("case `{}` assertion failed: {err}", case.id));
     }
 }
 
@@ -95,15 +94,80 @@ fn bad_json_repair_fixture() {
         calls: &calls,
     };
 
-    let result = generate_automation_with_infer("clip", None, &mock, BUILTINS).expect("repair succeeds");
+    let result =
+        generate_automation_with_infer("clip", None, &mock, BUILTINS).expect("repair succeeds");
     assert_eq!(calls.get(), 2);
     assert_eq!(result.kind, crate::llm::composer::ComposerKind::Command);
     assert!(result.command.is_some());
 }
 
 #[test]
-#[ignore = "requires llm-local feature and composer GGUF model"]
-#[cfg(feature = "llm-local")]
+#[ignore = "requires the composer model and llama-server sidecar"]
 fn composer_live_eval_all_fixtures() {
-    panic!("composer live eval harness not wired yet — use `npm run test:composer` mock fixtures for CI");
+    struct LiveInfer<'a> {
+        worker: &'a ComposerInferWorker,
+    }
+
+    impl ComposerInfer for LiveInfer<'_> {
+        fn infer(&self, prompt: &str) -> Result<String, String> {
+            infer_composer_completion(
+                self.worker,
+                prompt,
+                COMPOSER_DEFAULT_MAX_TOKENS,
+                Arc::new(AtomicBool::new(false)),
+            )
+        }
+    }
+
+    let resource_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources");
+    let model_path = resource_root.join("qwen2.5-3b-instruct-q4_k_m.gguf");
+    assert!(
+        model_path.is_file(),
+        "composer model missing: {}",
+        model_path.display()
+    );
+    let use_gpu = cfg!(windows)
+        && resource_root.join("bin/llama/cudart64_12.dll").is_file()
+        && std::process::Command::new("nvidia-smi")
+            .arg("-L")
+            .output()
+            .is_ok_and(|result| result.status.success());
+    let worker = ComposerInferWorker::spawn_with_resource_root(
+        &resource_root,
+        model_path.display().to_string(),
+        use_gpu,
+    )
+    .unwrap_or_else(|error| panic!("failed to start composer sidecar: {error}"));
+    let infer = LiveInfer { worker: &worker };
+    let mut passed = 0;
+    let mut scored = 0;
+    let mut failures = Vec::new();
+
+    for case in load_fixtures() {
+        if !case_matches_platform(&case) {
+            continue;
+        }
+        scored += 1;
+        match generate_automation_with_infer(&case.description, None, &infer, BUILTINS) {
+            Ok(result) => match assert_result_matches(&result, &case.expect) {
+                Ok(()) => passed += 1,
+                Err(error) => failures.push(format!("{}: {error}", case.id)),
+            },
+            Err(error)
+                if error.message.contains("llama-server")
+                    || error.message.contains("timed out") =>
+            {
+                panic!(
+                    "composer inference transport failed for {}: {}",
+                    case.id, error.message
+                );
+            }
+            Err(error) => failures.push(format!("{}: {}", case.id, error.message)),
+        }
+    }
+
+    println!("COMPOSER_EVAL_SCORE {passed}/{scored}");
+    for failure in failures {
+        println!("COMPOSER_EVAL_MISS {failure}");
+    }
 }

@@ -19,14 +19,8 @@ tauri-build = { version = "2", features = [] }
 
 [features]
 # OpenWakeWord wake backend (ONNX via ort).
-default = ["oww", "llm-local"]
+default = ["oww"]
 oww = ["dep:ort", "dep:ndarray"]
-# On-device LLM tool router (llama.cpp). Example: `cargo build --features llm-local,llm-vulkan`
-# llama-cpp-2 is pinned to a known ggml-compatible release.
-llm-local = ["dep:llama-cpp-2", "dep:encoding_rs"]
-llm-vulkan = ["llm-local", "llama-cpp-2/vulkan"]
-llm-cuda = ["llm-local", "llama-cpp-2/cuda"]
-llm-metal = ["llm-local", "llama-cpp-2/metal"]
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
@@ -54,8 +48,6 @@ url = "2"
 ort = { version = "2.0.0-rc.12", optional = true, default-features = true, features = ["download-binaries", "ndarray"] }
 ndarray = { version = "0.17", optional = true }
 raw-window-handle = "0.6"
-llama-cpp-2 = { version = "=0.1.135", optional = true }
-encoding_rs = { version = "0.8", optional = true }
 sha2 = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -95,9 +87,6 @@ windows = { version = "0.61", features = [
 [dev-dependencies]
 tempfile = "3"
 
-
-[profile.dev.package.llama-cpp-sys-2]
-opt-level = 3
 
 [profile.dev.package."*"]
 opt-level = 2

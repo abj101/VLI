@@ -1,410 +1,313 @@
-//! GGUF load + inference via llama.cpp (`llm-local` feature).
-
-use std::num::NonZeroU32;
-use std::path::{Path, PathBuf};
-use std::pin::pin;
+//! Local GGUF inference through a persistent llama.cpp HTTP sidecar.
+use crate::sidecar::{self, Sidecar};
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::Duration;
-
-use encoding_rs::UTF_8;
-use llama_cpp_2::context::params::LlamaContextParams;
-use llama_cpp_2::llama_backend::LlamaBackend;
-use llama_cpp_2::llama_batch::LlamaBatch;
-use llama_cpp_2::model::params::LlamaModelParams;
-use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaModel};
-use llama_cpp_2::sampling::LlamaSampler;
 use tauri::{AppHandle, Manager};
 
 pub const ROUTER_MODEL_FILE: &str = "qwen2.5-0.5b-instruct-q4_k_m.gguf";
 pub const COMPOSER_MODEL_FILE: &str = "qwen2.5-3b-instruct-q4_k_m.gguf";
-/// llama.cpp context init/decode/teardown uses deep native stacks on Windows MSVC.
-pub const ROUTER_LOADER_STACK: usize = crate::gpu_startup::LLM_LOADER_STACK;
-const MAX_GENERATED_TOKENS: i32 = 256;
 const ROUTER_N_CTX: u32 = 2048;
 const COMPOSER_N_CTX: u32 = 4096;
+const MAX_GENERATED_TOKENS: i32 = 256;
 pub const COMPOSER_DEFAULT_MAX_TOKENS: i32 = 512;
 pub const COMPOSER_MAX_MAX_TOKENS: i32 = 768;
+pub const COMPOSER_INFER_TIMEOUT: Duration = Duration::from_secs(90);
+const SIDECAR_START_TIMEOUT: Duration = Duration::from_secs(180);
+#[cfg(windows)]
+const LLAMA_SERVER_EXE: &str = "llama/llama-server.exe";
+#[cfg(not(windows))]
+const LLAMA_SERVER_EXE: &str = "llama-server";
 
-static LLAMA_BACKEND: OnceLock<Result<LlamaBackend, String>> = OnceLock::new();
-static ROUTER_LOAD_GATE: Mutex<()> = Mutex::new(());
+static ROUTER_SERVER: OnceLock<Mutex<Option<RouterServer>>> = OnceLock::new();
+static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
-fn backend() -> Result<&'static LlamaBackend, String> {
-    LLAMA_BACKEND
-        .get_or_init(|| LlamaBackend::init().map_err(|e| format!("llama backend init failed: {e}")))
-        .as_ref()
-        .map_err(|e| e.clone())
-}
-
-pub fn llm_compile_backend() -> &'static str {
-    if cfg!(feature = "llm-metal") {
-        "metal"
-    } else if cfg!(feature = "llm-cuda") {
-        "cuda"
-    } else if cfg!(feature = "llm-vulkan") {
-        "vulkan"
-    } else {
-        "none"
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn try_load_library(lib_name: &str) -> bool {
-    use windows::core::PCWSTR;
-    use windows::Win32::System::LibraryLoader::LoadLibraryW;
-
-    let mut wide: Vec<u16> = lib_name.encode_utf16().collect();
-    wide.push(0);
-    // SAFETY: null-terminated UTF-16 module name for loader probe.
-    unsafe { LoadLibraryW(PCWSTR(wide.as_ptr())).is_ok() }
-}
-
-pub fn llm_gpu_runtime_available(backend: &str) -> bool {
-    match backend {
-        "metal" => cfg!(target_os = "macos"),
-        "cuda" => llm_cuda_runtime_available(),
-        "vulkan" => llm_vulkan_runtime_available(),
-        _ => false,
-    }
-}
-
-fn llm_cuda_runtime_available() -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        return try_load_library("nvcuda.dll");
-    }
-    #[cfg(target_os = "linux")]
-    {
-        return std::path::Path::new("/usr/lib/x86_64-linux-gnu/libcuda.so.1").exists()
-            || std::path::Path::new("/usr/lib64/libcuda.so.1").exists()
-            || std::path::Path::new("/usr/lib/libcuda.so.1").exists();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        return false;
-    }
-    #[allow(unreachable_code)]
-    false
-}
-
-fn llm_vulkan_runtime_available() -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        return try_load_library("vulkan-1.dll");
-    }
-    #[cfg(target_os = "linux")]
-    {
-        return std::path::Path::new("/usr/lib/x86_64-linux-gnu/libvulkan.so.1").exists()
-            || std::path::Path::new("/usr/lib64/libvulkan.so.1").exists()
-            || std::path::Path::new("/usr/lib/libvulkan.so.1").exists();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        return std::path::Path::new("/usr/local/lib/libvulkan.dylib").exists()
-            || std::path::Path::new("/opt/homebrew/lib/libvulkan.dylib").exists();
-    }
-    #[allow(unreachable_code)]
-    false
-}
-
-fn router_model_candidates(app: &AppHandle, custom_path: Option<&str>) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if let Some(path) = custom_path.map(str::trim).filter(|p| !p.is_empty()) {
-        out.push(PathBuf::from(path));
-    }
-    if let Ok(dir) = app.path().resource_dir() {
-        out.push(dir.join(ROUTER_MODEL_FILE));
-    }
-    out.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join(ROUTER_MODEL_FILE),
-    );
-    out
-}
-
-pub fn resolve_router_model_path(app: &AppHandle, custom_path: Option<&str>) -> Result<PathBuf, String> {
-    let candidates = router_model_candidates(app, custom_path);
-    for path in &candidates {
-        if path.is_file() {
-            return Ok(path.clone());
-        }
-    }
-    let tried = candidates
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    Err(format!(
-        "Router model `{ROUTER_MODEL_FILE}` not found (tried: {tried}). Run `npm run fetch-models` from the jarvis folder."
-    ))
-}
-
-fn model_params(use_gpu: bool) -> LlamaModelParams {
-    #[cfg(any(feature = "llm-cuda", feature = "llm-vulkan", feature = "llm-metal"))]
-    {
-        if use_gpu {
-            return LlamaModelParams::default().with_n_gpu_layers(1000);
-        }
-    }
-    let _ = use_gpu;
-    LlamaModelParams::default()
-}
-
-fn build_prompt(model: &LlamaModel, prompt: &str) -> Result<String, String> {
-    let tmpl = model
-        .chat_template(None)
-        .map_err(|e| format!("chat template missing: {e}"))?;
-    let messages = [
-        LlamaChatMessage::new("system".into(), "You route voice commands to JSON tool calls.".into())
-            .map_err(|e| format!("chat message error: {e}"))?,
-        LlamaChatMessage::new("user".into(), prompt.to_string())
-            .map_err(|e| format!("chat message error: {e}"))?,
-    ];
-    model
-        .apply_chat_template(&tmpl, &messages, true)
-        .map_err(|e| format!("apply chat template failed: {e}"))
-}
-
-fn generate_completion(model: &LlamaModel, prompt: &str) -> Result<String, String> {
-    let backend = backend()?;
-    let mut ctx = model
-        .new_context(
-            backend,
-            LlamaContextParams::default().with_n_ctx(Some(NonZeroU32::new(ROUTER_N_CTX).unwrap())),
-        )
-        .map_err(|e| format!("create llama context failed: {e}"))?;
-
-    let full_prompt = build_prompt(model, prompt)?;
-    let tokens = model
-        .str_to_token(&full_prompt, AddBos::Always)
-        .map_err(|e| format!("tokenize failed: {e}"))?;
-
-    let mut batch = LlamaBatch::new(ROUTER_N_CTX as usize, 1);
-    let last_index = tokens.len().saturating_sub(1) as i32;
-    for (i, token) in tokens.into_iter().enumerate() {
-        let is_last = i as i32 == last_index;
-        batch
-            .add(token, i as i32, &[0], is_last)
-            .map_err(|e| format!("batch add failed: {e}"))?;
-    }
-    ctx.decode(&mut batch)
-        .map_err(|e| format!("llama decode failed: {e}"))?;
-
-    let mut sampler = LlamaSampler::chain_simple([
-        LlamaSampler::temp(0.1),
-        LlamaSampler::dist(42),
-        LlamaSampler::greedy(),
-    ]);
-    let mut decoder = UTF_8.new_decoder();
-    let mut out = String::new();
-    let mut n_cur = batch.n_tokens();
-
-    for _ in 0..MAX_GENERATED_TOKENS {
-        let token = sampler.sample(&ctx, batch.n_tokens() - 1);
-        sampler.accept(token);
-        if model.is_eog_token(token) {
-            break;
-        }
-        let piece = model
-            .token_to_piece(token, &mut decoder, true, None)
-            .map_err(|e| format!("token decode failed: {e}"))?;
-        out.push_str(&piece);
-
-        batch.clear();
-        batch
-            .add(token, n_cur, &[0], true)
-            .map_err(|e| format!("batch add failed: {e}"))?;
-        n_cur += 1;
-        ctx.decode(&mut batch)
-            .map_err(|e| format!("llama decode failed: {e}"))?;
-    }
-
-    Ok(out)
-}
-
-fn infer_router_completion_inner(
-    model_path: &str,
-    prompt: &str,
+struct RouterServer {
+    model_path: String,
     use_gpu: bool,
-) -> Result<String, String> {
-    let _gate = ROUTER_LOAD_GATE
-        .lock()
-        .map_err(|_| "router load mutex poisoned".to_string())?;
-    let use_accel = use_gpu && llm_gpu_runtime_available(llm_compile_backend());
+    sidecar: Sidecar,
+}
 
-    let load_and_infer = || -> Result<String, String> {
-        let backend = backend()?;
-        let path = Path::new(model_path);
-        let params = pin!(model_params(use_gpu));
-        let model = LlamaModel::load_from_file(backend, path, &params)
-            .map_err(|e| format!("load router model failed: {e}"))?;
-        match generate_completion(&model, prompt) {
-            Ok(text) => Ok(text),
-            Err(gpu_err) if use_accel => {
-                log::warn!("router gpu infer failed; retrying on cpu: {gpu_err}");
-                generate_completion(&model, prompt)
-            }
-            Err(e) => Err(e),
-        }
-    };
+pub fn set_app_handle(app: AppHandle) {
+    let _ = APP_HANDLE.set(app);
+}
 
-    if use_accel {
-        crate::gpu_startup::with_ggml_cuda_init(true, load_and_infer)
-    } else {
-        load_and_infer()
+pub fn llm_gpu_runtime_available(app: &AppHandle) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let cuda_dll = app
+            .path()
+            .resource_dir()
+            .ok()
+            .is_some_and(|dir| dir.join("bin/llama/cudart64_12.dll").is_file());
+        let gpu = std::process::Command::new("nvidia-smi")
+            .arg("-L")
+            .output()
+            .is_ok_and(|result| result.status.success());
+        cuda_dll && gpu
+    }
+    #[cfg(target_os = "macos")]
+    {
+        true
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        false
     }
 }
 
-pub fn infer_router_completion(model_path: &str, prompt: &str, use_gpu: bool) -> Result<String, String> {
-    let model_path = model_path.to_string();
-    let prompt = prompt.to_string();
-    std::thread::Builder::new()
-        .name("router-infer".into())
-        .stack_size(ROUTER_LOADER_STACK)
-        .spawn(move || infer_router_completion_inner(&model_path, &prompt, use_gpu))
-        .map_err(|e| format!("spawn router infer thread: {e}"))?
-        .join()
-        .map_err(|_| "router infer thread panicked".to_string())?
-}
-
-fn composer_model_candidates(app: &AppHandle, custom_path: Option<&str>) -> Vec<PathBuf> {
+fn model_candidates(
+    app: &AppHandle,
+    custom_path: Option<&str>,
+    default_file: &str,
+) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Some(path) = custom_path.map(str::trim).filter(|p| !p.is_empty()) {
         out.push(PathBuf::from(path));
     }
     if let Ok(dir) = app.path().resource_dir() {
-        out.push(dir.join(COMPOSER_MODEL_FILE));
+        out.push(dir.join(default_file));
     }
     out.push(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("resources")
-            .join(COMPOSER_MODEL_FILE),
+            .join(default_file),
     );
     out
 }
 
-pub fn resolve_composer_model_path(app: &AppHandle, custom_path: Option<&str>) -> Result<PathBuf, String> {
-    let candidates = composer_model_candidates(app, custom_path);
-    for path in &candidates {
-        if path.is_file() {
-            return Ok(path.clone());
-        }
+fn resolve_model(
+    app: &AppHandle,
+    custom_path: Option<&str>,
+    default_file: &str,
+    label: &str,
+) -> Result<PathBuf, String> {
+    let candidates = model_candidates(app, custom_path, default_file);
+    if let Some(path) = candidates.iter().find(|path| path.is_file()) {
+        return Ok(path.clone());
     }
     let tried = candidates
         .iter()
         .map(|p| p.display().to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    Err(format!(
-        "Composer model `{COMPOSER_MODEL_FILE}` not found (tried: {tried}). Run `npm run fetch-models` from the jarvis folder."
-    ))
+    Err(format!("{label} model `{default_file}` not found (tried: {tried}). Run `npm run fetch-models` from jarvis folder."))
 }
 
-fn build_composer_chat_prompt(model: &LlamaModel, prompt: &str) -> Result<String, String> {
-    let tmpl = model
-        .chat_template(None)
-        .map_err(|e| format!("chat template missing: {e}"))?;
-    let messages = [
-        LlamaChatMessage::new(
-            "system".into(),
-            "You compose voice automations as strict JSON. Return one JSON object only.".into(),
-        )
-        .map_err(|e| format!("chat message error: {e}"))?,
-        LlamaChatMessage::new("user".into(), prompt.to_string())
-            .map_err(|e| format!("chat message error: {e}"))?,
-    ];
-    model
-        .apply_chat_template(&tmpl, &messages, true)
-        .map_err(|e| format!("apply chat template failed: {e}"))
+pub fn resolve_router_model_path(
+    app: &AppHandle,
+    custom_path: Option<&str>,
+) -> Result<PathBuf, String> {
+    resolve_model(app, custom_path, ROUTER_MODEL_FILE, "Router")
 }
 
-fn generate_composer_completion(
-    model: &LlamaModel,
+pub fn resolve_composer_model_path(
+    app: &AppHandle,
+    custom_path: Option<&str>,
+) -> Result<PathBuf, String> {
+    resolve_model(app, custom_path, COMPOSER_MODEL_FILE, "Composer")
+}
+
+fn sidecar_args(model_path: &str, context: u32, use_gpu: bool) -> Vec<String> {
+    vec![
+        "-m".into(),
+        model_path.into(),
+        "-c".into(),
+        context.to_string(),
+        "-ngl".into(),
+        if use_gpu { "99" } else { "0" }.into(),
+    ]
+}
+
+/// Ensure the single persistent router server matches current model and acceleration settings.
+pub fn ensure_router_server(
+    app: &AppHandle,
+    model_path: &str,
+    use_gpu: bool,
+) -> Result<(), String> {
+    let slot = ROUTER_SERVER.get_or_init(|| Mutex::new(None));
+    let mut guard = slot
+        .lock()
+        .map_err(|_| "router sidecar mutex poisoned".to_string())?;
+    if guard
+        .as_ref()
+        .is_some_and(|s| s.model_path == model_path && s.use_gpu == use_gpu)
+    {
+        return Ok(());
+    }
+    *guard = None;
+    let sidecar = sidecar::spawn(
+        app,
+        LLAMA_SERVER_EXE,
+        &sidecar_args(model_path, ROUTER_N_CTX, use_gpu),
+        "/health",
+        SIDECAR_START_TIMEOUT,
+    )?;
+    *guard = Some(RouterServer {
+        model_path: model_path.into(),
+        use_gpu,
+        sidecar,
+    });
+    Ok(())
+}
+
+pub fn shutdown_router_server() {
+    if let Some(slot) = ROUTER_SERVER.get() {
+        if let Ok(mut server) = slot.lock() {
+            *server = None;
+        }
+    }
+}
+
+fn base_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
+}
+
+fn response_json(
+    response: Result<ureq::Response, ureq::Error>,
+    endpoint: &str,
+) -> Result<serde_json::Value, String> {
+    let response = response.map_err(|e| format!("llama-server {endpoint} request failed: {e}"))?;
+    let body = response
+        .into_string()
+        .map_err(|e| format!("read llama-server {endpoint} response: {e}"))?;
+    serde_json::from_str(&body)
+        .map_err(|e| format!("llama-server {endpoint} returned invalid JSON: {e}"))
+}
+
+fn post_json(
+    port: u16,
+    endpoint: &str,
+    body: &serde_json::Value,
+    timeout: Duration,
+) -> Result<ureq::Response, ureq::Error> {
+    let body = serde_json::to_string(body).expect("JSON value serialization cannot fail");
+    ureq::AgentBuilder::new()
+        .timeout(timeout)
+        .build()
+        .post(&format!("{}{endpoint}", base_url(port)))
+        .set("Content-Type", "application/json")
+        .send_string(&body)
+}
+
+fn render_prompt(
+    port: u16,
+    system: &str,
     prompt: &str,
-    max_tokens: i32,
-    cancel: &AtomicBool,
+    timeout: Duration,
 ) -> Result<String, String> {
-    let backend = backend()?;
-    let mut ctx = model
-        .new_context(
-            backend,
-            LlamaContextParams::default().with_n_ctx(Some(NonZeroU32::new(COMPOSER_N_CTX).unwrap())),
-        )
-        .map_err(|e| format!("create llama context failed: {e}"))?;
-
-    let full_prompt = build_composer_chat_prompt(model, prompt)?;
-    let tokens = model
-        .str_to_token(&full_prompt, AddBos::Always)
-        .map_err(|e| format!("tokenize failed: {e}"))?;
-    if tokens.len() > COMPOSER_N_CTX as usize {
-        return Err(format!(
-            "composer prompt is {} tokens; max context is {COMPOSER_N_CTX}",
-            tokens.len()
-        ));
-    }
-
-    let mut batch = LlamaBatch::new(COMPOSER_N_CTX as usize, 1);
-    let last_index = tokens.len().saturating_sub(1) as i32;
-    for (i, token) in tokens.into_iter().enumerate() {
-        let is_last = i as i32 == last_index;
-        batch
-            .add(token, i as i32, &[0], is_last)
-            .map_err(|e| format!("batch add failed: {e}"))?;
-    }
-    ctx.decode(&mut batch)
-        .map_err(|e| format!("llama decode failed: {e}"))?;
-
-    let mut sampler = LlamaSampler::chain_simple([
-        LlamaSampler::temp(0.1),
-        LlamaSampler::dist(42),
-        LlamaSampler::greedy(),
-    ]);
-    let mut decoder = UTF_8.new_decoder();
-    let mut out = String::new();
-    let mut n_cur = batch.n_tokens();
-    let token_budget = max_tokens.clamp(1, COMPOSER_MAX_MAX_TOKENS);
-
-    for _ in 0..token_budget {
-        if cancel.load(Ordering::SeqCst) {
-            return Err("composer inference cancelled".into());
-        }
-        let token = sampler.sample(&ctx, batch.n_tokens() - 1);
-        sampler.accept(token);
-        if model.is_eog_token(token) {
-            break;
-        }
-        let piece = model
-            .token_to_piece(token, &mut decoder, true, None)
-            .map_err(|e| format!("token decode failed: {e}"))?;
-        out.push_str(&piece);
-
-        batch.clear();
-        batch
-            .add(token, n_cur, &[0], true)
-            .map_err(|e| format!("batch add failed: {e}"))?;
-        n_cur += 1;
-        ctx.decode(&mut batch)
-            .map_err(|e| format!("llama decode failed: {e}"))?;
-    }
-
-    Ok(out)
+    let body = serde_json::json!({ "messages": [
+        { "role": "system", "content": system },
+        { "role": "user", "content": prompt }
+    ], "add_generation_prompt": true});
+    let result = response_json(
+        post_json(port, "/apply-template", &body, timeout),
+        "/apply-template",
+    )?;
+    result
+        .get("prompt")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| "llama-server /apply-template response has no prompt".into())
 }
 
-fn load_composer_model(model_path: &str, use_gpu: bool) -> Result<LlamaModel, String> {
-    let backend = backend()?;
-    let path = Path::new(model_path);
-    let params = pin!(model_params(use_gpu));
-    let load = || {
-        LlamaModel::load_from_file(backend, path, &params)
-            .map_err(|e| format!("load composer model failed: {e}"))
-    };
-    let use_accel = use_gpu && llm_gpu_runtime_available(llm_compile_backend());
-    if use_accel {
-        crate::gpu_startup::with_ggml_cuda_init(true, load)
-    } else {
-        load()
+fn complete(
+    port: u16,
+    system: &str,
+    prompt: &str,
+    n_predict: i32,
+    cancel: Option<&AtomicBool>,
+    timeout: Duration,
+) -> Result<String, String> {
+    if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+        return Err("composer inference cancelled".into());
     }
+    let prompt = render_prompt(port, system, prompt, timeout)?;
+    let mut body = serde_json::json!({ "prompt": prompt, "n_predict": n_predict, "temperature": 0.1, "seed": 42, "top_k": 1, "cache_prompt": true });
+    if cancel.is_some() {
+        body["stream"] = serde_json::Value::Bool(true);
+    }
+    let response = post_json(port, "/completion", &body, timeout)
+        .map_err(|e| format!("llama-server /completion request failed: {e}"))?;
+    let result = if let Some(cancel) = cancel {
+        let mut reader = BufReader::new(response.into_reader());
+        let mut out = String::new();
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                return Err("composer inference cancelled".into());
+            }
+            let mut line = String::new();
+            if reader
+                .read_line(&mut line)
+                .map_err(|e| format!("read llama-server completion stream: {e}"))?
+                == 0
+            {
+                break;
+            }
+            let Some(data) = line.trim().strip_prefix("data:") else {
+                continue;
+            };
+            let data = data.trim();
+            if data == "[DONE]" {
+                break;
+            }
+            let chunk: serde_json::Value = serde_json::from_str(data)
+                .map_err(|e| format!("invalid llama-server completion chunk: {e}"))?;
+            if let Some(content) = chunk.get("content").and_then(serde_json::Value::as_str) {
+                out.push_str(content);
+            }
+            if chunk.get("stop").and_then(serde_json::Value::as_bool) == Some(true) {
+                break;
+            }
+        }
+        out
+    } else {
+        let body = response
+            .into_string()
+            .map_err(|e| format!("read llama-server completion response: {e}"))?;
+        let result: serde_json::Value = serde_json::from_str(&body)
+            .map_err(|e| format!("llama-server /completion returned invalid JSON: {e}"))?;
+        result
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| "llama-server /completion response has no content".to_string())?
+    };
+    if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+        return Err("composer inference cancelled".into());
+    }
+    Ok(result)
+}
+
+/// Public compatibility signature; the router sidecar is started by router warmup first.
+pub fn infer_router_completion(
+    _model_path: &str,
+    prompt: &str,
+    _use_gpu: bool,
+) -> Result<String, String> {
+    let app = APP_HANDLE
+        .get()
+        .ok_or_else(|| "Tauri app is not initialized".to_string())?;
+    ensure_router_server(app, _model_path, _use_gpu)?;
+    let slot = ROUTER_SERVER
+        .get()
+        .ok_or_else(|| "router llama-server is not running".to_string())?;
+    let guard = slot
+        .lock()
+        .map_err(|_| "router sidecar mutex poisoned".to_string())?;
+    let server = guard
+        .as_ref()
+        .ok_or_else(|| "router llama-server is not running".to_string())?;
+    complete(
+        server.sidecar.port,
+        "You route voice commands to JSON tool calls.",
+        prompt,
+        MAX_GENERATED_TOKENS,
+        None,
+        COMPOSER_INFER_TIMEOUT,
+    )
 }
 
 struct ComposerInferRequest {
@@ -414,21 +317,73 @@ struct ComposerInferRequest {
     respond_to: mpsc::Sender<Result<String, String>>,
 }
 
-/// Long-lived composer inference worker — owns one loaded `LlamaModel` on a pinned thread.
+/// A persistent composer sidecar and request worker.
 pub struct ComposerInferWorker {
     sender: mpsc::Sender<ComposerInferRequest>,
+    _sidecar: Sidecar,
 }
 
 impl ComposerInferWorker {
     pub fn spawn(model_path: String, use_gpu: bool) -> Result<Self, String> {
-        let (tx, rx) = mpsc::channel();
-        let path_for_thread = model_path.clone();
+        let app = APP_HANDLE
+            .get()
+            .ok_or_else(|| "Tauri app is not initialized".to_string())?;
+        Self::spawn_with_app(app, model_path, use_gpu)
+    }
+
+    pub fn spawn_with_app(
+        app: &AppHandle,
+        model_path: String,
+        use_gpu: bool,
+    ) -> Result<Self, String> {
+        let sidecar = sidecar::spawn(
+            app,
+            LLAMA_SERVER_EXE,
+            &sidecar_args(&model_path, COMPOSER_N_CTX, use_gpu),
+            "/health",
+            SIDECAR_START_TIMEOUT,
+        )?;
+        Self::from_sidecar(sidecar)
+    }
+
+    pub fn spawn_with_resource_root(
+        resource_root: &std::path::Path,
+        model_path: String,
+        use_gpu: bool,
+    ) -> Result<Self, String> {
+        let sidecar = sidecar::spawn_at(
+            resource_root,
+            LLAMA_SERVER_EXE,
+            &sidecar_args(&model_path, COMPOSER_N_CTX, use_gpu),
+            "/health",
+            SIDECAR_START_TIMEOUT,
+        )?;
+        Self::from_sidecar(sidecar)
+    }
+
+    fn from_sidecar(sidecar: Sidecar) -> Result<Self, String> {
+        let port = sidecar.port;
+        let (tx, rx) = mpsc::channel::<ComposerInferRequest>();
         std::thread::Builder::new()
-            .name("composer-worker".into())
-            .stack_size(ROUTER_LOADER_STACK)
-            .spawn(move || composer_worker_loop(rx, path_for_thread, use_gpu))
-            .map_err(|e| format!("spawn composer worker: {e}"))?;
-        Ok(Self { sender: tx })
+            .name("composer-http-worker".into())
+            .spawn(move || {
+                while let Ok(req) = rx.recv() {
+                    let result = complete(
+                        port,
+                        "JSON. JSON only.",
+                        &req.prompt,
+                        req.max_tokens.clamp(1, COMPOSER_MAX_MAX_TOKENS),
+                        Some(&req.cancel),
+                        COMPOSER_INFER_TIMEOUT,
+                    );
+                    let _ = req.respond_to.send(result);
+                }
+            })
+            .map_err(|e| format!("spawn composer inference worker: {e}"))?;
+        Ok(Self {
+            sender: tx,
+            _sidecar: sidecar,
+        })
     }
 
     pub fn infer(
@@ -437,63 +392,27 @@ impl ComposerInferWorker {
         max_tokens: i32,
         cancel: Arc<AtomicBool>,
     ) -> Result<String, String> {
-        let (respond_tx, respond_rx) = mpsc::channel();
+        let (tx, rx) = mpsc::channel();
         self.sender
             .send(ComposerInferRequest {
-                prompt: prompt.to_string(),
+                prompt: prompt.into(),
                 max_tokens,
                 cancel,
-                respond_to: respond_tx,
+                respond_to: tx,
             })
-            .map_err(|_| "composer worker channel closed".to_string())?;
-        respond_rx
-            .recv()
-            .map_err(|_| "composer worker dropped response".to_string())?
-    }
-}
-
-fn composer_worker_loop(
-    rx: mpsc::Receiver<ComposerInferRequest>,
-    model_path: String,
-    use_gpu: bool,
-) {
-    let mut model: Option<LlamaModel> = None;
-    while let Ok(req) = rx.recv() {
-        if req.cancel.load(Ordering::SeqCst) {
-            let _ = req
-                .respond_to
-                .send(Err("composer inference cancelled".into()));
-            continue;
-        }
-        if model.is_none() {
-            match load_composer_model(&model_path, use_gpu) {
-                Ok(loaded) => model = Some(loaded),
-                Err(e) => {
-                    let _ = req.respond_to.send(Err(e));
-                    continue;
+            .map_err(|_| "composer inference worker stopped".to_string())?;
+        rx.recv_timeout(COMPOSER_INFER_TIMEOUT)
+            .map_err(|e| match e {
+                mpsc::RecvTimeoutError::Timeout => {
+                    "composer inference timed out after 90 seconds".to_string()
                 }
-            }
-        }
-        let model_ref = model.as_ref().expect("model loaded");
-        let use_accel = use_gpu && llm_gpu_runtime_available(llm_compile_backend());
-        let result = match generate_composer_completion(
-            model_ref,
-            &req.prompt,
-            req.max_tokens,
-            &req.cancel,
-        ) {
-            Ok(text) => Ok(text),
-            Err(gpu_err) if use_accel => {
-                log::warn!("composer gpu infer failed; retrying on cpu: {gpu_err}");
-                generate_composer_completion(model_ref, &req.prompt, req.max_tokens, &req.cancel)
-            }
-            Err(e) => Err(e),
-        };
-        let _ = req.respond_to.send(result);
+                mpsc::RecvTimeoutError::Disconnected => {
+                    "composer inference worker stopped".to_string()
+                }
+            })?
     }
 }
 
-/// Blocking composer inference via the resident worker (caller should be off the UI thread).
 pub fn infer_composer_completion(
     worker: &ComposerInferWorker,
     prompt: &str,
@@ -501,19 +420,4 @@ pub fn infer_composer_completion(
     cancel: Arc<AtomicBool>,
 ) -> Result<String, String> {
     worker.infer(prompt, max_tokens, cancel)
-}
-
-pub const COMPOSER_INFER_TIMEOUT: Duration = Duration::from_secs(90);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn llm_compile_backend_is_known() {
-        assert!(matches!(
-            llm_compile_backend(),
-            "none" | "vulkan" | "cuda" | "metal"
-        ));
-    }
 }

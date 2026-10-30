@@ -3,7 +3,6 @@ mod audio;
 mod commands;
 mod db;
 mod dictation;
-mod gpu_startup;
 mod hud;
 mod input;
 mod keychain;
@@ -2526,6 +2525,7 @@ pub fn run() {
             let command_cache_for_setup = command_cache.clone();
             let app_index_for_setup = app_index_store.clone();
             move |app| {
+                llm::local::set_app_handle(app.handle().clone());
                 let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                 db::init_db(&dir.join("jarvis.db")).map_err(|e| e.to_string())?;
@@ -2533,8 +2533,8 @@ pub fn run() {
                 refresh_command_cache(app.handle(), &command_cache_for_setup)?;
                 let conn = open_db_connection(app.handle())?;
                 let app_settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
-                let router_warmup = gpu_startup::should_router_warmup_at_launch(&app_settings);
-        log::info!("gpu-startup: router_warmup={router_warmup}");
+                let router_warmup = app_settings.llm_router_tier2_enabled
+                    && app_settings.llm_router_warmup_on_launch;
         #[cfg(target_os = "macos")]
                 macos::schedule_microphone_permission_request(app.handle());
                 #[cfg(target_os = "macos")]
@@ -2570,9 +2570,11 @@ pub fn run() {
             }
         }
         let app_router = app.handle().clone();
-        gpu_startup::spawn_startup_sequence(router_warmup, false, move || {
-            llm::tauri_cmds::run_router_warmup_at_launch_blocking(&app_router);
-        });
+        if router_warmup {
+            std::thread::spawn(move || {
+                llm::tauri_cmds::run_router_warmup_at_launch_blocking(&app_router);
+            });
+        }
         let configured_hotkey =
                     match db::get_setting(&conn, SETTING_KEY_HOTKEY).map_err(|e| e.to_string())? {
                         Some(value) if !value.trim().is_empty() => value.trim().to_string(),
@@ -2869,8 +2871,17 @@ pub fn run() {
             delete_api_key,
             open_microphone_settings
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                llm::local::shutdown_router_server();
+                audio::stt::clear_whisper_server(app_handle);
+                if let Some(cache) = app_handle.try_state::<llm::ComposerModelCache>() {
+                    cache.shutdown();
+                }
+            }
+        });
 }
 
 #[cfg(test)]

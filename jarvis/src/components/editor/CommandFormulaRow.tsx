@@ -764,7 +764,7 @@ export function CommandDraftRow({ onDiscard, onCreated, initialComposerStatus = 
               ) : null}
             </div>
           )}
-          {composerStatus && !composerStatus.modelPresent && composerStatus.featureCompiled ? (
+          {composerStatus && !composerStatus.modelPresent ? (
             <p className="editor-composer-hint">
               Composer model missing — run <code>npm run fetch-models</code> from the jarvis folder.
             </p>

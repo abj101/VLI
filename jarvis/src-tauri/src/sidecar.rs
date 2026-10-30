@@ -1,6 +1,6 @@
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -28,17 +28,26 @@ pub fn spawn(
     health_path: &str,
     timeout: Duration,
 ) -> Result<Sidecar, String> {
+    let resource_root = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("resolve app resources: {e}"))?;
+    spawn_at(&resource_root, exe, args, health_path, timeout)
+}
+
+pub fn spawn_at(
+    resource_root: &Path,
+    exe: &str,
+    args: &[String],
+    health_path: &str,
+    timeout: Duration,
+) -> Result<Sidecar, String> {
     let port = TcpListener::bind(("127.0.0.1", 0))
         .map_err(|e| format!("reserve sidecar port: {e}"))?
         .local_addr()
         .map_err(|e| format!("read sidecar port: {e}"))?
         .port();
-    let path = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("resolve app resources: {e}"))?
-        .join("bin")
-        .join(exe);
+    let path = resource_root.join("bin").join(exe);
     let program = if path.is_file() {
         path
     } else if cfg!(target_os = "macos") {

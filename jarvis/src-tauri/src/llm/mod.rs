@@ -1,4 +1,4 @@
-//! On-device LLM tool router (Phase C). Inference is behind `llm-local`.
+//! On-device LLM tool router.
 
 pub mod composer;
 #[cfg(test)]
@@ -13,22 +13,9 @@ pub mod prompt;
 pub mod router;
 pub mod tauri_cmds;
 
-#[cfg(feature = "llm-local")]
 pub mod local;
-
-#[cfg(not(feature = "llm-local"))]
-mod local_stub;
-
-#[cfg(feature = "llm-local")]
 pub use local::{
-    infer_composer_completion, infer_router_completion, llm_compile_backend,
-    llm_gpu_runtime_available, resolve_composer_model_path, resolve_router_model_path,
-    ComposerInferWorker, COMPOSER_DEFAULT_MAX_TOKENS, COMPOSER_INFER_TIMEOUT,
-};
-
-#[cfg(not(feature = "llm-local"))]
-pub use local_stub::{
-    infer_composer_completion, infer_router_completion, llm_compile_backend,
+    ensure_router_server, infer_composer_completion, infer_router_completion,
     llm_gpu_runtime_available, resolve_composer_model_path, resolve_router_model_path,
     ComposerInferWorker, COMPOSER_DEFAULT_MAX_TOKENS, COMPOSER_INFER_TIMEOUT,
 };
