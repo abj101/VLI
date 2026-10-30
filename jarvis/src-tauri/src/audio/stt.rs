@@ -1,17 +1,19 @@
 //! Whisper inference thread: PCM → 16 kHz → rolling buffer → `transcript-update` (Task 4b).
 
 use crate::audio::transcript_event::{
-    classify_partial, audio_has_speech, normalize_transcript_candidate, TranscriptPartialKind,
+    audio_has_speech, classify_partial, normalize_transcript_candidate, TranscriptPartialKind,
 };
+use crate::sidecar::{self, Sidecar};
 use log::debug;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::SystemTime;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use tauri::{AppHandle, Emitter, Manager};
 
 pub const DEFAULT_LOCAL_WHISPER_MODEL: &str = "base.en";
 pub const LOCAL_WHISPER_MODEL_IDS: &[&str] = &["tiny.en", "base.en", "small.en"];
@@ -65,94 +67,29 @@ pub struct TranscriptUpdate {
     pub kind: TranscriptPartialKind,
 }
 
-static WHISPER_LOAD_GATE: Mutex<()> = Mutex::new(());
+/// The server is shared across listen sessions and replaced when model or GPU settings change.
+pub struct WhisperServerState(Mutex<Option<WhisperServer>>);
 
-fn whisper_gpu_compile_supported() -> bool {
-    cfg!(any(
-        feature = "whisper-metal",
-        feature = "whisper-cuda",
-        feature = "whisper-vulkan"
-    ))
-}
-
-/// Flash attention during CUDA init is release-only to reduce debug MSVC stack pressure.
-#[cfg(feature = "whisper-cuda")]
-pub fn whisper_flash_attn_enabled() -> bool {
-    !cfg!(debug_assertions)
-}
-
-#[cfg(not(feature = "whisper-cuda"))]
-pub fn whisper_flash_attn_enabled() -> bool {
-    false
-}
-
-fn new_whisper_context(
-    model_path: &str,
-    params: WhisperContextParameters,
-    use_gpu: bool,
-) -> Result<WhisperContext, whisper_rs::WhisperError> {
-    if use_gpu {
-        crate::gpu_startup::with_ggml_cuda_init(true, || {
-            WhisperContext::new_with_params(model_path, params)
-        })
-    } else {
-        WhisperContext::new_with_params(model_path, params)
+impl Default for WhisperServerState {
+    fn default() -> Self {
+        Self(Mutex::new(None))
     }
 }
 
-/// Load Whisper weights (may take seconds on first GPU init). Call from a background thread.
-/// Returns `(context, use_accelerator)` where `use_accelerator` is false after a GPU→CPU fallback.
-///
-/// Windows debug + `whisper-cuda`: intermittent `STATUS_STACK_BUFFER_OVERRUN` during preload —
-/// mitigated by startup sequencing + debug flash-attn off; see
-/// `jarvis/docs/bugs/BUG-debug-cuda-whisper-stack-buffer-overrun.md`.
-pub fn load_whisper_context(
-    model_path: &str,
+struct WhisperServer {
+    process: Sidecar,
+    model_path: PathBuf,
     use_gpu: bool,
-) -> Result<(WhisperContext, bool), String> {
-    // CPU-only builds abort inside whisper.cpp when `use_gpu` is true (STATUS_BREAKPOINT on Windows).
-    let use_gpu = use_gpu && whisper_gpu_compile_supported();
-    if use_gpu {
-        log::debug!("whisper: loading model with GPU backend");
-    }
-    let mut params = WhisperContextParameters::default();
-    params.use_gpu(use_gpu);
-    if use_gpu {
-        params.gpu_device(0);
-        if whisper_flash_attn_enabled() {
-            params.flash_attn(true);
+}
+
+pub fn clear_whisper_server(app: &AppHandle) {
+    if let Some(state) = app.try_state::<WhisperServerState>() {
+        if let Ok(mut server) = state.0.lock() {
+            *server = None;
         }
     }
-    match new_whisper_context(model_path, params, use_gpu) {
-        Ok(ctx) => Ok((ctx, use_gpu)),
-        Err(gpu_err) if use_gpu => {
-            log::warn!("whisper gpu init failed; falling back to cpu: {gpu_err}");
-            let mut cpu_params = WhisperContextParameters::default();
-            cpu_params.use_gpu(false);
-            new_whisper_context(model_path, cpu_params, false)
-                .map(|ctx| (ctx, false))
-                .map_err(|cpu_err| {
-                    format!(
-                        "failed to load whisper model (gpu error: {gpu_err}; cpu retry error: {cpu_err})"
-                    )
-                })
-        }
-        Err(e) => Err(format!("failed to load whisper model: {e}")),
-    }
 }
 
-/// Serialize whisper.cpp init — concurrent `WhisperContext::new` calls can abort on Windows.
-pub fn load_whisper_context_serialized(
-    model_path: &str,
-    use_gpu: bool,
-) -> Result<(WhisperContext, bool), String> {
-    let _gate = WHISPER_LOAD_GATE
-        .lock()
-        .map_err(|_| "whisper load mutex poisoned".to_string())?;
-    load_whisper_context(model_path, use_gpu)
-}
-
-/// Linear resample mono `f32` to 16 kHz (Whisper input).
 pub fn resample_mono_to_16k(input: &[f32], input_rate: u32) -> Vec<f32> {
     if input.is_empty() || input_rate == 0 {
         return Vec::new();
@@ -198,44 +135,125 @@ fn normalize_peak_f32(samples: &[f32]) -> Vec<f32> {
         .collect()
 }
 
-/// One-shot decode: fresh [`whisper_rs::WhisperState`] per call so sliding-window passes do not
-/// reuse stale KV / prompt state (see `FullParams::set_no_context` / `set_single_segment`).
+/// Send normalized 16 kHz mono audio to whisper-server's multipart `/inference` endpoint.
 fn run_decode(
-    ctx: &WhisperContext,
+    app: &AppHandle,
+    model_path: &Path,
     audio_16k: &[f32],
-    use_accelerator: bool,
-) -> Result<String, whisper_rs::WhisperError> {
-    if audio_16k.len() < MIN_DECODE_SAMPLES {
+    use_gpu: bool,
+) -> Result<String, String> {
+    if audio_16k.len() < MIN_DECODE_SAMPLES || !audio_has_speech(audio_16k) {
         return Ok(String::new());
     }
-    if !audio_has_speech(audio_16k) {
-        return Ok(String::new());
+    let normalized = normalize_peak_f32(audio_16k);
+    let wav = pcm_wav_16k(&normalized);
+    let state = app.state::<WhisperServerState>();
+    let mut cached = state
+        .0
+        .lock()
+        .map_err(|_| "whisper server state poisoned".to_string())?;
+    let needs_restart = cached
+        .as_ref()
+        .is_some_and(|s| s.model_path != model_path || s.use_gpu != use_gpu);
+    if needs_restart {
+        *cached = None;
     }
-    let audio = normalize_peak_f32(audio_16k);
-    let mut state = ctx.create_state()?;
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    params.set_language(Some("en"));
-    params.set_no_context(true);
-    params.set_single_segment(true);
-    params.set_print_special(false);
-    params.set_print_progress(false);
-    params.set_print_realtime(false);
-    params.set_print_timestamps(false);
-    params.set_n_threads(whisper_decode_thread_count(use_accelerator));
-    state.full(params, &audio)?;
-    let mut s = String::new();
-    for segment in state.as_iter() {
-        let seg = segment.to_str()?;
-        let t = seg.trim();
-        if t.is_empty() {
-            continue;
+    if cached.is_none() {
+        #[cfg(windows)]
+        let exe = "whisper/whisper-server.exe";
+        #[cfg(target_os = "macos")]
+        let exe = "whisper-server";
+        #[cfg(not(any(windows, target_os = "macos")))]
+        let exe = "whisper-server";
+        // b5454 defaults no_context to true; its parser does not accept -nc.
+        let mut args = vec![
+            "-m".to_string(),
+            model_path.to_string_lossy().into_owned(),
+            "-l".to_string(),
+            "en".to_string(),
+            "-t".to_string(),
+            whisper_decode_thread_count(use_gpu).to_string(),
+        ];
+        if !use_gpu {
+            args.push("-ng".to_string());
         }
-        if !s.is_empty() {
-            s.push(' ');
-        }
-        s.push_str(t);
+        let process = sidecar::spawn(app, exe, &args, "/health", Duration::from_secs(60))?;
+        *cached = Some(WhisperServer {
+            process,
+            model_path: model_path.to_path_buf(),
+            use_gpu,
+        });
     }
-    Ok(s)
+    let server = cached.as_ref().expect("server initialized");
+    let boundary = format!(
+        "jarvis-{}",
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let body = inference_multipart(&boundary, &wav);
+    let response = ureq::post(&format!(
+        "http://127.0.0.1:{}/inference",
+        server.process.port
+    ))
+    .set(
+        "Content-Type",
+        &format!("multipart/form-data; boundary={boundary}"),
+    )
+    .timeout(Duration::from_secs(30))
+    .send_bytes(&body);
+    let response = match response {
+        Ok(response) => response,
+        Err(e) => {
+            *cached = None;
+            return Err(format!("whisper inference request failed: {e}"));
+        }
+    };
+    let value: serde_json::Value = serde_json::from_str(
+        &response
+            .into_string()
+            .map_err(|e| format!("read whisper response: {e}"))?,
+    )
+    .map_err(|e| format!("parse whisper response: {e}"))?;
+    value
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| "whisper response missing text".to_string())
+}
+
+fn pcm_wav_16k(samples: &[f32]) -> Vec<u8> {
+    let data_len = samples.len().saturating_mul(2).min(u32::MAX as usize - 36) as u32;
+    let mut wav = Vec::with_capacity(44 + data_len as usize);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&16_000u32.to_le_bytes());
+    wav.extend_from_slice(&32_000u32.to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    for sample in samples.iter().take(data_len as usize / 2) {
+        let pcm = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
+        wav.extend_from_slice(&pcm.to_le_bytes());
+    }
+    wav
+}
+
+fn inference_multipart(boundary: &str, wav: &[u8]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(wav.len() + 256);
+    for (name, value) in [("response_format", "json"), ("temperature", "0")] {
+        body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
+    }
+    body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n").as_bytes());
+    body.extend_from_slice(wav);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    body
 }
 
 fn push_ring(buffer: &mut Vec<f32>, chunk: &[f32]) {
@@ -296,24 +314,40 @@ impl SilenceResetTracker {
 
 pub fn spawn_stt_thread(
     app: AppHandle,
-    ctx: WhisperContext,
+    model_id: String,
+    use_gpu: bool,
     pcm_rx: Receiver<Vec<f32>>,
     input_sample_rate: u32,
     hud_session_id: u64,
-    use_whisper_accelerator: bool,
     initial_audio_16k: Vec<f32>,
     for_dictation: bool,
     cancel: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     let app_err = app.clone();
     std::thread::spawn(move || {
+        if cancel.load(Ordering::Relaxed) {
+            std::mem::forget(super::spawn_pcm_drain(pcm_rx));
+            return;
+        }
+        let model_path = match crate::audio::whisper_models::ensure_whisper_model(&app, &model_id) {
+            Ok(path) => path,
+            Err(e) => {
+                let _ = app.emit("audio-error", serde_json::json!({ "message": e }));
+                std::mem::forget(super::spawn_pcm_drain(pcm_rx));
+                return;
+            }
+        };
+        if cancel.load(Ordering::Relaxed) {
+            std::mem::forget(super::spawn_pcm_drain(pcm_rx));
+            return;
+        }
         if let Err(e) = stt_loop(
-            app,
-            ctx,
+            app.clone(),
+            model_path,
+            use_gpu,
             pcm_rx,
             input_sample_rate,
             hud_session_id,
-            use_whisper_accelerator,
             initial_audio_16k,
             for_dictation,
             cancel,
@@ -325,11 +359,11 @@ pub fn spawn_stt_thread(
 
 fn stt_loop(
     app: AppHandle,
-    ctx: WhisperContext,
+    model_path: PathBuf,
+    use_gpu: bool,
     pcm_rx: Receiver<Vec<f32>>,
     input_sample_rate: u32,
     hud_session_id: u64,
-    use_whisper_accelerator: bool,
     initial_audio_16k: Vec<f32>,
     for_dictation: bool,
     cancel: Arc<AtomicBool>,
@@ -345,9 +379,9 @@ fn stt_loop(
     }
 
     let maybe_decode = |buffer_16k: &mut Vec<f32>,
-                            last_decode: &mut Instant,
-                            last_text: &mut String,
-                            first_decode_pending: &mut bool|
+                        last_decode: &mut Instant,
+                        last_text: &mut String,
+                        first_decode_pending: &mut bool|
      -> Result<(), String> {
         if cancel.load(Ordering::Relaxed) {
             return Ok(());
@@ -363,7 +397,7 @@ fn stt_loop(
         *last_decode = Instant::now();
         *first_decode_pending = false;
 
-        let text = match run_decode(&ctx, buffer_16k, use_whisper_accelerator) {
+        let text = match run_decode(&app, &model_path, buffer_16k, use_gpu) {
             Ok(t) => t,
             Err(e) => {
                 let _ = app.emit(
@@ -456,7 +490,7 @@ fn stt_loop(
 
     // Channel closed: final pass (best effort) unless this session was cancelled.
     if !cancel.load(Ordering::Relaxed) && buffer_16k.len() >= MIN_DECODE_SAMPLES {
-        if let Ok(text) = run_decode(&ctx, &buffer_16k, use_whisper_accelerator) {
+        if let Ok(text) = run_decode(&app, &model_path, &buffer_16k, use_gpu) {
             if let Some(text) = normalize_transcript_candidate(&text) {
                 debug!(
                     "stt: emit transcript-update final chars={} preview={:?}",
@@ -481,11 +515,10 @@ fn stt_loop(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::{
-        normalize_peak_f32, parse_local_whisper_model_id, resample_mono_to_16k,
-        SilenceResetTracker, TranscriptPartialKind, TranscriptUpdate, TARGET_RATE,
+        inference_multipart, normalize_peak_f32, parse_local_whisper_model_id, pcm_wav_16k,
+        resample_mono_to_16k, SilenceResetTracker, TranscriptPartialKind, TranscriptUpdate,
+        TARGET_RATE,
     };
     use crate::audio::whisper_models::whisper_model_filename;
 
@@ -541,126 +574,51 @@ mod tests {
 
     #[test]
     fn transcript_update_kind_defaults_when_omitted() {
-        let v: TranscriptUpdate = serde_json::from_str(
-            r#"{"text":"hi","is_final":false,"hud_session_id":1}"#,
-        )
-        .expect("deserialize");
+        let v: TranscriptUpdate =
+            serde_json::from_str(r#"{"text":"hi","is_final":false,"hud_session_id":1}"#)
+                .expect("deserialize");
         assert_eq!(v.kind, TranscriptPartialKind::Growth);
     }
 
-    /// Manual: `cargo test manual_load_whisper_tiny_model -- --ignored --nocapture`
     #[test]
-    #[ignore = "loads bundled whisper weights (~75 MiB); run manually when debugging STT crashes"]
-    fn manual_load_whisper_tiny_model() {
-        manual_load_whisper_tiny_model_impl_on_loader_thread(false);
-    }
-
-    #[cfg(feature = "whisper-cuda")]
-    /// Manual: `cargo test manual_load_whisper_tiny_model_gpu -- --ignored --nocapture`
-    #[test]
-    #[ignore = "loads bundled whisper weights on CUDA; run manually when debugging GPU STT crashes"]
-    fn manual_load_whisper_tiny_model_gpu() {
-        manual_load_whisper_tiny_model_impl_on_loader_thread(true);
-    }
-
-    #[cfg(feature = "llm-local")]
-    /// Manual: `cargo test manual_load_whisper_after_llama_backend -- --ignored --nocapture`
-    #[test]
-    #[ignore = "probes ggml clash between llama-cpp and whisper in dev builds"]
-    fn manual_load_whisper_after_llama_backend() {
-        llama_cpp_2::llama_backend::LlamaBackend::init().expect("llama backend init");
-        manual_load_whisper_tiny_model_impl_on_loader_thread(false);
-    }
-
-    fn manual_load_whisper_tiny_model_impl_on_loader_thread(use_gpu: bool) {
-        let model = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join(whisper_model_filename(super::DEFAULT_LOCAL_WHISPER_MODEL));
-        assert!(
-            model.is_file(),
-            "missing {}; run scripts/download-model.ps1",
-            model.display()
+    fn pcm_wav_header_and_samples_are_mono_16khz_pcm16() {
+        let wav = pcm_wav_16k(&[0.5, -1.0]);
+        assert_eq!(&wav[..4], b"RIFF");
+        assert_eq!(u32::from_le_bytes(wav[4..8].try_into().unwrap()), 40);
+        assert_eq!(&wav[8..16], b"WAVEfmt ");
+        assert_eq!(u16::from_le_bytes(wav[22..24].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), 16_000);
+        assert_eq!(u16::from_le_bytes(wav[34..36].try_into().unwrap()), 16);
+        assert_eq!(&wav[36..40], b"data");
+        assert_eq!(u32::from_le_bytes(wav[40..44].try_into().unwrap()), 4);
+        assert_eq!(i16::from_le_bytes(wav[44..46].try_into().unwrap()), 16_384);
+        assert_eq!(
+            i16::from_le_bytes(wav[46..48].try_into().unwrap()),
+            i16::MIN + 1
         );
-        let model_path = model.to_string_lossy().to_string();
-        let result = crate::gpu_startup::spawn_whisper_loader_thread("manual-whisper-load", move || {
-            super::load_whisper_context_serialized(model_path.as_str(), use_gpu)
-        })
-        .expect("spawn loader thread")
-        .join()
-        .expect("join loader thread");
-        match result {
-            Ok(_) => eprintln!("whisper model load ok (use_gpu={use_gpu})"),
-            Err(e) => panic!("whisper model load failed (use_gpu={use_gpu}): {e}"),
-        }
     }
 
     #[test]
-    fn whisper_flash_attn_enabled_only_in_release_cuda() {
-        let enabled = super::whisper_flash_attn_enabled();
-        #[cfg(feature = "whisper-cuda")]
-        {
-            assert_eq!(enabled, !cfg!(debug_assertions));
-        }
-        #[cfg(not(feature = "whisper-cuda"))]
-        {
-            assert!(!enabled);
-        }
-    }
-
-    #[test]
-    fn whisper_gpu_compile_supported_matches_feature_flags() {
-        let expected = cfg!(any(
-            feature = "whisper-metal",
-            feature = "whisper-cuda",
-            feature = "whisper-vulkan"
-        ));
-        assert_eq!(super::whisper_gpu_compile_supported(), expected);
-    }
-
-    #[test]
-    fn manifest_dir_resources_points_at_bundled_filename() {
-        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join(whisper_model_filename(super::DEFAULT_LOCAL_WHISPER_MODEL));
-        assert!(p.ends_with(whisper_model_filename(super::DEFAULT_LOCAL_WHISPER_MODEL).as_str()));
+    fn multipart_contains_json_temperature_and_audio_file() {
+        let body = String::from_utf8(inference_multipart("boundary-test", b"RIFF")).unwrap();
+        assert!(body.contains("name=\"response_format\"\r\n\r\njson"));
+        assert!(body.contains("name=\"temperature\"\r\n\r\n0"));
+        assert!(body.contains("name=\"file\"; filename=\"audio.wav\""));
+        assert!(body.contains("Content-Type: audio/wav\r\n\r\nRIFF"));
+        assert!(body.ends_with("\r\n--boundary-test--\r\n"));
     }
 
     #[test]
     fn normalize_peak_does_not_boost_sub_speech_floor() {
         let quiet = vec![0.005f32; 100];
-        let n = normalize_peak_f32(&quiet);
-        assert_eq!(n, quiet);
+        assert_eq!(normalize_peak_f32(&quiet), quiet);
     }
 
     #[test]
     fn silence_tracker_resets_after_long_silence() {
-        let mut t = SilenceResetTracker::for_mode(false);
-        let silence = vec![0.0f32; (TARGET_RATE as usize) / 2];
-        assert!(!t.push_and_should_reset(&silence));
-        assert!(t.push_and_should_reset(&silence));
-    }
-
-    #[test]
-    fn silence_tracker_dictation_waits_longer() {
-        let mut cmd = SilenceResetTracker::for_mode(false);
-        let mut dict = SilenceResetTracker::for_mode(true);
-        let silence = vec![0.0f32; (TARGET_RATE as usize) / 2];
-        assert!(!cmd.push_and_should_reset(&silence));
-        assert!(!dict.push_and_should_reset(&silence));
-        assert!(cmd.push_and_should_reset(&silence));
-        assert!(!dict.push_and_should_reset(&silence));
-        assert!(!dict.push_and_should_reset(&silence));
-        assert!(dict.push_and_should_reset(&silence));
-    }
-
-    #[test]
-    fn silence_tracker_clears_after_loud_chunk() {
-        let mut t = SilenceResetTracker::for_mode(false);
-        let silence = vec![0.0f32; (TARGET_RATE as usize) / 2];
-        let loud = vec![0.5f32; (TARGET_RATE as usize) / 20];
-        assert!(!t.push_and_should_reset(&silence));
-        assert!(!t.push_and_should_reset(&loud));
-        assert!(!t.push_and_should_reset(&silence));
-        assert!(t.push_and_should_reset(&silence));
+        let mut tracker = SilenceResetTracker::for_mode(false);
+        let silence = vec![0.0f32; TARGET_RATE as usize / 2];
+        assert!(!tracker.push_and_should_reset(&silence));
+        assert!(tracker.push_and_should_reset(&silence));
     }
 }

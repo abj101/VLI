@@ -21,7 +21,7 @@ use tauri::Emitter;
 use tauri::Manager;
 
 use capture::CaptureSession;
-use stt::{load_whisper_context_serialized, spawn_stt_thread};
+use stt::spawn_stt_thread;
 use transcription::{spawn_os_stt_thread, spawn_remote_stt_thread};
 
 pub use preroll::WakePreroll;
@@ -34,7 +34,9 @@ pub struct WakeMicSuppressed(pub Arc<AtomicBool>);
 /// Resolved STT path for [`AudioPipeline::start`].
 pub enum SttPipelineChoice {
     /// Local Whisper; `use_gpu` is passed to whisper.cpp when supported by the build.
-    Local { use_gpu: bool },
+    Local {
+        use_gpu: bool,
+    },
     Os,
     Remote(RemoteSttParams),
 }
@@ -99,76 +101,17 @@ impl AudioPipeline {
                     .and_then(|conn| crate::db::get_app_settings(&conn).ok())
                     .map(|s| s.local_whisper_model)
                     .unwrap_or_else(|| stt::DEFAULT_LOCAL_WHISPER_MODEL.to_string());
-                let app_load = app.clone();
-                let app_emit = app.clone();
-                let cancel_loader = Arc::clone(&cancel);
-                let cancel_stt = Arc::clone(&cancel);
-                let warmed = app
-                    .try_state::<crate::WhisperModelCache>()
-                    .and_then(|c| c.take_context());
-                Some(crate::gpu_startup::spawn_whisper_loader_thread("whisper-loader", move || {
-                    if cancel_loader.load(Ordering::Relaxed) {
-                        std::mem::forget(spawn_pcm_drain(pcm_rx));
-                        return;
-                    }
-                    let model_path = match whisper_models::ensure_whisper_model(
-                        &app_emit,
-                        model_id.as_str(),
-                    ) {
-                        Ok(path) => path,
-                        Err(msg) => {
-                            let _ = app_emit.emit(
-                                "audio-error",
-                                serde_json::json!({ "message": msg }),
-                            );
-                            std::mem::forget(spawn_pcm_drain(pcm_rx));
-                            return;
-                        }
-                    };
-                    if cancel_loader.load(Ordering::Relaxed) {
-                        std::mem::forget(spawn_pcm_drain(pcm_rx));
-                        return;
-                    }
-                    let model_path_text = model_path.to_string_lossy().to_string();
-                    let load_result = warmed
-                        .map(|ctx| Ok((ctx, use_gpu)))
-                        .unwrap_or_else(|| {
-                            load_whisper_context_serialized(model_path_text.as_str(), use_gpu)
-                        });
-                    match load_result {
-                        Ok((ctx, effective_gpu)) => {
-                            if cancel_loader.load(Ordering::Relaxed) {
-                                std::mem::forget(spawn_pcm_drain(pcm_rx));
-                                return;
-                            }
-                            if use_gpu && !effective_gpu {
-                                let _ = app_emit.emit(
-                                    "audio-error",
-                                    serde_json::json!({ "message": "Whisper GPU init failed; using CPU instead." }),
-                                );
-                            }
-                            let inner = spawn_stt_thread(
-                                app_load,
-                                ctx,
-                                pcm_rx,
-                                sample_rate,
-                                hud_session_id,
-                                effective_gpu,
-                                wake_preroll_16k,
-                                for_dictation,
-                                cancel_stt,
-                            );
-                            std::mem::forget(inner);
-                        }
-                        Err(msg) => {
-                            let _ = app_emit.emit(
-                                "audio-error",
-                                serde_json::json!({ "message": msg }),
-                            );
-                            std::mem::forget(spawn_pcm_drain(pcm_rx));
-                        }
-                    }
-                }).map_err(|e| e.to_string())?)
+                Some(spawn_stt_thread(
+                    app.clone(),
+                    model_id,
+                    use_gpu,
+                    pcm_rx,
+                    sample_rate,
+                    hud_session_id,
+                    wake_preroll_16k,
+                    for_dictation,
+                    Arc::clone(&cancel),
+                ))
             }
         };
 

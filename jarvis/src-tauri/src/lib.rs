@@ -6,8 +6,8 @@ mod dictation;
 mod gpu_startup;
 mod hud;
 mod input;
-mod llm;
 mod keychain;
+mod llm;
 #[cfg(target_os = "macos")]
 mod macos;
 mod process;
@@ -20,17 +20,18 @@ mod window_frame_win;
 use audio::{transcript_event::TranscriptPartialKind, SharedAudioPipeline};
 use hud::{
     apply_hud_window_geometry, hide_hud_window_on_main, persist_hud_window_position,
-    present_hud_window, present_hud_window_on_main,
-    sync_hud_webview_background,
-    sync_hud_window, HudOverlayMode, HudPhase, HudPositionGuard, HUD_WINDOW_LABEL,
+    present_hud_window, present_hud_window_on_main, sync_hud_webview_background, sync_hud_window,
+    HudOverlayMode, HudPhase, HudPositionGuard, HUD_WINDOW_LABEL,
 };
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Listener, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{
+    AppHandle, Emitter, Listener, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+};
 use tauri_plugin_global_shortcut::{
     Builder as ShortcutBuilder, GlobalShortcutExt, Shortcut, ShortcutState,
 };
@@ -76,67 +77,6 @@ pub(crate) type CommandCache = Arc<RwLock<Vec<db::CommandNode>>>;
 pub(crate) type AppIndexStore = Arc<RwLock<Vec<apps::AppEntry>>>;
 /// In-memory icon cache shared between the scanner and the `get_app_icon` command.
 type AppIconCache = Arc<apps::IconCache>;
-static WHISPER_GPU_STATUS: OnceLock<WhisperGpuStatus> = OnceLock::new();
-static WHISPER_GPU_MODEL_WARMED: AtomicBool = AtomicBool::new(false);
-
-/// Warm-loaded Whisper weights reused by the listen pipeline after GPU warmup.
-pub struct WhisperModelCache(pub Mutex<Option<whisper_rs::WhisperContext>>);
-
-impl WhisperModelCache {
-    pub fn has_context(&self) -> bool {
-        self.0.lock().ok().is_some_and(|slot| slot.is_some())
-    }
-
-    pub fn take_context(&self) -> Option<whisper_rs::WhisperContext> {
-        self.0.lock().ok()?.take()
-    }
-
-    pub fn store(&self, ctx: whisper_rs::WhisperContext) {
-        if let Ok(mut slot) = self.0.lock() {
-            *slot = Some(ctx);
-        }
-    }
-
-    pub fn clear(&self) {
-        if let Ok(mut slot) = self.0.lock() {
-            *slot = None;
-        }
-    }
-}
-
-pub(crate) fn clear_whisper_model_cache(app: &AppHandle) {
-    WHISPER_GPU_MODEL_WARMED.store(false, Ordering::SeqCst);
-    if let Some(cache) = app.try_state::<WhisperModelCache>() {
-        cache.clear();
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WhisperModelWarmupPayload {
-    ready: bool,
-    message: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WhisperGpuStatus {
-    compile_backend: String,
-    runtime_available: bool,
-    message: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WhisperGpuWarmupPayload {
-    ready: bool,
-    message: String,
-}
-
-/// `true` while a background app-index scan is in-flight. The settings panel
-/// reads this via [`get_app_index_status`] to render "Indexing apps…" only
-/// while a scan is actually running — previously the UI had no way to
-/// distinguish "scan finished with 0 apps" from "scan still working".
 #[derive(Default)]
 struct AppIndexScanning(AtomicBool);
 
@@ -183,10 +123,7 @@ fn refresh_app_index_on_startup(
 /// `app-index-ready` with `{ count, scanning }` at both the start and end.
 fn spawn_app_index_scan(app: AppHandle, store: AppIndexStore) {
     let scanning_state = app.state::<AppIndexScanning>();
-    if scanning_state
-        .0
-        .swap(true, Ordering::SeqCst)
-    {
+    if scanning_state.0.swap(true, Ordering::SeqCst) {
         // Another scan is already running — let it finish rather than stack them.
         return;
     }
@@ -560,7 +497,7 @@ fn load_stt_pipeline_choice(app: &AppHandle) -> audio::SttPipelineChoice {
     };
     match audio::transcription::parse_stt_provider(Some(settings.stt_provider.as_str())) {
         audio::transcription::SttProvider::Local => audio::SttPipelineChoice::Local {
-            use_gpu: settings.local_whisper_use_gpu && whisper_gpu_compile_supported(),
+            use_gpu: settings.local_whisper_use_gpu,
         },
         audio::transcription::SttProvider::Os => audio::SttPipelineChoice::Os,
         audio::transcription::SttProvider::Remote => {
@@ -609,7 +546,8 @@ pub(crate) fn try_start_listening_audio(
     drop(old);
 
     let choice = load_stt_pipeline_choice(app);
-    match audio::AudioPipeline::start(app, hud_session_id, choice, wake_preroll_16k, for_dictation) {
+    match audio::AudioPipeline::start(app, hud_session_id, choice, wake_preroll_16k, for_dictation)
+    {
         Ok(p) => {
             let mut g = slot.lock().unwrap();
             *g = Some(p);
@@ -704,7 +642,10 @@ fn clear_pending_transcript_after_silence_reset(s: &mut HudRuntime) {
     cancel_tier2_routing(s);
 }
 
-fn abort_tier2_routing_for_new_speech(rt: &SharedHud, update: &audio::stt::TranscriptUpdate) -> bool {
+fn abort_tier2_routing_for_new_speech(
+    rt: &SharedHud,
+    update: &audio::stt::TranscriptUpdate,
+) -> bool {
     if update.text.trim().is_empty() {
         return false;
     }
@@ -835,9 +776,7 @@ fn sync_native_window_rounding(app: &AppHandle) {
 /// Live STT emits partial `transcript-update` (`is_final: false`). Matching is gated on a short
 /// silence window so commands do not fire before the user finishes their phrase.
 fn should_attempt_command_match(rt: &HudRuntime) -> bool {
-    rt.visible
-        && rt.phase == HudPhase::Listening
-        && rt.overlay_mode == HudOverlayMode::Command
+    rt.visible && rt.phase == HudPhase::Listening && rt.overlay_mode == HudOverlayMode::Command
 }
 
 fn should_attempt_match_for_update(rt: &HudRuntime, is_final: bool) -> bool {
@@ -1037,7 +976,9 @@ fn no_match_idle_should_dismiss(s: &HudRuntime) -> bool {
     if s.listening_started_at.elapsed() >= MAX_LISTEN_DURATION {
         return true;
     }
-    if s.last_speech_activity.is_some_and(|t| t.elapsed() < SILENCE_BEFORE_MATCH) {
+    if s.last_speech_activity
+        .is_some_and(|t| t.elapsed() < SILENCE_BEFORE_MATCH)
+    {
         return false;
     }
     if !s.nonempty_transcript_this_listen {
@@ -1089,11 +1030,7 @@ pub(crate) fn hide_hud_window(app: &AppHandle) {
 }
 
 /// Command finished (no follow-up reopen): dismiss session and stop mic — do not linger on `Done`.
-pub(crate) fn finalize_command_run(
-    app: &AppHandle,
-    rt: &SharedHud,
-    audio: &SharedAudioPipeline,
-) {
+pub(crate) fn finalize_command_run(app: &AppHandle, rt: &SharedHud, audio: &SharedAudioPipeline) {
     if let Err(e) = dismiss_hud(app, rt) {
         warn!("finalize_command_run dismiss: {e}");
     }
@@ -1187,7 +1124,7 @@ fn spawn_no_match_watchdog(
             return;
         }
         let _ = dismiss_hud(&app, &rt);
-        audio::stop_shared_pipeline(&app,&audio);
+        audio::stop_shared_pipeline(&app, &audio);
     });
 }
 
@@ -1215,10 +1152,7 @@ fn spawn_deferred_partial_match(
             if cancel.load(Ordering::Relaxed) {
                 return;
             }
-            let quiet = rt
-                .lock()
-                .map(|s| command_match_quiet(&s))
-                .unwrap_or(false);
+            let quiet = rt.lock().map(|s| command_match_quiet(&s)).unwrap_or(false);
             if quiet {
                 break;
             }
@@ -1319,10 +1253,7 @@ pub(crate) fn set_phase(app: &AppHandle, rt: &SharedHud, phase: HudPhase) -> Res
     let (applied, session_id) = {
         let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
         let applied = if !phase_transition_allowed(s.phase, phase) {
-            debug!(
-                "flow: skip set_phase {:?} from {:?}",
-                phase, s.phase
-            );
+            debug!("flow: skip set_phase {:?} from {:?}", phase, s.phase);
             false
         } else {
             s.phase = phase;
@@ -1898,7 +1829,7 @@ fn hud_dismiss(
     audio: State<'_, SharedAudioPipeline>,
 ) -> Result<(), String> {
     dismiss_hud(&app, &state)?;
-    audio::stop_shared_pipeline(&app,&audio);
+    audio::stop_shared_pipeline(&app, &audio);
     Ok(())
 }
 
@@ -2027,10 +1958,7 @@ fn list_tools(app: AppHandle) -> Result<Vec<db::ToolDefinition>, String> {
 }
 
 #[tauri::command]
-fn create_tool(
-    app: AppHandle,
-    tool: ToolDefinitionPayload,
-) -> Result<db::ToolDefinition, String> {
+fn create_tool(app: AppHandle, tool: ToolDefinitionPayload) -> Result<db::ToolDefinition, String> {
     let conn = open_db_connection(&app)?;
     let row = tool.try_into_new_tool_definition()?;
     let id = db::insert_tool(&conn, &row).map_err(|e| e.to_string())?;
@@ -2091,22 +2019,29 @@ fn preview_open_target(
         .read()
         .map_err(|_| "app index lock poisoned".to_string())?
         .clone();
-    let (target, placement) =
-        apps::resolve_target::strip_placement_suffix(utterance.trim());
+    let (target, placement) = apps::resolve_target::strip_placement_suffix(utterance.trim());
     let resolved = apps::resolve_target::resolve_target(&target, &entries, &aliases);
     let mut resolved_with_placement = resolved;
     if let Some(zone) = placement.clone() {
         match &mut resolved_with_placement {
-            apps::resolve_target::ResolvedTarget::App { placement: slot, .. } => {
+            apps::resolve_target::ResolvedTarget::App {
+                placement: slot, ..
+            } => {
                 *slot = Some(zone);
             }
-            apps::resolve_target::ResolvedTarget::Url { placement: slot, .. } => {
+            apps::resolve_target::ResolvedTarget::Url {
+                placement: slot, ..
+            } => {
                 *slot = Some(zone);
             }
-            apps::resolve_target::ResolvedTarget::Ambiguous { placement: slot, .. } => {
+            apps::resolve_target::ResolvedTarget::Ambiguous {
+                placement: slot, ..
+            } => {
                 *slot = Some(zone);
             }
-            apps::resolve_target::ResolvedTarget::Unknown { placement: slot, .. } => {
+            apps::resolve_target::ResolvedTarget::Unknown {
+                placement: slot, ..
+            } => {
                 *slot = Some(zone);
             }
         }
@@ -2152,7 +2087,10 @@ fn list_target_aliases(app: AppHandle) -> Result<Vec<db::TargetAlias>, String> {
 }
 
 #[tauri::command]
-fn upsert_target_alias(app: AppHandle, alias: TargetAliasPayload) -> Result<db::TargetAlias, String> {
+fn upsert_target_alias(
+    app: AppHandle,
+    alias: TargetAliasPayload,
+) -> Result<db::TargetAlias, String> {
     let conn = open_db_connection(&app)?;
     let row = alias.into_alias()?;
     db::upsert_target_alias(&conn, &row).map_err(|e| e.to_string())?;
@@ -2306,7 +2244,9 @@ fn set_dictation_hotkey(
     if let Err(persist_error) = db::set_setting(&conn, SETTING_KEY_DICTATION_HOTKEY, &next_hotkey) {
         let _ = app.global_shortcut().unregister(next_hotkey.as_str());
         let _ = app.global_shortcut().register(existing_hotkey.as_str());
-        return Err(format!("failed to persist dictation hotkey: {persist_error}"));
+        return Err(format!(
+            "failed to persist dictation hotkey: {persist_error}"
+        ));
     }
 
     *current_hotkey = next_hotkey.clone();
@@ -2437,124 +2377,6 @@ fn rescan_app_index(
 }
 
 /// `true` when this binary was built with a Whisper GPU backend (Vulkan / CUDA / Metal).
-#[tauri::command]
-fn whisper_gpu_compile_supported() -> bool {
-    whisper_compile_backend() != "none"
-}
-
-fn whisper_compile_backend() -> &'static str {
-    if cfg!(feature = "whisper-metal") {
-        "metal"
-    } else if cfg!(feature = "whisper-cuda") {
-        "cuda"
-    } else if cfg!(feature = "whisper-vulkan") {
-        "vulkan"
-    } else {
-        "none"
-    }
-}
-
-fn whisper_backend_label(backend: &str) -> &'static str {
-    match backend {
-        "metal" => "Metal",
-        "cuda" => "CUDA",
-        "vulkan" => "Vulkan",
-        _ => "CPU-only",
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn try_load_library(lib_name: &str) -> bool {
-    use windows::Win32::System::LibraryLoader::LoadLibraryW;
-    use windows::core::PCWSTR;
-
-    let mut wide: Vec<u16> = lib_name.encode_utf16().collect();
-    wide.push(0);
-    // SAFETY: We pass a null-terminated UTF-16 string for Win32 loader probe.
-    unsafe { LoadLibraryW(PCWSTR(wide.as_ptr())).is_ok() }
-}
-
-fn whisper_runtime_available(backend: &str) -> bool {
-    match backend {
-        "metal" => cfg!(target_os = "macos"),
-        "cuda" => whisper_cuda_runtime_available(),
-        "vulkan" => whisper_vulkan_runtime_available(),
-        _ => false,
-    }
-}
-
-fn whisper_cuda_runtime_available() -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        return try_load_library("nvcuda.dll");
-    }
-    #[cfg(target_os = "linux")]
-    {
-        return std::path::Path::new("/usr/lib/x86_64-linux-gnu/libcuda.so.1").exists()
-            || std::path::Path::new("/usr/lib64/libcuda.so.1").exists()
-            || std::path::Path::new("/usr/lib/libcuda.so.1").exists();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        return false;
-    }
-    #[allow(unreachable_code)]
-    false
-}
-
-fn whisper_vulkan_runtime_available() -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        return try_load_library("vulkan-1.dll");
-    }
-    #[cfg(target_os = "linux")]
-    {
-        return std::path::Path::new("/usr/lib/x86_64-linux-gnu/libvulkan.so.1").exists()
-            || std::path::Path::new("/usr/lib64/libvulkan.so.1").exists()
-            || std::path::Path::new("/usr/lib/libvulkan.so.1").exists();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        return std::path::Path::new("/usr/local/lib/libvulkan.dylib").exists()
-            || std::path::Path::new("/opt/homebrew/lib/libvulkan.dylib").exists();
-    }
-    #[allow(unreachable_code)]
-    false
-}
-
-fn whisper_gpu_status_inner() -> WhisperGpuStatus {
-    let backend = whisper_compile_backend();
-    let runtime_available = whisper_runtime_available(backend);
-    let message = match backend {
-        "none" => Some("This build was compiled without a Whisper GPU backend.".to_string()),
-        _ if runtime_available => Some(format!(
-            "Whisper GPU backend ready: {}.",
-            whisper_backend_label(backend)
-        )),
-        "cuda" => Some(
-            "CUDA backend is compiled, but a CUDA runtime/driver was not detected.".to_string(),
-        ),
-        "vulkan" => Some(
-            "Vulkan backend is compiled, but a Vulkan runtime/loader was not detected.".to_string(),
-        ),
-        "metal" => Some("Metal backend is only available on macOS.".to_string()),
-        _ => Some("Whisper GPU backend is unavailable on this system.".to_string()),
-    };
-
-    WhisperGpuStatus {
-        compile_backend: backend.to_string(),
-        runtime_available,
-        message,
-    }
-}
-
-#[tauri::command]
-fn whisper_gpu_status() -> WhisperGpuStatus {
-    WHISPER_GPU_STATUS
-        .get_or_init(whisper_gpu_status_inner)
-        .clone()
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WhisperModelStatusPayload {
@@ -2572,7 +2394,9 @@ fn whisper_model_status(app: AppHandle) -> Result<WhisperModelStatusPayload, Str
 }
 
 #[tauri::command]
-fn list_whisper_models(app: AppHandle) -> Result<audio::whisper_models::ListWhisperModelsPayload, String> {
+fn list_whisper_models(
+    app: AppHandle,
+) -> Result<audio::whisper_models::ListWhisperModelsPayload, String> {
     audio::whisper_models::list_whisper_models(&app)
 }
 
@@ -2587,130 +2411,8 @@ fn delete_whisper_model(
     model_id: String,
 ) -> Result<audio::whisper_models::ListWhisperModelsPayload, String> {
     audio::whisper_models::delete_whisper_model(&app, &model_id)?;
-    clear_whisper_model_cache(&app);
+    audio::stt::clear_whisper_server(&app);
     audio::whisper_models::list_whisper_models(&app)
-}
-
-#[tauri::command]
-fn warmup_whisper_gpu(app: AppHandle) -> WhisperGpuWarmupPayload {
-    let status = whisper_gpu_status();
-    if status.compile_backend == "none" {
-        return WhisperGpuWarmupPayload {
-            ready: false,
-            message: "This build has no Whisper GPU backend.".to_string(),
-        };
-    }
-    if !status.runtime_available {
-        return WhisperGpuWarmupPayload {
-            ready: false,
-            message: format!(
-                "{} runtime is unavailable, cannot warm up Whisper.",
-                whisper_backend_label(&status.compile_backend)
-            ),
-        };
-    }
-    if WHISPER_GPU_MODEL_WARMED.load(Ordering::SeqCst) {
-        return WhisperGpuWarmupPayload {
-            ready: true,
-            message: format!(
-                "{} model ready.",
-                whisper_backend_label(&status.compile_backend)
-            ),
-        };
-    }
-    let app_bg = app.clone();
-    if gpu_startup::spawn_whisper_loader_thread("whisper-gpu-warmup", move || {
-        let payload = warmup_whisper_gpu_blocking(app_bg.clone());
-        let _ = app_bg.emit("whisper-gpu-warmup", &payload);
-    })
-    .is_err()
-    {
-        log::warn!("whisper-gpu-warmup: failed to spawn loader thread");
-    }
-    WhisperGpuWarmupPayload {
-        ready: false,
-        message: format!(
-            "Loading {} Whisper model in background…",
-            whisper_backend_label(&status.compile_backend)
-        ),
-    }
-}
-
-fn warmup_whisper_model_blocking(app: AppHandle, use_gpu: bool) -> WhisperModelWarmupPayload {
-    if let Some(cache) = app.try_state::<WhisperModelCache>() {
-        if cache.has_context() {
-            WHISPER_GPU_MODEL_WARMED.store(true, Ordering::SeqCst);
-            return WhisperModelWarmupPayload {
-                ready: true,
-                message: "Speech model ready.".into(),
-            };
-        }
-    }
-    #[cfg(debug_assertions)]
-    info!("whisper: loading STT model (debug MSVC builds can take several minutes)");
-    #[cfg(not(debug_assertions))]
-    info!("whisper: loading STT model");
-    let model_id = open_db_connection(&app)
-        .ok()
-        .and_then(|conn| db::get_app_settings(&conn).ok())
-        .map(|s| s.local_whisper_model)
-        .unwrap_or_else(|| audio::stt::DEFAULT_LOCAL_WHISPER_MODEL.to_string());
-    let model_path = match audio::whisper_models::ensure_whisper_model(&app, model_id.as_str()) {
-        Ok(path) => path,
-        Err(msg) => {
-            return WhisperModelWarmupPayload {
-                ready: false,
-                message: msg,
-            };
-        }
-    };
-    match audio::stt::load_whisper_context_serialized(
-        model_path.to_string_lossy().as_ref(),
-        use_gpu,
-    ) {
-        Ok((ctx, _)) => {
-            if let Some(cache) = app.try_state::<WhisperModelCache>() {
-                cache.store(ctx);
-            }
-            WHISPER_GPU_MODEL_WARMED.store(true, Ordering::SeqCst);
-            WhisperModelWarmupPayload {
-                ready: true,
-                message: "Speech model ready.".into(),
-            }
-        }
-        Err(msg) => WhisperModelWarmupPayload {
-            ready: false,
-            message: format!("Speech model load failed: {msg}"),
-        },
-    }
-}
-
-fn run_whisper_preload_at_launch(app: AppHandle, use_gpu: bool) {
-    let payload = warmup_whisper_model_blocking(app.clone(), use_gpu);
-    let _ = app.emit("whisper-model-warmup", &payload);
-}
-
-fn warmup_whisper_gpu_blocking(app: AppHandle) -> WhisperGpuWarmupPayload {
-    let backend = whisper_compile_backend();
-    if WHISPER_GPU_MODEL_WARMED.load(Ordering::SeqCst) {
-        return WhisperGpuWarmupPayload {
-            ready: true,
-            message: format!("{} model ready.", whisper_backend_label(backend)),
-        };
-    }
-    let payload = warmup_whisper_model_blocking(app, true);
-    WhisperGpuWarmupPayload {
-        ready: payload.ready,
-        message: if payload.ready {
-            format!("{} model ready.", whisper_backend_label(backend))
-        } else {
-            format!(
-                "{} warmup failed: {}",
-                whisper_backend_label(backend),
-                payload.message
-            )
-        },
-    }
 }
 
 #[tauri::command]
@@ -2725,8 +2427,8 @@ fn update_settings(
     let conn = open_db_connection(&app)?;
     db::apply_settings_patch(&conn, &patch).map_err(|e| e.to_string())?;
     let settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
-    if patch.local_whisper_model.is_some() {
-        clear_whisper_model_cache(&app);
+    if patch.local_whisper_model.is_some() || patch.local_whisper_use_gpu.is_some() {
+        audio::stt::clear_whisper_server(&app);
     }
     if settings_patch_triggers_wake_reload(&patch, &settings) {
         let resource_dir =
@@ -2775,7 +2477,7 @@ pub fn run() {
     let hotkey_recording_suppressed = Arc::new(AtomicBool::new(false));
     let wake_mic_suppressed = audio::WakeMicSuppressed(Arc::new(AtomicBool::new(false)));
     let wake_preroll = audio::WakePreroll::default();
-    let whisper_model_cache = WhisperModelCache(Mutex::new(None));
+    let whisper_server_state = audio::stt::WhisperServerState::default();
     let whisper_model_download_state = audio::whisper_models::WhisperModelDownloadState::default();
     let router_model_cache = llm::RouterModelCache::default();
     let composer_model_cache = llm::ComposerModelCache::default();
@@ -2787,10 +2489,12 @@ pub fn run() {
         .manage(Arc::clone(&hud_state))
         .manage(audio_pipeline.clone())
         .manage(Arc::clone(&is_paused))
-        .manage(HotkeyRecordingSuppressed(Arc::clone(&hotkey_recording_suppressed)))
+        .manage(HotkeyRecordingSuppressed(Arc::clone(
+            &hotkey_recording_suppressed,
+        )))
         .manage(wake_mic_suppressed)
         .manage(wake_preroll)
-        .manage(whisper_model_cache)
+        .manage(whisper_server_state)
         .manage(whisper_model_download_state)
         .manage(router_model_cache)
         .manage(composer_model_cache)
@@ -2829,25 +2533,9 @@ pub fn run() {
                 refresh_command_cache(app.handle(), &command_cache_for_setup)?;
                 let conn = open_db_connection(app.handle())?;
                 let app_settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
-                let whisper_cache_warm = app
-                    .try_state::<WhisperModelCache>()
-                    .is_some_and(|cache| cache.has_context());
-                let whisper_preload = gpu_startup::should_run_whisper_preload_at_launch(
-                    &app_settings,
-                    whisper_cache_warm,
-                );
-                let whisper_use_gpu =
-                    gpu_startup::whisper_preload_use_gpu(&app_settings);
-                let router_warmup =
-                    gpu_startup::should_router_warmup_at_launch(&app_settings);
-                let defer_wake = gpu_startup::defer_wake_for_gpu_whisper(
-                    &app_settings,
-                    whisper_cache_warm,
-                );
-                log::info!(
-                    "gpu-startup: whisper_preload={whisper_preload} whisper_use_gpu={whisper_use_gpu} defer_wake={defer_wake} router_warmup={router_warmup}"
-                );
-                #[cfg(target_os = "macos")]
+                let router_warmup = gpu_startup::should_router_warmup_at_launch(&app_settings);
+        log::info!("gpu-startup: router_warmup={router_warmup}");
+        #[cfg(target_os = "macos")]
                 macos::schedule_microphone_permission_request(app.handle());
                 #[cfg(target_os = "macos")]
                 if let Err(e) = macos::init_hud_panel(app.handle()) {
@@ -2866,75 +2554,26 @@ pub fn run() {
                         warn!("hud always_on_top: {e}");
                     }
                 }
-                refresh_app_index_on_startup(
-                    app.handle(),
-                    &app_index_for_setup,
-                    !defer_wake,
-                )?;
-                let resource_dir = crate::audio::wake::resolve_wake_resource_root(
-                    app.handle(),
-                    app_settings.wake_engine.as_str(),
-                );
-                let app_h = app.handle().clone();
-                let settings_for_wake = app_settings.clone();
-                let hud_for_wake = Arc::clone(&hud_state);
-                let audio_for_wake = audio_for_shortcut.clone();
-                let is_paused_for_wake = Arc::clone(&is_paused_for_shortcut);
-                let resource_dir_for_wake = resource_dir.clone();
-
-                if !defer_wake {
-                    start_wake_from_settings(
-                        app.handle(),
-                        resource_dir,
-                        &app_settings,
-                        &hud_state,
-                        &audio_for_shortcut,
-                        &is_paused_for_shortcut,
-                    );
-                }
-
-                if app_settings.stt_provider == "local" {
-                    let model_id = app_settings.local_whisper_model.clone();
-                    let app_models = app.handle().clone();
-                    if !audio::whisper_models::is_whisper_model_installed(
-                        &app_models,
-                        model_id.as_str(),
-                    ) {
-                        let _ =
-                            audio::whisper_models::spawn_whisper_model_download(app_models, model_id);
-                    }
-                }
-
-                let app_whisper = app_h.clone();
-                let app_router = app_h.clone();
-                let app_wake = app_h.clone();
-                let app_index_deferred = app_h.clone();
-                let app_index_store_deferred = app_index_for_setup.clone();
-                let needs_background =
-                    whisper_preload || router_warmup || defer_wake;
-                let use_whisper_stack = whisper_preload;
-                gpu_startup::spawn_startup_sequence(needs_background, use_whisper_stack, move || {
-                    if whisper_preload {
-                        run_whisper_preload_at_launch(app_whisper, whisper_use_gpu);
-                    }
-                    if defer_wake {
-                        spawn_app_index_scan(app_index_deferred, app_index_store_deferred);
-                    }
-                    if router_warmup {
-                        llm::tauri_cmds::run_router_warmup_at_launch_blocking(&app_router);
-                    }
-                    if defer_wake {
-                        start_wake_from_settings(
-                            &app_wake,
-                            resource_dir_for_wake,
-                            &settings_for_wake,
-                            &hud_for_wake,
-                            &audio_for_wake,
-                            &is_paused_for_wake,
-                        );
-                    }
-                });
-                let configured_hotkey =
+                refresh_app_index_on_startup(app.handle(), &app_index_for_setup, true)?;
+        let resource_dir = crate::audio::wake::resolve_wake_resource_root(
+            app.handle(), app_settings.wake_engine.as_str(),
+        );
+        start_wake_from_settings(
+            app.handle(), resource_dir, &app_settings, &hud_state,
+            &audio_for_shortcut, &is_paused_for_shortcut,
+        );
+        if app_settings.stt_provider == "local" {
+            let model_id = app_settings.local_whisper_model.clone();
+            let app_models = app.handle().clone();
+            if !audio::whisper_models::is_whisper_model_installed(&app_models, &model_id) {
+                let _ = audio::whisper_models::spawn_whisper_model_download(app_models, model_id);
+            }
+        }
+        let app_router = app.handle().clone();
+        gpu_startup::spawn_startup_sequence(router_warmup, false, move || {
+            llm::tauri_cmds::run_router_warmup_at_launch_blocking(&app_router);
+        });
+        let configured_hotkey =
                     match db::get_setting(&conn, SETTING_KEY_HOTKEY).map_err(|e| e.to_string())? {
                         Some(value) if !value.trim().is_empty() => value.trim().to_string(),
                         _ => {
@@ -3214,13 +2853,10 @@ pub fn run() {
             get_app_index_status,
             get_app_icon,
             rescan_app_index,
-            whisper_gpu_compile_supported,
-            whisper_gpu_status,
             whisper_model_status,
             list_whisper_models,
             download_whisper_model,
             delete_whisper_model,
-            warmup_whisper_gpu,
             llm::tauri_cmds::router_status,
             llm::tauri_cmds::router_warmup,
             llm::tauri_cmds::route_transcript,
@@ -3288,22 +2924,6 @@ mod tests {
             dictation_hotkey: db::settings::DEFAULT_DICTATION_HOTKEY.to_string(),
             dictation_hotkey_mode: db::settings::DEFAULT_DICTATION_HOTKEY_MODE.to_string(),
         }
-    }
-
-    #[test]
-    fn whisper_compile_backend_is_known_value() {
-        assert!(matches!(
-            whisper_compile_backend(),
-            "none" | "vulkan" | "cuda" | "metal"
-        ));
-    }
-
-    #[test]
-    fn whisper_compile_supported_matches_backend() {
-        assert_eq!(
-            whisper_gpu_compile_supported(),
-            whisper_compile_backend() != "none"
-        );
     }
 
     #[test]
@@ -3385,10 +3005,7 @@ mod tests {
 
     #[test]
     fn phase_transition_blocks_done_after_stopped() {
-        assert!(!phase_transition_allowed(
-            HudPhase::Stopped,
-            HudPhase::Done
-        ));
+        assert!(!phase_transition_allowed(HudPhase::Stopped, HudPhase::Done));
         assert!(phase_transition_allowed(
             HudPhase::Executing,
             HudPhase::Done
@@ -3530,7 +3147,8 @@ mod tests {
         rt.visible = true;
         rt.phase = HudPhase::Listening;
         rt.nonempty_transcript_this_listen = false;
-        rt.listening_started_at = Instant::now() - NO_WORDS_DISMISS_AFTER - Duration::from_millis(50);
+        rt.listening_started_at =
+            Instant::now() - NO_WORDS_DISMISS_AFTER - Duration::from_millis(50);
         assert!(no_match_idle_should_dismiss(&rt));
         rt.listening_started_at = Instant::now();
         assert!(!no_match_idle_should_dismiss(&rt));
@@ -3542,9 +3160,8 @@ mod tests {
         rt.visible = true;
         rt.phase = HudPhase::Listening;
         rt.nonempty_transcript_this_listen = true;
-        rt.last_nonempty_transcript_at = Some(
-            Instant::now() - AFTER_WORDS_NO_MATCH_DISMISS_AFTER - Duration::from_millis(50),
-        );
+        rt.last_nonempty_transcript_at =
+            Some(Instant::now() - AFTER_WORDS_NO_MATCH_DISMISS_AFTER - Duration::from_millis(50));
         assert!(no_match_idle_should_dismiss(&rt));
         rt.last_nonempty_transcript_at = Some(Instant::now());
         assert!(!no_match_idle_should_dismiss(&rt));
@@ -3556,12 +3173,10 @@ mod tests {
         rt.visible = true;
         rt.phase = HudPhase::Listening;
         rt.nonempty_transcript_this_listen = true;
-        rt.last_nonempty_transcript_at = Some(
-            Instant::now() - AFTER_WORDS_NO_MATCH_DISMISS_AFTER - Duration::from_millis(50),
-        );
-        rt.transcript_revision_changed_at = Some(
-            Instant::now() - AFTER_WORDS_NO_MATCH_DISMISS_AFTER - Duration::from_millis(50),
-        );
+        rt.last_nonempty_transcript_at =
+            Some(Instant::now() - AFTER_WORDS_NO_MATCH_DISMISS_AFTER - Duration::from_millis(50));
+        rt.transcript_revision_changed_at =
+            Some(Instant::now() - AFTER_WORDS_NO_MATCH_DISMISS_AFTER - Duration::from_millis(50));
         rt.last_speech_activity = Some(Instant::now());
         assert!(!no_match_idle_should_dismiss(&rt));
     }
@@ -3575,9 +3190,8 @@ mod tests {
         rt.last_nonempty_transcript_at = Some(Instant::now());
         rt.last_speech_activity =
             Some(Instant::now() - SILENCE_BEFORE_MATCH - Duration::from_millis(1));
-        rt.transcript_revision_changed_at = Some(
-            Instant::now() - AFTER_WORDS_NO_MATCH_DISMISS_AFTER - Duration::from_millis(50),
-        );
+        rt.transcript_revision_changed_at =
+            Some(Instant::now() - AFTER_WORDS_NO_MATCH_DISMISS_AFTER - Duration::from_millis(50));
         assert!(no_match_idle_should_dismiss(&rt));
     }
 
@@ -3586,8 +3200,7 @@ mod tests {
         let mut rt = HudRuntime::default();
         rt.visible = true;
         rt.phase = HudPhase::Listening;
-        rt.listening_started_at =
-            Instant::now() - MAX_LISTEN_DURATION - Duration::from_millis(50);
+        rt.listening_started_at = Instant::now() - MAX_LISTEN_DURATION - Duration::from_millis(50);
         assert!(no_match_idle_should_dismiss(&rt));
     }
 
@@ -3805,22 +3418,21 @@ mod tests {
             .expect("valid tool payload");
         assert_eq!(row.name, "speak_line");
         let id = db::insert_tool(&conn, &row).expect("insert tool");
-        let saved = db::get_tool_by_id(&conn, id)
-            .expect("get")
-            .expect("row");
+        let saved = db::get_tool_by_id(&conn, id).expect("get").expect("row");
         assert_eq!(saved.display_name, "Speak");
-        assert_eq!(saved.actions[0], Action::Speak {
-            text: "{{text}}".into()
-        });
+        assert_eq!(
+            saved.actions[0],
+            Action::Speak {
+                text: "{{text}}".into()
+            }
+        );
 
         let updated_payload = ToolDefinitionPayload {
             name: "speak_line".into(),
             display_name: "Speak Updated".into(),
             description: "Says goodbye".into(),
             parameters: vec![],
-            actions: vec![ActionPayload::Speak {
-                text: "bye".into(),
-            }],
+            actions: vec![ActionPayload::Speak { text: "bye".into() }],
             enabled: false,
             builtin: false,
         };
@@ -3874,10 +3486,7 @@ mod tests {
         use DictationHotkeyMode::{PushToTalk, Toggle};
         use DictationShortcutEffect::{None, Start, Stop, Toggle as ToggleEffect};
 
-        assert_eq!(
-            dictation_shortcut_effect(Toggle, true, false),
-            ToggleEffect
-        );
+        assert_eq!(dictation_shortcut_effect(Toggle, true, false), ToggleEffect);
         assert_eq!(
             dictation_shortcut_effect(Toggle, true, false),
             ToggleEffect,

@@ -17,7 +17,6 @@ import {
   EDITOR_TRANSPARENCY_DEFAULT,
   HUD_TRANSPARENCY_DEFAULT,
   parseThresholdSettingValue,
-  shouldWarmupWhisperGpu,
   validateHotkeyInput,
   scheduleSettingsNoticeAutoDismiss,
   scheduleSettingsNoticeFadeOut,
@@ -86,17 +85,6 @@ type WhisperModelStatusPayload = {
   available: boolean;
 };
 
-type WhisperGpuStatusPayload = {
-  compileBackend: "none" | "vulkan" | "cuda" | "metal" | string;
-  runtimeAvailable: boolean;
-  message: string | null;
-};
-
-type WhisperGpuWarmupPayload = {
-  ready: boolean;
-  message: string;
-};
-
 type SettingsPanelProps = {
   /** Always embedded in the editor shell; accepted so the existing call site compiles. */
   embedded?: boolean;
@@ -136,13 +124,6 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
   const [savingRemoteStt, setSavingRemoteStt] = useState(false);
   const [localWhisperUseGpu, setLocalWhisperUseGpu] = useState(false);
   const [localWhisperModel, setLocalWhisperModel] = useState(DEFAULT_LOCAL_WHISPER_MODEL);
-  const [whisperGpuPreparing, setWhisperGpuPreparing] = useState(false);
-  const [whisperGpuPrepMessage, setWhisperGpuPrepMessage] = useState<string | null>(null);
-  const [whisperGpuStatus, setWhisperGpuStatus] = useState<WhisperGpuStatusPayload>({
-    compileBackend: "none",
-    runtimeAvailable: false,
-    message: "This build was compiled without a Whisper GPU backend.",
-  });
   const [llmRouterTier2Enabled, setLlmRouterTier2Enabled] = useState(false);
   const [llmRouterWarmupOnLaunch, setLlmRouterWarmupOnLaunch] = useState(false);
   const [llmRouterConfidenceThreshold, setLlmRouterConfidenceThreshold] = useState(0.7);
@@ -230,8 +211,7 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
       savedHudTransparency,
       savedEditorTransparency,
       app,
-      gpuStatus,
-      router,
+          router,
     ] = await Promise.all([
         invoke<string | null>("get_setting", { key: HOTKEY_KEY }),
         invoke<string | null>("get_setting", { key: DEFAULT_THRESHOLD_KEY }),
@@ -239,7 +219,6 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
         invoke<string | null>("get_setting", { key: HUD_TRANSPARENCY_KEY }),
         invoke<string | null>("get_setting", { key: EDITOR_TRANSPARENCY_KEY }),
         invoke<AppSettingsPayload>("get_settings"),
-        invoke<WhisperGpuStatusPayload>("whisper_gpu_status"),
         invoke<RouterStatusPayload>("router_status"),
       ]);
     if (savedHotkey && savedHotkey.trim().length > 0) {
@@ -267,8 +246,7 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
     setRemoteSttKeyStored(app.remoteSttKeyStored);
     setLocalWhisperUseGpu(app.localWhisperUseGpu);
     setLocalWhisperModel(normalizeLocalWhisperModel(app.localWhisperModel));
-    setWhisperGpuStatus(gpuStatus);
-    setLlmRouterTier2Enabled(app.llmRouterTier2Enabled);
+      setLlmRouterTier2Enabled(app.llmRouterTier2Enabled);
     setLlmRouterWarmupOnLaunch(app.llmRouterWarmupOnLaunch);
     setLlmRouterConfidenceThreshold(app.llmRouterConfidenceThreshold);
     setLlmRouterModelPath(app.llmRouterModelPath ?? "");
@@ -278,9 +256,6 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
     );
     setDictationHotkeyMode(normalizeDictationHotkeyMode(app.dictationHotkeyMode));
   };
-
-  const whisperGpuCanEnable =
-    whisperGpuStatus.compileBackend !== "none" && whisperGpuStatus.runtimeAvailable;
 
   const routerFeatureCompiled = routerStatus.featureCompiled;
   const routerModelPresent = routerStatus.modelPresent;
@@ -735,52 +710,14 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
   const persistLocalWhisperUseGpu = async (next: boolean) => {
     const prev = localWhisperUseGpu;
     setLocalWhisperUseGpu(next);
-    const shouldWarmup = shouldWarmupWhisperGpu({
-      nextEnabled: next,
-      compileBackend: whisperGpuStatus.compileBackend,
-      runtimeAvailable: whisperGpuStatus.runtimeAvailable,
-    });
-    if (!next) {
-      setWhisperGpuPreparing(false);
-      setWhisperGpuPrepMessage(null);
-    } else if (shouldWarmup) {
-      setWhisperGpuPreparing(true);
-      setWhisperGpuPrepMessage("Preparing Vulkan model...");
-    } else {
-      setWhisperGpuPrepMessage(null);
-    }
     try {
-      const s = await invoke<AppSettingsPayload>("update_settings", {
+      const settings = await invoke<AppSettingsPayload>("update_settings", {
         patch: { localWhisperUseGpu: next },
       });
-      setLocalWhisperUseGpu(s.localWhisperUseGpu);
-      if (shouldWarmup && s.localWhisperUseGpu) {
-        const unlisten = await listen<WhisperGpuWarmupPayload>("whisper-gpu-warmup", (event) => {
-          setWhisperGpuPrepMessage(event.payload.message);
-          showSettingsNotice(event.payload.message);
-          setWhisperGpuPreparing(false);
-          void unlisten();
-        });
-        const warmup = await invoke<WhisperGpuWarmupPayload>("warmup_whisper_gpu");
-        setWhisperGpuPrepMessage(warmup.message);
-        if (warmup.ready) {
-          showSettingsNotice(warmup.message);
-          setWhisperGpuPreparing(false);
-          void unlisten();
-        }
-      } else {
-        showSettingsNotice(
-          next ? "Whisper will use GPU on next listen." : "Whisper will use CPU on next listen.",
-        );
-      }
+      setLocalWhisperUseGpu(settings.localWhisperUseGpu);
     } catch (err) {
       setLocalWhisperUseGpu(prev);
-      showSettingsNotice(formatUserError(err, "Could not save the Whisper GPU option."));
-      setWhisperGpuPrepMessage(null);
-    } finally {
-      if (shouldWarmup) {
-        setWhisperGpuPreparing(false);
-      }
+      showSettingsNotice(formatUserError(err, "Could not save Whisper GPU option."));
     }
   };
 
@@ -1039,33 +976,15 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
                         />
                         <div className="editor-settings-row editor-settings-row--switch">
                           <div className="editor-settings-row-label editor-settings-row-label--stack">
-                            <SettingsLabelWithInfo
-                              id="editor-whisper-gpu-label"
-                              tipId="tip-whisper-gpu"
-                              tip="Runs Whisper on your GPU when this build supports it. Uses CPU if unavailable or turned off."
-                            >
-                              GPU acceleration
-                            </SettingsLabelWithInfo>
-                            {(whisperGpuPreparing ||
-                              whisperGpuPrepMessage ||
-                              !whisperGpuCanEnable) && (
-                              <span
-                                className="editor-settings-switch-meta"
-                                role="status"
-                                aria-live="polite"
-                              >
-                                {whisperGpuPreparing && <EditorSpinner />}
-                                {whisperGpuPreparing
-                                  ? (whisperGpuPrepMessage ?? "Preparing model…")
-                                  : (whisperGpuPrepMessage ??
-                                    whisperGpuStatus.message ??
-                                    (!whisperGpuCanEnable
-                                      ? "No GPU backend in this build"
-                                      : null))}
-                              </span>
-                            )}
-                          </div>
-                          <div className="editor-settings-row-control editor-settings-row-control--switch">
+                          <SettingsLabelWithInfo
+                            id="editor-whisper-gpu-label"
+                            tipId="tip-whisper-gpu"
+                            tip="Use GPU acceleration for local speech recognition when available."
+                          >
+                            GPU acceleration
+                          </SettingsLabelWithInfo>
+                        </div>
+                        <div className="editor-settings-row-control editor-settings-row-control--switch">
                             <button
                               type="button"
                               id="editor-whisper-gpu"
@@ -1073,8 +992,7 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
                               role="switch"
                               aria-labelledby="editor-whisper-gpu-label"
                               aria-checked={localWhisperUseGpu}
-                              disabled={!whisperGpuCanEnable}
-                              onClick={() => void persistLocalWhisperUseGpu(!localWhisperUseGpu)}
+                                              onClick={() => void persistLocalWhisperUseGpu(!localWhisperUseGpu)}
                             >
                               <span className="editor-switch-knob" />
                             </button>

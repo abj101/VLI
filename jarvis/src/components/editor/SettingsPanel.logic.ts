@@ -468,20 +468,6 @@ function keyboardEventKeyToken(e: KeyboardEvent): string {
   return lower;
 }
 
-type WhisperGpuWarmupCheck = {
-  nextEnabled: boolean;
-  compileBackend: string;
-  runtimeAvailable: boolean;
-};
-
-export function shouldWarmupWhisperGpu({
-  nextEnabled,
-  compileBackend,
-  runtimeAvailable,
-}: WhisperGpuWarmupCheck): boolean {
-  return nextEnabled && runtimeAvailable && compileBackend === "vulkan";
-}
-
 export const SETTINGS_NOTICE_AUTO_DISMISS_MS = 10_000;
 export const SETTINGS_NOTICE_FADE_MS = 320;
 

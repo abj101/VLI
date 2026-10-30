@@ -19,7 +19,7 @@ use tauri::{AppHandle, Manager};
 pub const ROUTER_MODEL_FILE: &str = "qwen2.5-0.5b-instruct-q4_k_m.gguf";
 pub const COMPOSER_MODEL_FILE: &str = "qwen2.5-3b-instruct-q4_k_m.gguf";
 /// llama.cpp context init/decode/teardown uses deep native stacks on Windows MSVC.
-pub const ROUTER_LOADER_STACK: usize = crate::gpu_startup::WHISPER_LOADER_STACK;
+pub const ROUTER_LOADER_STACK: usize = crate::gpu_startup::LLM_LOADER_STACK;
 const MAX_GENERATED_TOKENS: i32 = 256;
 const ROUTER_N_CTX: u32 = 2048;
 const COMPOSER_N_CTX: u32 = 4096;

@@ -712,6 +712,7 @@ mod tests {
 
     #[derive(Default)]
     struct MockRuntimeState {
+        opened_apps: Vec<String>,
         statuses: Vec<String>,
         errors: Vec<String>,
     }
@@ -722,7 +723,8 @@ mod tests {
     }
 
     impl ActionRuntime for MockRuntime {
-        fn open_app(&self, _path: &str) -> Result<(), String> {
+        fn open_app(&self, path: &str) -> Result<(), String> {
+            self.state.lock().unwrap().opened_apps.push(path.to_string());
             Ok(())
         }
 
@@ -830,11 +832,9 @@ mod tests {
             exe_path: "GitHubDesktop.exe".into(),
             icon_data_url: None,
         }];
-        let args = HashMap::from([
-            ("target".to_string(), "github".to_string()),
-            ("placement".to_string(), "right_half".to_string()),
-        ]);
+        let args = HashMap::from([("target".to_string(), "github".to_string())]);
         execute_tool(&conn, "open_target", &args, &runtime, Some(index.as_slice())).expect("tool run");
         assert!(runtime.state.lock().unwrap().errors.is_empty());
+        assert_eq!(runtime.state.lock().unwrap().opened_apps, ["GitHubDesktop.exe"]);
     }
 }

@@ -144,7 +144,7 @@ pub struct AppSettings {
     pub remote_stt_model: Option<String>,
     pub remote_stt_timeout_secs: u32,
     pub remote_stt_key_stored: bool,
-    /// When true and the binary includes a GPU backend, local Whisper uses GPU (see `whisper_gpu_compile_supported`).
+    /// When true, ask the whisper-server sidecar to use GPU acceleration.
     pub local_whisper_use_gpu: bool,
     /// On-device Whisper model id: `tiny.en` | `base.en` | `small.en`.
     pub local_whisper_model: String,

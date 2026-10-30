@@ -21,13 +21,8 @@ tauri-build = { version = "2", features = [] }
 # OpenWakeWord wake backend (ONNX via ort).
 default = ["oww", "llm-local"]
 oww = ["dep:ort", "dep:ndarray"]
-# Optional Whisper.cpp GPU backends (requires matching SDK/toolchain when building).
-# Example: `cargo build --features whisper-vulkan` (Vulkan SDK on PATH).
-whisper-vulkan = ["whisper-rs/vulkan"]
-whisper-cuda = ["whisper-rs/cuda"]
-whisper-metal = ["whisper-rs/metal"]
 # On-device LLM tool router (llama.cpp). Example: `cargo build --features llm-local,llm-vulkan`
-# llama-cpp-2 is pinned to the release whose vendored ggml headers match whisper-rs 0.16's (both static; identical ggml ABI).
+# llama-cpp-2 is pinned to a known ggml-compatible release.
 llm-local = ["dep:llama-cpp-2", "dep:encoding_rs"]
 llm-vulkan = ["llm-local", "llama-cpp-2/vulkan"]
 llm-cuda = ["llm-local", "llama-cpp-2/cuda"]
@@ -43,7 +38,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 cpal = "0.15"
-whisper-rs = "0.16"
 log = "0.4"
 env_logger = "0.11"
 rapidfuzz = "0.5.0"
@@ -101,9 +95,6 @@ windows = { version = "0.61", features = [
 [dev-dependencies]
 tempfile = "3"
 
-# Native deps (ggml/whisper.cpp) are slow in Debug; keep app code debuggable.
-[profile.dev.package.whisper-rs-sys]
-opt-level = 3
 
 [profile.dev.package.llama-cpp-sys-2]
 opt-level = 3

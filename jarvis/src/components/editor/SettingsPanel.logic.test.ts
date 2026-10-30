@@ -24,7 +24,6 @@ import {
   scheduleSettingsNoticeFadeOut,
   SETTINGS_NOTICE_AUTO_DISMISS_MS,
   SETTINGS_NOTICE_FADE_MS,
-  shouldWarmupWhisperGpu,
   validateHotkeyInput,
   parseHotkeyChord,
   formatHotkeyKeyLabel,
@@ -331,37 +330,6 @@ describe("SettingsPanel logic", () => {
       metaKey: false,
     } as unknown as KeyboardEvent;
     expect(processHotkeyRecordingKeyDown(backspace, state).action).toEqual({ type: "clear" });
-  });
-
-  it("warms up Vulkan GPU model only when enabling supported Vulkan", () => {
-    expect(
-      shouldWarmupWhisperGpu({
-        nextEnabled: true,
-        compileBackend: "vulkan",
-        runtimeAvailable: true,
-      }),
-    ).toBe(true);
-    expect(
-      shouldWarmupWhisperGpu({
-        nextEnabled: false,
-        compileBackend: "vulkan",
-        runtimeAvailable: true,
-      }),
-    ).toBe(false);
-    expect(
-      shouldWarmupWhisperGpu({
-        nextEnabled: true,
-        compileBackend: "cuda",
-        runtimeAvailable: true,
-      }),
-    ).toBe(false);
-    expect(
-      shouldWarmupWhisperGpu({
-        nextEnabled: true,
-        compileBackend: "vulkan",
-        runtimeAvailable: false,
-      }),
-    ).toBe(false);
   });
 
   it("auto-dismisses settings notices after 10 seconds", () => {
