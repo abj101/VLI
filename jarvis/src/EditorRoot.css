@@ -56,7 +56,6 @@ html[data-theme="light"] {
 html[data-theme] {
   --editor-bg: var(--color-bg-app);
   --editor-text: var(--color-text-primary);
-  --editor-panel: var(--color-surface-main);
   --editor-border: color-mix(in oklch, var(--color-divider) 72%, white);
   --editor-header-border: color-mix(in oklch, var(--color-divider) 78%, white);
   --editor-control-bg: color-mix(in oklch, var(--color-surface-elevated) 90%, white);
@@ -64,16 +63,9 @@ html[data-theme] {
   --editor-control-text: var(--color-text-primary);
   --editor-label-muted: var(--color-text-secondary);
   --editor-muted: color-mix(in oklch, var(--color-text-secondary) 86%, black);
-  --editor-surface-row: oklch(1 0 0 / 0.03);
-  --editor-surface-row-border: color-mix(in oklch, var(--color-divider) 82%, white);
-  --editor-node-name: var(--color-text-primary);
-  --editor-node-trigger: var(--color-text-secondary);
   --editor-focus-ring: var(--color-accent-hex);
   --editor-accent: var(--color-accent-hex);
   --editor-input-text: var(--color-text-primary);
-  --editor-danger-border: color-mix(in oklch, var(--color-divider) 88%, white);
-  --editor-danger-bg: color-mix(in oklch, var(--color-surface-elevated) 84%, white);
-  --editor-danger-text: color-mix(in oklch, var(--color-text-primary) 94%, black);
   --editor-control-on-border: color-mix(in oklch, var(--color-text-primary) 28%, var(--color-divider));
   --editor-control-on-bg: color-mix(in oklch, var(--color-text-primary) 76%, var(--color-surface-elevated));
   --editor-control-on-knob: var(--color-surface-main);
@@ -90,28 +82,16 @@ html[data-theme] {
   --editor-control-pad-inline-btn: 14px;
   --editor-control-pad-block: calc((var(--editor-control-size) - 2px - 1em * var(--editor-control-leading)) / 2);
   --editor-dropdown-min-width: 11rem;
-  --editor-tag-border: color-mix(in oklch, var(--color-divider) 88%, white);
-  --editor-tag-bg: color-mix(in oklch, var(--color-surface-elevated) 90%, white);
-  --editor-tag-fg: color-mix(in oklch, var(--color-text-primary) 90%, black);
-  --editor-chain-bg: oklch(1 0 0 / 0.02);
-  --editor-chain-border: color-mix(in oklch, var(--color-divider) 84%, white);
-  --editor-subprompt-border: color-mix(in oklch, var(--color-divider) 84%, white);
-  --editor-placeholder-text: color-mix(in oklch, var(--color-text-secondary) 78%, black);
   --editor-toast-error-border: color-mix(in oklch, var(--color-divider) 88%, white);
   --editor-toast-error-bg: color-mix(in oklch, var(--color-surface-elevated) 84%, white);
   --editor-toast-error-text: color-mix(in oklch, var(--color-text-primary) 94%, black);
   --editor-empty-muted: color-mix(in oklch, var(--color-text-secondary) 86%, black);
   --editor-settings-border: color-mix(in oklch, var(--color-divider) 88%, white);
   --editor-settings-pane-bg: color-mix(in oklch, var(--color-surface-main) 94%, transparent);
-  --editor-settings-nav-bg: color-mix(in oklch, var(--color-surface-sidebar) 92%, transparent);
   --editor-settings-help: color-mix(in oklch, var(--color-text-secondary) 90%, black);
   --editor-settings-heading: var(--color-text-primary);
-  --editor-settings-checkbox: color-mix(in oklch, var(--color-text-primary) 92%, black);
   --editor-error-text: color-mix(in oklch, var(--color-text-secondary) 82%, black);
-  --editor-backdrop: rgb(0 0 0 / 18%);
-  --editor-sidebar-tint: color-mix(in oklch, var(--color-surface-sidebar) 90%, transparent);
   --editor-accent-soft: color-mix(in oklch, var(--color-accent) 20%, transparent);
-  --editor-accent-soft-solid: var(--color-accent);
   --editor-scrollbar-thumb: color-mix(in oklch, var(--color-text-secondary) 40%, transparent);
   --editor-scrollbar-thumb-hover: color-mix(in oklch, var(--color-text-secondary) 52%, transparent);
   --editor-scrollbar-thumb-active: color-mix(in oklch, var(--color-text-secondary) 64%, transparent);
@@ -123,30 +103,14 @@ html[data-theme="dark"] {
   --editor-control-bg: color-mix(in oklch, var(--color-surface-elevated) 90%, transparent);
   --editor-control-border: color-mix(in oklch, var(--color-divider) 76%, transparent);
   --editor-muted: var(--color-text-secondary);
-  --editor-surface-row: color-mix(in oklch, var(--color-surface-elevated) 74%, transparent);
-  --editor-surface-row-border: color-mix(in oklch, var(--color-divider) 72%, transparent);
-  --editor-danger-border: color-mix(in oklch, var(--color-divider) 70%, transparent);
-  --editor-danger-bg: color-mix(in oklch, var(--color-surface-elevated) 82%, transparent);
-  --editor-danger-text: var(--color-text-primary);
-  --editor-tag-border: color-mix(in oklch, var(--color-divider) 72%, transparent);
-  --editor-tag-bg: color-mix(in oklch, var(--color-surface-elevated) 82%, transparent);
-  --editor-tag-fg: var(--color-text-primary);
-  --editor-chain-bg: color-mix(in oklch, var(--color-surface-elevated) 68%, transparent);
-  --editor-chain-border: color-mix(in oklch, var(--color-divider) 72%, transparent);
-  --editor-subprompt-border: color-mix(in oklch, var(--color-divider) 72%, transparent);
-  --editor-placeholder-text: color-mix(in oklch, var(--color-text-secondary) 88%, transparent);
   --editor-toast-error-border: color-mix(in oklch, var(--color-divider) 74%, transparent);
   --editor-toast-error-bg: color-mix(in oklch, var(--color-surface-elevated) 84%, transparent);
   --editor-toast-error-text: var(--color-text-primary);
   --editor-empty-muted: color-mix(in oklch, var(--color-text-secondary) 92%, transparent);
   --editor-settings-border: color-mix(in oklch, var(--color-divider) 76%, transparent);
   --editor-settings-pane-bg: color-mix(in oklch, var(--color-surface-main) 94%, transparent);
-  --editor-settings-nav-bg: color-mix(in oklch, var(--color-surface-sidebar) 90%, transparent);
   --editor-settings-help: var(--color-text-secondary);
-  --editor-settings-checkbox: var(--color-text-primary);
   --editor-error-text: color-mix(in oklch, var(--color-text-secondary) 90%, transparent);
-  --editor-backdrop: rgb(0 0 0 / 24%);
-  --editor-sidebar-tint: color-mix(in oklch, var(--color-surface-sidebar) 92%, transparent);
   --editor-accent-soft: color-mix(in oklch, var(--color-accent) 28%, transparent);
   --editor-scrollbar-thumb: color-mix(in oklch, var(--color-text-secondary) 48%, transparent);
   --editor-scrollbar-thumb-hover: color-mix(in oklch, var(--color-text-secondary) 60%, transparent);
@@ -156,14 +120,12 @@ html[data-theme="dark"] {
 @media (prefers-contrast: more) {
   html[data-theme="dark"] {
     --editor-border: #6b6b6b;
-    --editor-surface-row-border: #6b6b6b;
     --editor-control-border: #6b6b6b;
     --editor-settings-border: #6b6b6b;
   }
 
   html[data-theme="light"] {
     --editor-border: #525252;
-    --editor-surface-row-border: #525252;
     --editor-control-border: #525252;
     --editor-settings-border: #525252;
   }
@@ -177,12 +139,9 @@ html[data-theme="dark"] {
     box-shadow: none;
   }
 
-  .editor-glass-panel,
   .editor-app-shell,
   .editor-window-chrome,
-  .editor-node-menu,
   .editor-formula-suggest,
-  .editor-settings-panel,
   .editor-settings-embedded {
     background: var(--glass-surface);
     backdrop-filter: none;
@@ -199,9 +158,6 @@ html[data-theme="dark"] {
     border-color: var(--glass-border-side);
   }
 
-  .editor-form-grid :is(input, textarea),
-  .editor-action-card :is(input, textarea),
-  .editor-subprompt-panel :is(input, textarea),
   .editor-settings-section :is(input, textarea),
   .editor-formula-input,
   .editor-composer-input,
@@ -224,21 +180,12 @@ html[data-theme="dark"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .editor-node-drag-handle {
-    transition: none;
-  }
 
-  .editor-settings-panel,
-  .editor-node-menu,
   .editor-formula-suggest {
     animation: none;
   }
 
-  .editor-form-grid label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]),
-  .editor-action-card label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]),
-  .editor-subprompt-panel label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]),
   .editor-settings-section label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not(.editor-settings-hotkey-input),
-  .editor-trigger-row > input,
   .editor-settings-inline > input:not(.editor-settings-hotkey-input),
   .editor-formula-input--phrase,
   .editor-formula-input--kind,
@@ -555,57 +502,6 @@ html[data-theme="dark"] .editor-app-sidebar {
   background: transparent;
 }
 
-.editor-glass-panel {
-  color: var(--editor-text);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in oklch, var(--glass-specular-sheen) 100%, transparent) 0%,
-      transparent 35%
-    ),
-    linear-gradient(
-      180deg,
-      color-mix(in oklch, var(--glass-surface) 22%, transparent) 0%,
-      transparent 40%
-    ),
-    color-mix(in oklch, var(--glass-surface) var(--glass-1-fill), transparent);
-  backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
-    brightness(var(--glass-1-brightness));
-  -webkit-backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
-    brightness(var(--glass-1-brightness));
-  box-shadow:
-    var(--glass-shadow-ambient),
-    inset 0 1px 0 var(--glass-border-top),
-    inset 1px 0 0 var(--glass-rim-side),
-    inset -1px 0 0 var(--glass-rim-side),
-    inset 0 -1px 0 oklch(0 0 0 / 0.04);
-  border: 1px solid var(--glass-border-side);
-  border-radius: var(--radius-large);
-  isolation: isolate;
-}
-
-.editor-panel {
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.editor-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 12px;
-  border-bottom: 1px solid var(--editor-header-border);
-}
-
-.editor-panel-header h2 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-}
-
 /* Unified text action buttons — one shape, weight, and radius everywhere */
 .editor-btn {
   box-sizing: border-box;
@@ -650,39 +546,10 @@ html[data-theme="dark"] .editor-app-sidebar {
   background: color-mix(in oklch, var(--editor-btn-primary-bg) 88%, var(--editor-text));
 }
 
-.editor-add-btn,
-.editor-empty-add,
-.editor-delete-btn,
-.editor-toggle,
 .editor-caption-btn,
-.editor-node-more-btn,
 .editor-command-draft-actions .editor-command-draft-icon-btn,
 .editor-command-delete-confirm .editor-command-draft-icon-btn {
   line-height: 1;
-}
-
-.editor-add-btn,
-.editor-empty-add,
-.editor-delete-btn,
-.editor-toggle {
-  border: 1px solid var(--editor-control-border);
-  background: var(--editor-control-bg);
-  color: var(--editor-control-text);
-  border-radius: var(--radius-control);
-  cursor: pointer;
-}
-
-.editor-add-btn {
-  box-sizing: border-box;
-  min-width: 44px;
-  min-height: 44px;
-  width: 44px;
-  height: 44px;
-  font-size: 22px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .editor-inline-toast {
@@ -693,273 +560,6 @@ html[data-theme="dark"] .editor-app-sidebar {
   border-radius: var(--radius-control);
   padding: 8px 10px;
   font-size: 12px;
-}
-
-.editor-empty-state {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 14px;
-  color: var(--editor-empty-muted);
-}
-
-.editor-empty-state p {
-  margin: 0;
-}
-
-.editor-empty-add {
-  width: 56px;
-  height: 56px;
-  min-width: 56px;
-  min-height: 56px;
-  font-size: 32px;
-  line-height: 1;
-  border-radius: var(--radius-medium);
-}
-
-.editor-node-list {
-  list-style: none;
-  padding: 10px 12px 12px;
-  margin: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.editor-node-row {
-  width: 100%;
-  display: flex;
-  align-items: stretch;
-  justify-content: space-between;
-  gap: 8px;
-  border: 1px solid var(--editor-surface-row-border);
-  border-radius: var(--radius-medium);
-  background: var(--editor-surface-row);
-  padding: 8px 10px;
-}
-
-.editor-node-row.is-selected {
-  border-color: var(--editor-accent);
-  box-shadow: 0 0 0 1px var(--editor-accent) inset;
-}
-
-.editor-node-select {
-  flex: 1;
-  min-width: 0;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  border-radius: 8px;
-  display: block;
-}
-
-.editor-node-main {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.editor-node-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--editor-node-name);
-}
-
-.editor-node-trigger {
-  font-size: 12px;
-  color: var(--editor-node-trigger);
-}
-
-.editor-node-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.editor-node-menu-wrap {
-  position: relative;
-  flex-shrink: 0;
-}
-
-.editor-node-more-btn {
-  box-sizing: border-box;
-  min-width: 40px;
-  min-height: 40px;
-  padding: 0 8px;
-  border: 1px solid var(--editor-control-border);
-  background: var(--editor-control-bg);
-  color: var(--editor-control-text);
-  border-radius: var(--radius-control);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  letter-spacing: 0.06em;
-}
-
-.editor-node-menu {
-  list-style: none;
-  margin: 0;
-  padding: 6px;
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  min-width: 188px;
-  z-index: 40;
-  border-radius: var(--radius-medium);
-  border: 1px solid var(--editor-control-border);
-  background: var(--editor-control-bg);
-  backdrop-filter: blur(var(--glass-2-blur)) saturate(var(--glass-2-saturate))
-    brightness(var(--glass-2-brightness));
-  -webkit-backdrop-filter: blur(var(--glass-2-blur)) saturate(var(--glass-2-saturate))
-    brightness(var(--glass-2-brightness));
-  box-shadow:
-    var(--glass-shadow-menu),
-    inset 0 1px 0 color-mix(in oklch, var(--color-surface-main) 65%, transparent);
-  animation: glass-menu-appear 180ms cubic-bezier(0.25, 0.1, 0.25, 1) both;
-}
-
-html[data-theme="dark"] .editor-node-menu {
-  box-shadow:
-    var(--glass-shadow-menu),
-    inset 0 1px 0 color-mix(in oklch, var(--glass-text) 8%, transparent);
-}
-
-.editor-node-menu-item {
-  display: block;
-  width: 100%;
-  padding: 9px 10px;
-  border: none;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--editor-text);
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.editor-node-menu-item:hover {
-  background: var(--editor-btn-active-bg);
-}
-
-.editor-node-menu-item--danger {
-  color: var(--editor-error-text);
-}
-
-.editor-node-menu-sep {
-  height: 1px;
-  margin: 6px 4px;
-  padding: 0;
-  list-style: none;
-  background: var(--editor-header-border);
-  border: none;
-}
-
-.editor-node-drag-handle {
-  visibility: hidden;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.editor-node-row:hover .editor-node-drag-handle,
-.editor-node-row:focus-within .editor-node-drag-handle {
-  visibility: visible;
-  opacity: 1;
-}
-
-.editor-toggle,
-.editor-delete-btn,
-.editor-move-btn,
-.editor-drag-handle {
-  min-height: var(--editor-control-size);
-  min-width: var(--editor-control-size);
-  padding: 0 var(--editor-control-pad-inline);
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  font-weight: 400;
-}
-
-.editor-toggle,
-.editor-delete-btn {
-  font-size: 11px;
-  min-width: 44px;
-}
-
-.editor-toggle.is-on {
-  border-color: var(--editor-toggle-on-border);
-  background: var(--editor-toggle-on-bg);
-}
-
-.editor-delete-btn {
-  border-color: var(--editor-danger-border);
-  background: var(--editor-danger-bg);
-  color: var(--editor-danger-text);
-}
-
-.editor-form-placeholder {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  color: var(--editor-placeholder-text);
-  padding: 12px;
-}
-
-.editor-form-scroll {
-  flex: 1;
-  overflow: auto;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.editor-form-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.editor-form-grid label,
-.editor-action-card label,
-.editor-subprompt-panel label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--editor-label-muted);
-}
-
-.editor-form-grid input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]),
-.editor-action-card input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]),
-.editor-subprompt-panel input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]) {
-  box-sizing: border-box;
-  border: 1px solid color-mix(in oklch, var(--glass-text) 14%, transparent);
-  background: color-mix(in oklch, var(--glass-surface) 35%, transparent);
-  color: var(--editor-input-text);
-  border-radius: var(--radius-control);
-  min-height: var(--editor-control-size);
-  padding-block: var(--editor-control-pad-block);
-  padding-inline: var(--editor-control-pad-inline);
-  font-size: var(--editor-control-font-size);
-  line-height: var(--editor-control-leading);
-  text-align: center;
-  appearance: none;
-  -webkit-appearance: none;
-  box-shadow: inset 0 1px 3px oklch(0 0 0 / 0.08);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
 }
 
 /* Custom dropdown (EditorSelect): trigger matches control tokens; list is portaled — not OS native. */
@@ -1131,15 +731,6 @@ html[data-theme="dark"] .editor-select-wrap--formula .editor-select-trigger.is-o
     0 0 0 2px color-mix(in oklch, var(--color-accent) 22%, transparent);
 }
 
-.editor-form-grid .editor-select-trigger,
-.editor-action-card .editor-select-trigger,
-.editor-subprompt-panel .editor-select-trigger {
-  width: 100%;
-}
-
-.editor-form-grid :is(input:not([type="range"]), textarea):focus,
-.editor-action-card :is(input:not([type="range"]), textarea):focus,
-.editor-subprompt-panel :is(input:not([type="range"]), textarea):focus,
 .editor-settings-section :is(input:not([type="range"]), textarea):focus {
   border-color: color-mix(in oklch, var(--glass-text) 30%, transparent);
   box-shadow:
@@ -1153,20 +744,11 @@ html[data-theme="dark"] .editor-select-wrap--formula .editor-select-trigger.is-o
 }
 
 /* EditorSelect trigger: single accent ring (avoid outline + shadow double stroke) */
-.editor-form-grid .editor-select-trigger:focus,
-.editor-action-card .editor-select-trigger:focus,
-.editor-subprompt-panel .editor-select-trigger:focus,
 .editor-settings-section .editor-select-trigger:focus {
   outline: none;
 }
 
-.editor-form-grid .editor-select-trigger:focus-visible,
-.editor-action-card .editor-select-trigger:focus-visible,
-.editor-subprompt-panel .editor-select-trigger:focus-visible,
 .editor-settings-section .editor-select-trigger:focus-visible,
-.editor-form-grid .editor-select-trigger.is-open,
-.editor-action-card .editor-select-trigger.is-open,
-.editor-subprompt-panel .editor-select-trigger.is-open,
 .editor-settings-section .editor-select-trigger.is-open {
   border-color: color-mix(in oklch, var(--color-accent) 38%, var(--editor-control-border));
   box-shadow:
@@ -1174,13 +756,7 @@ html[data-theme="dark"] .editor-select-wrap--formula .editor-select-trigger.is-o
     0 0 0 2px color-mix(in oklch, var(--color-accent) 22%, transparent);
 }
 
-html[data-theme="dark"] .editor-form-grid .editor-select-trigger:focus-visible,
-html[data-theme="dark"] .editor-action-card .editor-select-trigger:focus-visible,
-html[data-theme="dark"] .editor-subprompt-panel .editor-select-trigger:focus-visible,
 html[data-theme="dark"] .editor-settings-section .editor-select-trigger:focus-visible,
-html[data-theme="dark"] .editor-form-grid .editor-select-trigger.is-open,
-html[data-theme="dark"] .editor-action-card .editor-select-trigger.is-open,
-html[data-theme="dark"] .editor-subprompt-panel .editor-select-trigger.is-open,
 html[data-theme="dark"] .editor-settings-section .editor-select-trigger.is-open {
   box-shadow:
     inset 0 1px 0 color-mix(in oklch, var(--glass-text) 6%, transparent),
@@ -1279,11 +855,7 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
 }
 
 /* Form labels: text inputs hug content when blurred; full width when focused. Selects stay full-width. */
-.editor-form-grid label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]),
-.editor-action-card label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]),
-.editor-subprompt-panel label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]),
 .editor-settings-section label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not(.editor-settings-hotkey-input),
-.editor-trigger-row > input,
 .editor-settings-inline > input:not(.editor-settings-hotkey-input),
 .editor-formula-input--phrase,
 .editor-formula-input--kind,
@@ -1297,9 +869,6 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
     flex-basis var(--editor-input-grow-duration) var(--editor-input-grow-ease);
 }
 
-.editor-form-grid label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not(:focus),
-.editor-action-card label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not(:focus),
-.editor-subprompt-panel label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not(:focus),
 .editor-settings-section label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not(.editor-settings-hotkey-input):not(:focus) {
   field-sizing: content;
   width: 100%;
@@ -1308,213 +877,19 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   align-self: flex-start;
 }
 
-.editor-form-grid label > .editor-select-wrap,
-.editor-action-card label > .editor-select-wrap,
-.editor-subprompt-panel label > .editor-select-wrap,
 .editor-settings-section label > .editor-select-wrap {
   align-self: stretch;
   width: 100%;
 }
 
-.editor-form-grid label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):focus,
-.editor-action-card label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):focus,
-.editor-subprompt-panel label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):focus,
 .editor-settings-section label > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not(.editor-settings-hotkey-input):focus {
   max-width: 100%;
-}
-
-.editor-trigger-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
-  align-items: center;
-}
-
-.editor-trigger-row > input:not(:focus) {
-  field-sizing: content;
-  width: 100%;
-  max-width: fit-content;
-  min-width: 0;
-  justify-self: start;
-}
-
-.editor-trigger-row > input:focus {
-  max-width: 100%;
-}
-
-.editor-move-btn,
-.editor-drag-handle {
-  border: 1px solid var(--editor-control-border);
-  background: var(--editor-control-bg);
-  color: var(--editor-control-text);
-  border-radius: var(--radius-control);
-  cursor: pointer;
-}
-
-.editor-tag-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.editor-tag {
-  border: 1px solid var(--editor-tag-border);
-  background: var(--editor-tag-bg);
-  color: var(--editor-tag-fg);
-  border-radius: var(--radius-control);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: fit-content;
-  max-width: 100%;
-  min-width: 110px;
-  font-size: 11px;
-  font-weight: 400;
-  line-height: var(--editor-control-leading);
-  text-align: left;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  padding: 0 var(--editor-control-pad-inline);
-  cursor: pointer;
-  min-height: var(--editor-control-size);
-  height: var(--editor-control-size);
-}
-
-.editor-tag-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  text-align: left;
-}
-
-.editor-tag-close-x {
-  display: block;
-  flex-shrink: 0;
-  width: 11px;
-  height: 11px;
-  opacity: 0.88;
-}
-
-.editor-checkbox-row {
-  flex-direction: row !important;
-  align-items: center;
-}
-
-.editor-action-chain {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.editor-chain-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.editor-chain-header h3,
-.editor-subprompt-panel h3 {
-  margin: 0;
-  font-size: 13px;
-}
-
-.editor-chain-empty {
-  margin: 0;
-  color: var(--editor-muted);
-  font-size: 12px;
-}
-
-.editor-chain-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.editor-chain-row {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 8px;
-  border: 1px solid var(--editor-chain-border);
-  border-radius: var(--radius-medium);
-  background: var(--editor-chain-bg);
-  padding: 8px;
-}
-
-.editor-chain-row-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.editor-drag-handle {
-  cursor: grab;
-  font-size: 18px;
-  line-height: 1;
-  padding: 2px 8px;
-}
-
-.editor-chain-row-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.editor-action-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.editor-action-card-top {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: flex-end;
-}
-
-.editor-form-grid-two {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.editor-subprompt-panel {
-  border: 1px solid var(--editor-subprompt-border);
-  border-radius: var(--radius-medium);
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
 }
 
 .editor-field-error {
   margin: 0;
   color: var(--editor-error-text);
   font-size: 12px;
-}
-
-.editor-form-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--editor-header-border);
-}
-
-.editor-form-actions .editor-btn {
-  min-width: 72px;
-}
-
-.editor-settings-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 19;
-  background: var(--editor-backdrop);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }
 
 @keyframes glass-appear {
@@ -1544,58 +919,6 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   }
 }
 
-.editor-settings-panel {
-  position: fixed;
-  top: 12px;
-  right: 12px;
-  width: min(640px, calc(100vw - 24px));
-  max-height: calc(100vh - 24px);
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-  z-index: 20;
-  overflow: hidden;
-  color: var(--editor-text);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in oklch, var(--glass-specular-sheen) 100%, transparent) 0%,
-      transparent 35%
-    ),
-    linear-gradient(
-      180deg,
-      color-mix(in oklch, var(--glass-surface) 22%, transparent) 0%,
-      transparent 40%
-    ),
-    color-mix(in oklch, var(--glass-surface) var(--glass-1-fill), transparent);
-  backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
-    brightness(var(--glass-1-brightness));
-  -webkit-backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate))
-    brightness(var(--glass-1-brightness));
-  box-shadow:
-    var(--glass-shadow-ambient),
-    inset 0 1px 0 var(--glass-border-top),
-    inset 1px 0 0 var(--glass-rim-side),
-    inset -1px 0 0 var(--glass-rim-side),
-    inset 0 -1px 0 oklch(0 0 0 / 0.04);
-  border: 1px solid var(--glass-border-side);
-  border-radius: var(--editor-shell-radius);
-  corner-shape: superellipse;
-  isolation: isolate;
-  animation: glass-appear 220ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
-}
-
-.editor-settings-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-shrink: 0;
-  padding: 10px 12px;
-  gap: 8px;
-  border-bottom: 1px solid var(--editor-header-border);
-}
-
-.editor-settings-header h2,
 .editor-settings-section h3 {
   margin: 0;
   font-size: 14px;
@@ -1613,37 +936,6 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   flex: 1;
   min-height: 0;
   flex-direction: row;
-}
-
-.editor-settings-nav {
-  flex: 0 0 168px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px;
-  border-right: 1px solid var(--editor-header-border);
-  background: var(--editor-settings-nav-bg);
-}
-
-.editor-settings-nav-btn {
-  width: 100%;
-  padding: 8px 10px;
-  border: none;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--editor-text);
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.editor-settings-nav-btn:hover {
-  background: color-mix(in oklch, var(--editor-control-bg) 55%, transparent);
-}
-
-.editor-settings-nav-btn.is-active {
-  background: var(--editor-btn-active-bg);
-  font-weight: 600;
 }
 
 .editor-settings-pane {
@@ -2394,31 +1686,11 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
 }
 
 @media (max-width: 520px) {
-  .editor-settings-panel {
-    width: calc(100vw - 16px);
-    right: 8px;
-    top: 8px;
-    max-height: calc(100vh - 16px);
-  }
 
   .editor-settings-body {
     flex-direction: column;
   }
 
-  .editor-settings-nav {
-    flex: 0 0 auto;
-    flex-direction: row;
-    flex-wrap: wrap;
-    border-right: none;
-    border-bottom: 1px solid var(--editor-header-border);
-  }
-
-  .editor-settings-nav-btn {
-    width: auto;
-    flex: 1 1 auto;
-    min-width: min(120px, 44%);
-    text-align: center;
-  }
 }
 
 .editor-settings-section {
@@ -2434,8 +1706,7 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   align-items: center;
 }
 
-.editor-settings-inline > .editor-btn,
-.editor-trigger-row > .editor-btn {
+.editor-settings-inline > .editor-btn {
   align-self: center;
 }
 
@@ -2462,13 +1733,6 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   color: var(--editor-settings-help);
 }
 
-.editor-settings-gpu-status {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 20px;
-}
-
 /* Shared ring spinner — use via EditorSpinner (.editor-spinner). */
 .editor-spinner {
   width: 14px;
@@ -2491,28 +1755,6 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   to {
     transform: rotate(360deg);
   }
-}
-
-.editor-settings-checkbox-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--editor-settings-checkbox);
-}
-
-.editor-settings-checkbox-row input {
-  margin-top: 3px;
-}
-
-.editor-settings-code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
-    monospace;
-  font-size: 11px;
-}
-
-.editor-settings-header .editor-btn {
-  min-width: 72px;
 }
 
 .editor-settings-inline--actions {
@@ -2599,10 +1841,6 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
 
 .editor-settings-embedded .editor-settings-body {
   border-right: none;
-}
-
-.editor-settings-embedded .editor-settings-nav {
-  display: none;
 }
 
 /* --- Commands tab (formula rows) --- */
@@ -2804,10 +2042,6 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   background: color-mix(in oklch, var(--editor-control-bg) 26%, transparent);
 }
 
-.editor-command-card.is-expanded {
-  background: color-mix(in oklch, var(--editor-control-bg) 18%, transparent);
-}
-
 .editor-command-formula {
   display: grid;
   grid-template-columns: minmax(0, max-content) auto minmax(0, 1fr) auto;
@@ -2985,25 +2219,6 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
 .editor-formula-input--autogrow {
   width: auto;
   field-sizing: content;
-}
-
-.editor-formula-confirmed-chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-  min-width: var(--editor-control-size);
-  padding-left: 8px;
-  padding-right: 8px;
-}
-
-.editor-formula-suggest-btn--icon-only {
-  justify-content: center;
-  padding: 6px 8px;
-}
-
-.editor-formula-suggest-app--icon-only {
-  justify-content: center;
 }
 
 .editor-formula-input--narrow:not(:focus) {
@@ -3710,30 +2925,6 @@ html[data-theme="dark"] .editor-formula-suggest {
   .editor-command-delete-confirm__pending {
     transition: none;
   }
-}
-
-.editor-expand-chevron {
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--editor-control-size);
-  min-height: var(--editor-control-size);
-  border-radius: var(--radius-control);
-  border: 1px solid var(--editor-control-border);
-  background: var(--editor-control-bg);
-  color: var(--editor-control-text);
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-}
-
-.editor-command-advanced {
-  border-top: 1px solid var(--editor-header-border);
-  padding-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
 .editor-command-row-toast {

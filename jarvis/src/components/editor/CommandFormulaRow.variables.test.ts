@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FormActionPayload } from "../../types";
-import { deriveFollowUpVariableMap, deriveFormulaVariableLabels, extractVariableTokenContext } from "./CommandFormulaRow";
+import { deriveFollowUpVariableMap, deriveFormulaVariableLabels, extractVariableTokenContext } from "./formulaRow.logic";
 
 describe("CommandFormulaRow variable helpers", () => {
   it("numbers follow-up variables in action order for one row", () => {

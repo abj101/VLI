@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from "react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   applyEditorThemeToDocument,
   applyEditorTransparencyToDocument,
@@ -34,7 +33,7 @@ import {
   type LocalWhisperModelId,
 } from "../editor/SettingsPanel.logic";
 import { formatUserError } from "../../utils/userErrors";
-import { EDITOR_SETTINGS_NAV, type EditorSettingsNavId } from "./settingsNav";
+import type { EditorSettingsNavId } from "./settingsNav";
 import { AppIndexPane } from "./AppIndexPane";
 import { WhisperModelsPane } from "./WhisperModelsPane";
 import { HotkeyChordDisplay } from "./HotkeyChordDisplay";
@@ -47,8 +46,6 @@ const THEME_KEY = "theme";
 const HUD_TRANSPARENCY_KEY = "hud_transparency";
 const EDITOR_TRANSPARENCY_KEY = "editor_transparency";
 const DEFAULT_THRESHOLD_KEY = "default_fuzzy_threshold_pct";
-export type { EditorSettingsNavId } from "./settingsNav";
-export { EDITOR_SETTINGS_NAV } from "./settingsNav";
 
 type AppSettingsPayload = {
   wakeEngine: string;
@@ -100,30 +97,14 @@ type WhisperGpuWarmupPayload = {
   message: string;
 };
 
-function settingsFocusables(root: HTMLElement): HTMLElement[] {
-  const sel =
-    "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])";
-  return Array.from(root.querySelectorAll<HTMLElement>(sel)).filter((el) => {
-    const style = window.getComputedStyle(el);
-    return style.visibility !== "hidden" && style.display !== "none";
-  });
-}
-
 type SettingsPanelProps = {
-  onClose?: () => void;
-  returnFocusRef?: RefObject<HTMLElement | null>;
-  /** When set, panel is embedded in the editor main column (no overlay chrome). */
+  /** Always embedded in the editor shell; accepted so the existing call site compiles. */
   embedded?: boolean;
-  /** Which pane to show when `embedded` is true (controlled by parent sidebar). */
+  /** Pane to show, controlled by the editor sidebar. */
   activeNav?: EditorSettingsNavId;
 };
 
-export function SettingsPanel({
-  onClose,
-  returnFocusRef,
-  embedded = false,
-  activeNav,
-}: SettingsPanelProps) {
+export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProps) {
   const [loading, setLoading] = useState(true);
   const [hotkey, setHotkey] = useState("ctrl+shift+j");
   const [threshold, setThreshold] = useState(0.8);
@@ -179,14 +160,10 @@ export function SettingsPanel({
     message: "LLM router is not available in this build.",
   });
 
-  const panelRef = useRef<HTMLElement | null>(null);
   const hotkeyRecordingStateRef = useRef<HotkeyRecordingState>(createHotkeyRecordingState());
   const hotkeyBeforeRecordingRef = useRef<string | null>(null);
   const dictationHotkeyRecordingStateRef = useRef<HotkeyRecordingState>(createHotkeyRecordingState());
   const dictationHotkeyBeforeRecordingRef = useRef<string | null>(null);
-  const hotkeysNavRef = useRef<HTMLButtonElement>(null);
-  const [internalNav, setInternalNav] = useState<EditorSettingsNavId>("hotkeys");
-  const pane = embedded && activeNav != null ? activeNav : internalNav;
 
   const [noticeText, setNoticeText] = useState<string | null>(null);
   const [noticePhase, setNoticePhase] = useState<SettingsNoticePhase>("hidden");
@@ -244,12 +221,6 @@ export function SettingsPanel({
       dismissNotice();
     }
   }, [pane, dismissNotice]);
-
-  useEffect(() => {
-    if (embedded && activeNav) {
-      setInternalNav(activeNav);
-    }
-  }, [embedded, activeNav]);
 
   const refreshFromBackend = async () => {
     const [
@@ -342,25 +313,6 @@ export function SettingsPanel({
       mounted = false;
     };
   }, []);
-
-  useLayoutEffect(() => {
-    if (loading || embedded) return;
-    hotkeysNavRef.current?.focus();
-  }, [loading, embedded]);
-
-  useEffect(() => {
-    if (!onClose || embedded) return;
-    const onKey = (ev: Event) => {
-      const e = ev as KeyboardEvent;
-      if (hotkeyRecording || dictationHotkeyRecording) return;
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, embedded, hotkeyRecording, dictationHotkeyRecording]);
 
   useEffect(() => {
     void invoke("set_hotkey_recording", {
@@ -479,28 +431,6 @@ export function SettingsPanel({
       window.removeEventListener("keyup", onKeyUp, true);
     };
   }, [dictationHotkeyRecording, cancelDictationHotkeyRecording]);
-
-  useEffect(() => {
-    const focusTarget = returnFocusRef?.current ?? null;
-    return () => {
-      focusTarget?.focus();
-    };
-  }, [returnFocusRef]);
-
-  const onPanelKeyDown = (e: ReactKeyboardEvent<HTMLElement>) => {
-    if (embedded || e.key !== "Tab" || !panelRef.current) return;
-    const nodes = settingsFocusables(panelRef.current);
-    if (nodes.length === 0) return;
-    const first = nodes[0];
-    const last = nodes[nodes.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
 
   const saveThreshold = async (nextThreshold: number) => {
     const clamped = Math.max(0.5, Math.min(1, nextThreshold));
@@ -912,49 +842,14 @@ export function SettingsPanel({
   };
 
   return (
-    <aside
-      ref={panelRef}
-      className={embedded ? "editor-settings-embedded" : "editor-settings-panel"}
-      role={embedded ? undefined : "dialog"}
-      aria-modal={embedded ? undefined : true}
-      aria-busy={loading}
-      aria-label={embedded ? undefined : "Settings"}
-      onKeyDown={onPanelKeyDown}
-    >
-      {!embedded && (
-        <header className="editor-settings-header">
-          <h2 id="settings-dialog-title">Settings</h2>
-          {onClose && (
-            <button type="button" className="editor-btn" onClick={onClose} aria-label="Close settings">
-              Close
-            </button>
-          )}
-        </header>
-      )}
+    <aside className="editor-settings-embedded" aria-busy={loading}>
       {loading ? (
         <p className="editor-settings-loading" aria-live="polite">
           Loading settings…
         </p>
       ) : (
         <div className="editor-settings-body">
-          {!embedded && (
-            <nav className="editor-settings-nav" aria-label="Settings categories">
-              {EDITOR_SETTINGS_NAV.map((item) => (
-                <button
-                  key={item.id}
-                  id={`editor-settings-nav-${item.id}`}
-                  ref={item.id === "hotkeys" ? hotkeysNavRef : undefined}
-                  type="button"
-                  className={`editor-settings-nav-btn${internalNav === item.id ? " is-active" : ""}`}
-                  aria-current={internalNav === item.id ? "page" : undefined}
-                  onClick={() => setInternalNav(item.id)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </nav>
-          )}
-          <div className={`editor-settings-pane${embedded ? " editor-settings-pane--solo" : ""}`}>
+          <div className="editor-settings-pane editor-settings-pane--solo">
             {pane === "hotkeys" && (
               <div
                 className="editor-settings-content editor-settings-content--hotkeys"

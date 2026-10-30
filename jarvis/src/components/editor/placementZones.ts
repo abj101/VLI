@@ -5,9 +5,3 @@ export const PLACEMENT_ZONE_OPTIONS = [
   { id: "maximize", label: "Maximize" },
 ] as const;
 
-export type PlacementZoneId = (typeof PLACEMENT_ZONE_OPTIONS)[number]["id"];
-
-export function placementZoneLabel(zone: string | undefined | null): string {
-  if (!zone) return "—";
-  return PLACEMENT_ZONE_OPTIONS.find((o) => o.id === zone)?.label ?? zone;
-}

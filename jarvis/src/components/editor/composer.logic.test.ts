@@ -129,10 +129,8 @@ describe("composer.logic", () => {
   });
 
   it("requires description before generate", () => {
-    expect(canComposerGenerate("", "")).toBe(false);
-    expect(canComposerGenerate("open notepad", "")).toBe(false);
-    expect(canComposerGenerate("", "launch Notepad")).toBe(true);
-    expect(canComposerGenerate("open notepad", "launch Notepad")).toBe(true);
+    expect(canComposerGenerate("")).toBe(false);
+    expect(canComposerGenerate("launch Notepad")).toBe(true);
   });
 
   it("normalizes trigger payload for IPC", () => {

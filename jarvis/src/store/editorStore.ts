@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { CommandNodePayload } from "../types";
 
-export type EditorStore = {
+type EditorStore = {
   nodes: CommandNodePayload[];
   setNodes: (nodes: CommandNodePayload[]) => void;
   deleteNode: (id: number) => void;

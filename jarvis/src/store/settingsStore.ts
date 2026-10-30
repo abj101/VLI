@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type SettingsUiState = {
+type SettingsUiState = {
   appIndexCount: number | null;
   appIndexScanning: boolean;
   setAppIndexStatus: (status: { count: number; scanning: boolean }) => void;

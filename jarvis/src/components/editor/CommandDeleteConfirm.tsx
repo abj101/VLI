@@ -2,7 +2,7 @@ import type { RefObject } from "react";
 import { EditorCheckIcon } from "./EditorCheckIcon";
 import { EditorCloseXIcon } from "./EditorCloseXIcon";
 
-export type CommandDeleteConfirmProps = {
+type CommandDeleteConfirmProps = {
   deletePending: boolean;
   phraseLabel: string;
   onRequestDelete: () => void;

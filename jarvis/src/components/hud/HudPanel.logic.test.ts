@@ -120,6 +120,7 @@ describe("announcableText", () => {
         matched_phrase: "open notepad",
         span_start: 0,
         span_end: 12,
+        remainder: "",
       },
     };
     const selected = selectCenterContent(input);

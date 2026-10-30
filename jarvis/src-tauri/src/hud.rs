@@ -258,6 +258,7 @@ fn apply_hud_window_position(
     set_hud_position_guarded(window, &guard, position)
 }
 
+#[cfg(target_os = "macos")]
 fn macos_screen_placement(mode: HudOverlayMode) -> crate::macos::window::HudScreenPlacement {
     match mode {
         HudOverlayMode::Command => crate::macos::window::HudScreenPlacement::Center,
@@ -502,6 +503,7 @@ pub fn present_hud_window(
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = (app, mode);
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
         Ok(())

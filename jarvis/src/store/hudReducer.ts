@@ -48,25 +48,6 @@ export const initialHudState: HudState = {
   audioError: null,
 };
 
-function clampSpan(textLen: number, spanStart: number, spanEnd: number) {
-  const start = Math.max(0, Math.min(spanStart, textLen));
-  const end = Math.max(start, Math.min(spanEnd, textLen));
-  return { start, end };
-}
-
-export function sliceTranscriptBySpan(
-  text: string,
-  spanStart: number,
-  spanEnd: number,
-): { before: string; match: string; after: string } {
-  const { start, end } = clampSpan(text.length, spanStart, spanEnd);
-  return {
-    before: text.slice(0, start),
-    match: text.slice(start, end),
-    after: text.slice(end),
-  };
-}
-
 export function reduceHudState(
   state: HudState,
   topic: HudWireTopic,

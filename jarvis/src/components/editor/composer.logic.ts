@@ -59,7 +59,7 @@ export function shouldShowFormulaAfterGenerate(result: GenerateAutomationResult)
 }
 
 /** True when the composer Generate button should be enabled. */
-export function canComposerGenerate(trigger: string, description: string): boolean {
+export function canComposerGenerate(description: string): boolean {
   return description.trim().length > 0;
 }
 
@@ -69,7 +69,7 @@ export function composerTriggerPayload(trigger: string): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export type ComposerPlatform = "macos" | "windows" | "linux" | string;
+type ComposerPlatform = "macos" | "windows" | "linux" | string;
 
 export function composerPlaceholdersForPlatform(platform?: ComposerPlatform | null): {
   trigger: string;
@@ -89,7 +89,7 @@ export function composerPlaceholdersForPlatform(platform?: ComposerPlatform | nu
 
 const COMPOSER_VALIDATION_ERROR_CODES = new Set(["schema_invalid", "invalid_json"]);
 
-export type ParsedComposerError = {
+type ParsedComposerError = {
   code: string | null;
   message: string;
 };

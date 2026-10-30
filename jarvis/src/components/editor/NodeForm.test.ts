@@ -47,6 +47,7 @@ describe("NodeForm logic", () => {
       id: null,
       triggerPhrases: [],
       enabled: true,
+      prefixMode: false,
       actions: [],
     });
 
@@ -60,6 +61,7 @@ describe("NodeForm logic", () => {
       id: null,
       triggerPhrases: ["open thing"],
       enabled: true,
+      prefixMode: false,
       actions: [
         { open_url: { url: "not-a-url" } },
         { sub_prompt: { prompt: "Where?" } },
@@ -77,6 +79,7 @@ describe("NodeForm logic", () => {
       id: null,
       triggerPhrases: ["ask me"],
       enabled: true,
+      prefixMode: false,
       actions: [{ wait: { ms: 100 } }, { sub_prompt: { prompt: "   " } }, { open_url: { url: "https://example.com" } }],
     });
     expect(errors.actionErrors[1]).toBe("Follow-up text is required.");
@@ -88,6 +91,7 @@ describe("NodeForm logic", () => {
       id: null,
       triggerPhrases: ["go"],
       enabled: true,
+      prefixMode: false,
       actions: [editorPendingAction()],
     });
     expect(errors.actionErrors[0]).toBe("Choose an action type.");
@@ -99,6 +103,7 @@ describe("NodeForm logic", () => {
       id: 2,
       triggerPhrases: ["hi"],
       enabled: true,
+      prefixMode: false,
       actions: [editorPendingAction(), { open_url: { url: "https://example.com" } }],
     });
     expect(payload.actions).toEqual([{ open_url: { url: "https://example.com" } }]);
@@ -141,6 +146,7 @@ describe("NodeForm logic", () => {
       id: null,
       triggerPhrases: ["browse"],
       enabled: true,
+      prefixMode: false,
       actions: [{ list_folder: { path: "  " } }],
     });
     expect(errors.actionErrors[0]).toBe("Folder path is required.");
@@ -152,6 +158,7 @@ describe("NodeForm logic", () => {
       id: null,
       triggerPhrases: ["save"],
       enabled: true,
+      prefixMode: false,
       actions: [{ write_file: { path: "", content: "{{last_result}}" } }],
     });
     expect(errors.actionErrors[0]).toBe("File path is required.");
@@ -163,6 +170,7 @@ describe("NodeForm logic", () => {
       id: null,
       triggerPhrases: ["parse"],
       enabled: true,
+      prefixMode: false,
       actions: [{ text_match: { pattern: "  ", text: "" } }],
     });
     expect(errors.actionErrors[0]).toBe("Regex pattern is required.");
@@ -174,6 +182,7 @@ describe("NodeForm logic", () => {
       id: null,
       triggerPhrases: ["split"],
       enabled: true,
+      prefixMode: false,
       actions: [{ text_split: { delimiter: "", text: "{{last_result}}" } }],
     });
     expect(errors.actionErrors[0]).toBe("Delimiter is required.");

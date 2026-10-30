@@ -11,7 +11,7 @@ import {
 import { formatUserError } from "../../utils/userErrors";
 import { EditorSpinner } from "../editor/EditorSpinner";
 
-export type WhisperModelEntry = {
+type WhisperModelEntry = {
   id: string;
   label: string;
   installed: boolean;
@@ -56,7 +56,10 @@ export function WhisperModelsPane({
 
   useEffect(() => {
     let mounted = true;
-    void refreshModels()
+    void invoke<ListWhisperModelsPayload>("list_whisper_models")
+      .then((payload) => {
+        if (mounted) setModels(payload.models);
+      })
       .catch((err: unknown) => {
         if (!mounted) return;
         onNotice(formatUserError(err, "Could not load speech models."));

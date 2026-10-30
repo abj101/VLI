@@ -9,13 +9,13 @@ import {
   type KeyboardEvent as ReactKeyEvent,
 } from "react";
 
-export type EditorSelectOption = {
+type EditorSelectOption = {
   value: string;
   label: string;
   disabled?: boolean;
 };
 
-export type EditorSelectProps = {
+type EditorSelectProps = {
   id: string;
   value: string;
   onChange: (value: string) => void;
@@ -71,10 +71,7 @@ export function EditorSelect({
   }, []);
 
   useLayoutEffect(() => {
-    if (!open) {
-      setPos(null);
-      return;
-    }
+    if (!open) return;
     syncPosition();
     window.addEventListener("resize", syncPosition);
     window.addEventListener("scroll", syncPosition, true);
@@ -88,13 +85,23 @@ export function EditorSelect({
     };
   }, [open, syncPosition]);
 
-  useEffect(() => {
-    if (!open) return;
-    const idx = options.findIndex((o) => o.value === value && !o.disabled);
-    const firstEnabled = enabledIndices[0];
-    if (idx >= 0) setHighlightedIndex(idx);
-    else if (firstEnabled !== undefined) setHighlightedIndex(firstEnabled);
-  }, [open, value, options, enabledIndices]);
+  // Re-sync the highlight to the selected option when the menu opens or its inputs change.
+  // Done during render (not in an effect) so the highlight is correct on the first open frame.
+  const [highlightSync, setHighlightSync] = useState({ open, value, options, enabledIndices });
+  if (
+    highlightSync.open !== open ||
+    highlightSync.value !== value ||
+    highlightSync.options !== options ||
+    highlightSync.enabledIndices !== enabledIndices
+  ) {
+    setHighlightSync({ open, value, options, enabledIndices });
+    if (open) {
+      const idx = options.findIndex((o) => o.value === value && !o.disabled);
+      const firstEnabled = enabledIndices[0];
+      if (idx >= 0) setHighlightedIndex(idx);
+      else if (firstEnabled !== undefined) setHighlightedIndex(firstEnabled);
+    }
+  }
 
   useEffect(() => {
     if (!open) return;

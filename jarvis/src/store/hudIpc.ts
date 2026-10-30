@@ -9,15 +9,8 @@ import type {
   HudPhaseSnapshot,
   MatchResult,
   TranscriptUpdate,
-  WakeDetectedPayload,
 } from "../types";
 import { useHudStore } from "./hudStore";
-
-const ipcLog =
-  import.meta.env.DEV
-    ? (topic: string, detail: unknown) =>
-        console.debug(`[jarvis:ipc] ${topic}`, detail)
-    : () => {};
 
 const HUD_PHASES = [
   "idle",
@@ -58,20 +51,8 @@ async function applyHudPhaseFromRust(): Promise<void> {
 
 /** Subscribe to HUD-related Tauri events; returns unlisten-all. */
 export async function subscribeHudIpc(): Promise<() => void> {
-  const [
-    uPhase,
-    uTr,
-    uWake,
-    uMatch,
-    uAct,
-    uActErr,
-    uAmp,
-    uAudErr,
-  ] = await Promise.all([
-    listen<{ phase: string; session_id?: number; overlay_mode?: string }>(
-      "hud-phase",
-      (e) => {
-      ipcLog("hud-phase", e.payload);
+  const unsubs = await Promise.all([
+    listen<{ phase: string; session_id?: number; overlay_mode?: string }>("hud-phase", (e) => {
       const p = e.payload.phase;
       if (isHudPhase(p)) {
         const overlayMode = e.payload.overlay_mode;
@@ -86,22 +67,15 @@ export async function subscribeHudIpc(): Promise<() => void> {
       }
     }),
     listen<TranscriptUpdate>("transcript-update", (e) => {
-      ipcLog("transcript-update", e.payload);
       useHudStore.getState().applyIpc("transcript-update", e.payload);
     }),
-    listen<WakeDetectedPayload>("wake-detected", (e) => {
-      ipcLog("wake-detected", e.payload);
-    }),
     listen<MatchResult>("match-result", (e) => {
-      ipcLog("match-result", e.payload);
       useHudStore.getState().applyIpc("match-result", e.payload);
     }),
     listen<ActionStatus>("action-status", (e) => {
-      ipcLog("action-status", e.payload);
       useHudStore.getState().applyIpc("action-status", e.payload);
     }),
     listen<ActionErrorPayload>("action-error", (e) => {
-      ipcLog("action-error", e.payload);
       useHudStore.getState().applyIpc("action-error", e.payload);
     }),
     listen<{ amplitude: number }>("amplitude-update", (e) => {
@@ -112,23 +86,11 @@ export async function subscribeHudIpc(): Promise<() => void> {
       useHudStore.getState().applyIpc("amplitude-update", e.payload);
     }),
     listen<AudioErrorPayload>("audio-error", (e) => {
-      ipcLog("audio-error", e.payload);
       useHudStore.getState().applyIpc("audio-error", e.payload);
     }),
   ]);
 
   await applyHudPhaseFromRust();
-
-  const unsubs = [
-    uPhase,
-    uTr,
-    uWake,
-    uMatch,
-    uAct,
-    uActErr,
-    uAmp,
-    uAudErr,
-  ];
 
   return () => {
     for (const u of unsubs) {

@@ -48,7 +48,7 @@ export type FormModel = {
   actions: FormActionPayload[];
 };
 
-export type FormErrors = {
+type FormErrors = {
   triggerPhrases?: string;
   actions?: string;
   /** Per-index messages for any action row (URLs, sub-prompt text, etc.). */
@@ -120,7 +120,7 @@ export function defaultActionForKind(kind: ConcreteActionKind): ActionPayload {
   }
 }
 
-export function emptyFormModel(): FormModel {
+function emptyFormModel(): FormModel {
   return {
     id: null,
     triggerPhrases: [],
@@ -247,13 +247,6 @@ export function hasBlockingErrors(errors: FormErrors): boolean {
   return Boolean(
     errors.triggerPhrases || errors.actions || Object.keys(errors.actionErrors).length > 0,
   );
-}
-
-export function parseTriggerPhraseInput(value: string): string[] {
-  return value
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
 }
 
 function normalizeTriggerPhrases(phrases: string[]): string[] {

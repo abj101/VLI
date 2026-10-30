@@ -2,7 +2,7 @@ import type { ActionPayload } from "../../types";
 
 export type IfConditionKind = "text_contains" | "regex_match" | "text_is_empty";
 
-export type IfElseAction = {
+type IfElseAction = {
   condition: IfConditionKind;
   text: string;
   pattern: string;
@@ -24,17 +24,6 @@ export function defaultIfElseAction(): { if_else: IfElseAction } {
 
 export function ifElseConditionNeedsPattern(condition: IfConditionKind): boolean {
   return condition !== "text_is_empty";
-}
-
-export function ifElseConditionLabel(condition: IfConditionKind): string {
-  switch (condition) {
-    case "text_contains":
-      return "contains";
-    case "regex_match":
-      return "matches regex";
-    case "text_is_empty":
-      return "is empty";
-  }
 }
 
 export function validateIfElseFields(

@@ -1,7 +1,7 @@
 export type EditorThemePreference = "dark" | "light" | "system";
 
 /** Resolved palette applied to `data-theme` (always light or dark). */
-export type ResolvedEditorTheme = "dark" | "light";
+type ResolvedEditorTheme = "dark" | "light";
 
 /** Matches `stt_provider` in SQLite / `AppSettings.stt_provider`. */
 export type SttProvider = "local" | "os" | "remote";
@@ -40,7 +40,7 @@ export function formatByteSize(bytes: number | null | undefined): string {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
-export function whisperModelOptionLabel(id: LocalWhisperModelId): string {
+function whisperModelOptionLabel(id: LocalWhisperModelId): string {
   return LOCAL_WHISPER_MODEL_OPTIONS.find((o) => o.value === id)?.label ?? id;
 }
 
@@ -121,10 +121,10 @@ export function applyEditorThemeToDocument(pref: EditorThemePreference): void {
 }
 
 /** Persisted `hud_transparency` setting: 0 = theme CSS default, 100 = most transparent. */
-export const HUD_TRANSPARENCY_MIN = 0;
-export const HUD_TRANSPARENCY_MAX = 100;
+const HUD_TRANSPARENCY_MIN = 0;
+const HUD_TRANSPARENCY_MAX = 100;
 export const HUD_TRANSPARENCY_DEFAULT = 50;
-export const HUD_MATERIAL_ALPHA_FLOOR_PCT = 50;
+const HUD_MATERIAL_ALPHA_FLOOR_PCT = 50;
 
 const HUD_MATERIAL_ALPHA_DEFAULT: Record<ResolvedEditorTheme, number> = {
   light: 78,
@@ -177,11 +177,11 @@ export function applyHudTransparencyToDocument(
 }
 
 /** Persisted `editor_transparency` setting: 0 = opaque, 100 = most transparent. */
-export const EDITOR_TRANSPARENCY_MIN = 0;
-export const EDITOR_TRANSPARENCY_MAX = 100;
+const EDITOR_TRANSPARENCY_MIN = 0;
+const EDITOR_TRANSPARENCY_MAX = 100;
 export const EDITOR_TRANSPARENCY_DEFAULT = 50;
-export const EDITOR_MATERIAL_ALPHA_MAX_PCT = 100;
-export const EDITOR_MATERIAL_ALPHA_FLOOR_PCT = 75;
+const EDITOR_MATERIAL_ALPHA_MAX_PCT = 100;
+const EDITOR_MATERIAL_ALPHA_FLOOR_PCT = 75;
 
 const EDITOR_MATERIAL_ALPHA_DEFAULT: Record<ResolvedEditorTheme, number> = {
   light: 92,
@@ -207,10 +207,7 @@ export function parseEditorTransparencySettingValue(raw: string | null | undefin
 }
 
 /** Maps transparency (0–100) to editor shell glass fill alpha (100% at 0, floor at 100). */
-export function resolveEditorMaterialAlphaPct(
-  transparency: number,
-  _theme: ResolvedEditorTheme,
-): number {
+export function resolveEditorMaterialAlphaPct(transparency: number): number {
   const clamped = Math.max(
     EDITOR_TRANSPARENCY_MIN,
     Math.min(EDITOR_TRANSPARENCY_MAX, transparency),
@@ -228,7 +225,7 @@ export function resolveEditorSidebarMaterialAlphaPct(
   transparency: number,
   theme: ResolvedEditorTheme,
 ): number {
-  const shellAlpha = resolveEditorMaterialAlphaPct(transparency, theme);
+  const shellAlpha = resolveEditorMaterialAlphaPct(transparency);
   return Math.min(100, shellAlpha + editorSidebarAlphaOffset(theme));
 }
 
@@ -240,7 +237,7 @@ export function applyEditorTransparencyToDocument(
   if (typeof document === "undefined") return;
   const pref = themePref ?? readThemePreferenceFromDocument();
   const theme = resolveEditorTheme(pref);
-  const shellAlpha = resolveEditorMaterialAlphaPct(transparency, theme);
+  const shellAlpha = resolveEditorMaterialAlphaPct(transparency);
   const sidebarAlpha = resolveEditorSidebarMaterialAlphaPct(transparency, theme);
   document.documentElement.style.setProperty("--editor-material-alpha", `${shellAlpha}%`);
   document.documentElement.style.setProperty(
@@ -308,50 +305,7 @@ export function formatHotkeyKeyLabel(token: string): string {
   }
 }
 
-/**
- * Match a Tauri/global-hotkey style chord (e.g. `escape`, `ctrl+shift+j`) against
- * a `keydown` event. Used when the HUD webview has focus as a fallback alongside
- * the native global shortcut.
- */
-export function hotkeyChordMatchesKeyboardEvent(raw: string, e: KeyboardEvent): boolean {
-  const segments = raw
-    .split("+")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  if (segments.length === 0) return false;
-
-  let wantCtrl = false;
-  let wantShift = false;
-  let wantAlt = false;
-  let wantMeta = false;
-  const keyParts: string[] = [];
-
-  for (const seg of segments) {
-    if (seg === "ctrl" || seg === "control") wantCtrl = true;
-    else if (seg === "shift") wantShift = true;
-    else if (seg === "alt" || seg === "option") wantAlt = true;
-    else if (seg === "meta" || seg === "cmd" || seg === "command" || seg === "super") wantMeta = true;
-    else keyParts.push(seg);
-  }
-
-  if (keyParts.length !== 1) return false;
-
-  if (
-    (e.ctrlKey ?? false) !== wantCtrl ||
-    (e.shiftKey ?? false) !== wantShift ||
-    (e.altKey ?? false) !== wantAlt ||
-    (e.metaKey ?? false) !== wantMeta
-  ) {
-    return false;
-  }
-
-  const wantKey = normalizeHotkeyKeyToken(keyParts[0]);
-  const pressed = keyboardEventKeyToken(e);
-  if (!pressed) return false;
-  return pressed === wantKey;
-}
-
-export type HotkeyModifierToken = "ctrl" | "alt" | "shift" | "meta";
+type HotkeyModifierToken = "ctrl" | "alt" | "shift" | "meta";
 
 export type HotkeyRecordingState = {
   /** Modifiers seen during this recording session (keydown adds, keyup removes). */
@@ -362,7 +316,7 @@ export function createHotkeyRecordingState(): HotkeyRecordingState {
   return { heldModifiers: new Set() };
 }
 
-export type HotkeyRecordingAction =
+type HotkeyRecordingAction =
   | { type: "ignore" }
   | { type: "cancel" }
   | { type: "clear" }
@@ -379,7 +333,7 @@ function hotkeyRecordingEventHasModifierFlags(e: KeyboardEvent): boolean {
   return Boolean(e.ctrlKey || e.shiftKey || e.altKey || e.metaKey);
 }
 
-export function hotkeyModifierTokenFromKey(key: string): HotkeyModifierToken | null {
+function hotkeyModifierTokenFromKey(key: string): HotkeyModifierToken | null {
   const lower = key.toLowerCase();
   if (lower === "control") return "ctrl";
   if (lower === "shift") return "shift";
@@ -388,7 +342,7 @@ export function hotkeyModifierTokenFromKey(key: string): HotkeyModifierToken | n
   return null;
 }
 
-export function hotkeyModifierTokenFromCode(code: string): HotkeyModifierToken | null {
+function hotkeyModifierTokenFromCode(code: string): HotkeyModifierToken | null {
   if (code.startsWith("Control")) return "ctrl";
   if (code.startsWith("Shift")) return "shift";
   if (code.startsWith("Alt")) return "alt";
@@ -396,7 +350,7 @@ export function hotkeyModifierTokenFromCode(code: string): HotkeyModifierToken |
   return null;
 }
 
-export function hotkeyModifierTokenFromEvent(e: KeyboardEvent): HotkeyModifierToken | null {
+function hotkeyModifierTokenFromEvent(e: KeyboardEvent): HotkeyModifierToken | null {
   return hotkeyModifierTokenFromKey(e.key) ?? hotkeyModifierTokenFromCode(e.code);
 }
 
@@ -411,7 +365,7 @@ function mergeEventModifiers(e: KeyboardEvent, mods: Set<HotkeyModifierToken>): 
   if (e.metaKey || modifierState("Meta")) mods.add("meta");
 }
 
-export function collectHotkeyModifiers(
+function collectHotkeyModifiers(
   e: KeyboardEvent,
   held: Iterable<HotkeyModifierToken>,
 ): Set<HotkeyModifierToken> {
@@ -420,7 +374,7 @@ export function collectHotkeyModifiers(
   return mods;
 }
 
-export function formatHotkeyChord(mods: Iterable<HotkeyModifierToken>, keyToken: string): string {
+function formatHotkeyChord(mods: Iterable<HotkeyModifierToken>, keyToken: string): string {
   const set = mods instanceof Set ? mods : new Set(mods);
   const parts: string[] = [];
   if (set.has("ctrl")) parts.push("ctrl");
@@ -489,29 +443,6 @@ export function processHotkeyRecordingKeyUp(
   };
   next.heldModifiers.delete(modToken);
   return next;
-}
-
-/**
- * Build a Tauri/global-hotkey style chord string from a `keydown` event.
- * Returns `null` for modifier-only presses.
- */
-export function keyboardEventToHotkeyChord(e: KeyboardEvent): string | null {
-  const keyToken = keyboardEventKeyToken(e);
-  if (!keyToken) return null;
-  const mods = collectHotkeyModifiers(e, []);
-  return formatHotkeyChord(mods, keyToken);
-}
-
-function normalizeHotkeyKeyToken(s: string): string {
-  const t = s.trim().toLowerCase();
-  if (t === "esc") return "escape";
-  if (t === "return" || t === "enter") return "enter";
-  if (t === "space" || t === "spc") return "space";
-  if (t === "down") return "arrowdown";
-  if (t === "up") return "arrowup";
-  if (t === "left") return "arrowleft";
-  if (t === "right") return "arrowright";
-  return t;
 }
 
 function keyboardEventKeyToken(e: KeyboardEvent): string {

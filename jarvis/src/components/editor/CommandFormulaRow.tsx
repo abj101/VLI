@@ -27,13 +27,16 @@ import { editorPendingAction, isEditorPendingAction } from "../../types";
 import { formatUserError } from "../../utils/userErrors";
 import { useEditorStore } from "../../store/editorStore";
 import { useSettingsStore } from "../../store/settingsStore";
-import { ACTION_KIND_OPTIONS, getActionKind } from "./actionCatalog";
+import { ACTION_KIND_OPTIONS, actionKindLabel, getActionKind } from "./actionCatalog";
 import {
   appExeDisplayLabel,
   applyRemoveActionAt,
   computeInsetRemoveAllowed,
   deriveAppSearchMeta,
   deriveOpenAppDisplayMode,
+  deriveFollowUpVariableMap,
+  deriveFormulaVariableLabels,
+  extractVariableTokenContext,
   formulaArgInputClass,
   fingerprintCommandNode,
 } from "./formulaRow.logic";
@@ -68,7 +71,7 @@ import {
 } from "./composer.logic";
 import { EditorSpinner } from "./EditorSpinner";
 
-export type AppIndexEntry = {
+type AppIndexEntry = {
   display_name: string;
   exe_path: string;
   icon_data_url?: string | null;
@@ -216,6 +219,35 @@ function FormulaTriggerColumn({
   );
 }
 
+type UpdateFormModel = (updater: (prev: FormModel) => FormModel) => void;
+
+/** Edit handlers shared by the saved formula row and the draft row. */
+function formulaEditHandlers(updateModel: UpdateFormModel) {
+  return {
+    setPrimaryPhrase: (next: string) =>
+      updateModel((prev) => ({
+        ...prev,
+        triggerPhrases: next.length > 0 ? [next] : [],
+      })),
+    addActionSegment: () =>
+      updateModel((prev) => ({
+        ...prev,
+        actions: [...prev.actions, editorPendingAction()],
+      })),
+    setActionAt: (index: number, next: FormActionPayload) =>
+      updateModel((prev) => {
+        const actions = [...prev.actions];
+        actions[index] = next;
+        return { ...prev, actions };
+      }),
+    removeActionAt: (index: number) =>
+      updateModel((prev) => ({
+        ...prev,
+        actions: applyRemoveActionAt(prev.actions, index),
+      })),
+  };
+}
+
 export function CommandFormulaRow({
   node,
   onToggleEnabled,
@@ -289,34 +321,8 @@ export function CommandFormulaRow({
   }, [payloadPrint, model.id, setNodes, showToast]);
 
   const primaryPhrase = model.triggerPhrases[0] ?? "";
-  const setPrimaryPhrase = (next: string) => {
-    updateModel((prev) => ({
-      ...prev,
-      triggerPhrases: next.length > 0 ? [next] : [],
-    }));
-  };
-
-  const addActionSegment = () => {
-    updateModel((prev) => ({
-      ...prev,
-      actions: [...prev.actions, editorPendingAction()],
-    }));
-  };
-
-  const setActionAt = (index: number, next: FormActionPayload) => {
-    updateModel((prev) => {
-      const actions = [...prev.actions];
-      actions[index] = next;
-      return { ...prev, actions };
-    });
-  };
-
-  const removeActionAt = (index: number) => {
-    updateModel((prev) => ({
-      ...prev,
-      actions: applyRemoveActionAt(prev.actions, index),
-    }));
-  };
+  const { setPrimaryPhrase, addActionSegment, setActionAt, removeActionAt } =
+    formulaEditHandlers(updateModel);
   const followUpVariableMeta = useMemo(() => deriveFollowUpVariableMap(model.actions), [model.actions]);
   const [testInput, setTestInput] = useState("");
   const [testRunning, setTestRunning] = useState(false);
@@ -562,7 +568,7 @@ export function CommandDraftRow({ onDiscard, onCreated, initialComposerStatus = 
 
   const onGenerate = async () => {
     const text = description.trim();
-    if (!canComposerGenerate(composerTrigger, description) || generating) return;
+    if (!canComposerGenerate(description) || generating) return;
     setGenerating(true);
     setToastText(null);
     setShowRegenerateFix(false);
@@ -605,12 +611,8 @@ export function CommandDraftRow({ onDiscard, onCreated, initialComposerStatus = 
   const updateModel = (updater: (prev: FormModel) => FormModel) => setModel((p) => updater(p));
 
   const primaryPhrase = model.triggerPhrases[0] ?? "";
-  const setPrimaryPhrase = (next: string) => {
-    updateModel((prev) => ({
-      ...prev,
-      triggerPhrases: next.length > 0 ? [next] : [],
-    }));
-  };
+  const { setPrimaryPhrase, addActionSegment, setActionAt, removeActionAt } =
+    formulaEditHandlers(updateModel);
 
   const onSave = async () => {
     const errors = validateFormModel(model);
@@ -663,23 +665,6 @@ export function CommandDraftRow({ onDiscard, onCreated, initialComposerStatus = 
 
   const toolDraft = generateResult ? toolDraftFromResult(generateResult) : null;
 
-  const addActionSegment = () =>
-    updateModel((prev) => ({ ...prev, actions: [...prev.actions, editorPendingAction()] }));
-
-  const setActionAt = (index: number, next: FormActionPayload) => {
-    updateModel((prev) => {
-      const actions = [...prev.actions];
-      actions[index] = next;
-      return { ...prev, actions };
-    });
-  };
-
-  const removeActionAt = (index: number) => {
-    updateModel((prev) => ({
-      ...prev,
-      actions: applyRemoveActionAt(prev.actions, index),
-    }));
-  };
   const followUpVariableMeta = useMemo(() => deriveFollowUpVariableMap(model.actions), [model.actions]);
 
   const composerPlaceholders = composerPlaceholdersForPlatform(composerStatus?.platform);
@@ -737,7 +722,7 @@ export function CommandDraftRow({ onDiscard, onCreated, initialComposerStatus = 
                 type="button"
                 className="editor-composer-btn editor-composer-btn--ghost"
                 onClick={() => void onGenerate()}
-                disabled={generating || !canComposerGenerate(composerTrigger, description)}
+                disabled={generating || !canComposerGenerate(description)}
               >
                 Regenerate with fix
               </button>
@@ -746,7 +731,7 @@ export function CommandDraftRow({ onDiscard, onCreated, initialComposerStatus = 
               type="button"
               className="editor-composer-btn editor-composer-btn--secondary"
               onClick={() => void onGenerate()}
-              disabled={generating || !canComposerGenerate(composerTrigger, description)}
+              disabled={generating || !canComposerGenerate(description)}
               aria-busy={generating}
             >
               {generating ? (
@@ -944,64 +929,6 @@ type SegmentProps = {
   formulaActions?: FormActionPayload[];
 };
 
-type VariableTokenContext = {
-  start: number;
-  end: number;
-  query: string;
-};
-
-export function deriveFollowUpVariableMap(actions: FormActionPayload[]) {
-  let next = 0;
-  const byActionIndex = new Map<number, number>();
-  actions.forEach((action, idx) => {
-    if (!("sub_prompt" in action)) return;
-    next += 1;
-    byActionIndex.set(idx, next);
-  });
-  return {
-    byActionIndex,
-    labels: Array.from({ length: next }, (_, i) => `Variable ${i + 1}`),
-  };
-}
-
-export function deriveFormulaVariableLabels(
-  actions: FormActionPayload[],
-  prefixMode: boolean,
-  forActionIndex: number,
-): string[] {
-  const followUp = deriveFollowUpVariableMap(actions);
-  const labels = [...followUp.labels, "{{last_result}}"];
-  if (prefixMode) {
-    labels.push("{{remainder}}", "{{shortcut_input}}");
-  }
-  for (let i = 0; i < forActionIndex; i += 1) {
-    labels.push(`{{step_${i + 1}}}`);
-  }
-  return labels;
-}
-
-export function extractVariableTokenContext(inputValue: string, caret: number): VariableTokenContext | null {
-  const before = inputValue.slice(0, caret);
-  const varMatch = /(^|\s)(Variable(?:\s+\d*)?)$/i.exec(before);
-  if (varMatch) {
-    const token = varMatch[2];
-    return {
-      start: before.length - token.length,
-      end: caret,
-      query: token.replace(/^Variable/i, "").trim(),
-    };
-  }
-  const tplMatch = /\{\{([a-z_]*)$/i.exec(before);
-  if (tplMatch) {
-    return {
-      start: before.length - tplMatch[0].length,
-      end: caret,
-      query: tplMatch[1] ?? "",
-    };
-  }
-  return null;
-}
-
 function AppIconImg({
   iconUrl,
   label,
@@ -1057,9 +984,7 @@ function ActionSegmentEditor({
   } | null>(null);
   const kind = getActionKind(action);
   const fieldIds = useId();
-  const [kindQuery, setKindQuery] = useState(() =>
-    kind === "pending" ? "" : (ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind),
-  );
+  const [kindQuery, setKindQuery] = useState(() => actionKindLabel(kind));
   const [kindOpen, setKindOpen] = useState(false);
 
   const [appQuery, setAppQuery] = useState(() => ("open_app" in action ? action.open_app.name : ""));
@@ -1164,9 +1089,7 @@ function ActionSegmentEditor({
   }, [action]);
 
   useEffect(() => {
-    setKindQuery(
-      kind === "pending" ? "" : (ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind),
-    );
+    setKindQuery(actionKindLabel(kind));
   }, [kind]);
 
   // Lazy icon fetch for already-saved open_app actions (scanner no longer
@@ -1237,7 +1160,7 @@ function ActionSegmentEditor({
 
   const applyKindOption = (nextKind: ConcreteActionKind) => {
     onPickKind(nextKind);
-    setKindQuery(ACTION_KIND_OPTIONS.find((opt) => opt.id === nextKind)?.label ?? nextKind);
+    setKindQuery(actionKindLabel(nextKind));
     setKindOpen(false);
   };
 
@@ -1361,6 +1284,25 @@ function ActionSegmentEditor({
       }
     }, 0);
   }, []);
+
+  const singleTextArg = (opts: {
+    value: string;
+    placeholder: string;
+    label: string;
+    onCommit: (next: string) => void;
+    type?: "text" | "url";
+  }) => (
+    <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
+      <input
+        type={opts.type ?? "text"}
+        className={formulaArgInputClass()}
+        value={opts.value}
+        {...bindVariableSuggestInput(opts.value, opts.onCommit)}
+        placeholder={opts.placeholder}
+        aria-label={opts.label}
+      />
+    </div>
+  );
 
   const renderArg = () => {
     if ("editor_pending" in action) {
@@ -1544,46 +1486,29 @@ function ActionSegmentEditor({
       );
     }
     if ("open_url" in action) {
-      return (
-        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
-          <input
-            type="url"
-            className={formulaArgInputClass()}
-            value={action.open_url.url}
-            {...bindVariableSuggestInput(action.open_url.url, (value) => onChange({ open_url: { url: value } }))}
-            placeholder="https://…"
-            aria-label={`URL for step ${index + 1}`}
-          />
-        </div>
-      );
+      return singleTextArg({
+        type: "url",
+        value: action.open_url.url,
+        placeholder: "https://…",
+        label: `URL for step ${index + 1}`,
+        onCommit: (value) => onChange({ open_url: { url: value } }),
+      });
     }
     if ("speak" in action) {
-      return (
-        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
-          <input
-            type="text"
-            className={formulaArgInputClass()}
-            value={action.speak.text}
-            {...bindVariableSuggestInput(action.speak.text, (value) => onChange({ speak: { text: value } }))}
-            placeholder="Words to speak"
-            aria-label={`Speak text for step ${index + 1}`}
-          />
-        </div>
-      );
+      return singleTextArg({
+        value: action.speak.text,
+        placeholder: "Words to speak",
+        label: `Speak text for step ${index + 1}`,
+        onCommit: (value) => onChange({ speak: { text: value } }),
+      });
     }
     if ("send_keys" in action) {
-      return (
-        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
-          <input
-            type="text"
-            className={formulaArgInputClass()}
-            value={action.send_keys.keys}
-            {...bindVariableSuggestInput(action.send_keys.keys, (value) => onChange({ send_keys: { keys: value } }))}
-            placeholder="ctrl+shift+p"
-            aria-label={`Keys for step ${index + 1}`}
-          />
-        </div>
-      );
+      return singleTextArg({
+        value: action.send_keys.keys,
+        placeholder: "ctrl+shift+p",
+        label: `Keys for step ${index + 1}`,
+        onCommit: (value) => onChange({ send_keys: { keys: value } }),
+      });
     }
     if ("run_script" in action) {
       return (
@@ -1660,36 +1585,21 @@ function ActionSegmentEditor({
       );
     }
     if ("read_file" in action) {
-      return (
-        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
-          <input
-            type="text"
-            className={formulaArgInputClass()}
-            value={action.read_file.path}
-            {...bindVariableSuggestInput(action.read_file.path, (value) =>
-              onChange({ read_file: { path: value } }),
-            )}
-            placeholder="File path"
-            aria-label={`File path for step ${index + 1}`}
-          />
-        </div>
-      );
+      return singleTextArg({
+        value: action.read_file.path,
+        placeholder: "File path",
+        label: `File path for step ${index + 1}`,
+        onCommit: (value) => onChange({ read_file: { path: value } }),
+      });
     }
     if ("http_get" in action) {
-      return (
-        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
-          <input
-            type="url"
-            className={formulaArgInputClass()}
-            value={action.http_get.url}
-            {...bindVariableSuggestInput(action.http_get.url, (value) =>
-              onChange({ http_get: { url: value } }),
-            )}
-            placeholder="https://…"
-            aria-label={`HTTP GET URL for step ${index + 1}`}
-          />
-        </div>
-      );
+      return singleTextArg({
+        type: "url",
+        value: action.http_get.url,
+        placeholder: "https://…",
+        label: `HTTP GET URL for step ${index + 1}`,
+        onCommit: (value) => onChange({ http_get: { url: value } }),
+      });
     }
     if ("get_clipboard" in action) {
       return (
@@ -1732,20 +1642,12 @@ function ActionSegmentEditor({
       );
     }
     if ("text_trim" in action) {
-      return (
-        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
-          <input
-            type="text"
-            className={formulaArgInputClass()}
-            value={action.text_trim.text}
-            {...bindVariableSuggestInput(action.text_trim.text, (value) =>
-              onChange({ text_trim: { text: value } }),
-            )}
-            placeholder="Text (optional — uses prior output)"
-            aria-label={`Trim text input for step ${index + 1}`}
-          />
-        </div>
-      );
+      return singleTextArg({
+        value: action.text_trim.text,
+        placeholder: "Text (optional — uses prior output)",
+        label: `Trim text input for step ${index + 1}`,
+        onCommit: (value) => onChange({ text_trim: { text: value } }),
+      });
     }
     if ("text_match" in action) {
       return (
@@ -1814,52 +1716,28 @@ function ActionSegmentEditor({
       );
     }
     if ("text_combine" in action) {
-      return (
-        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
-          <input
-            type="text"
-            className={formulaArgInputClass()}
-            value={action.text_combine.separator}
-            {...bindVariableSuggestInput(action.text_combine.separator, (value) =>
-              onChange({ text_combine: { separator: value } }),
-            )}
-            placeholder="Separator"
-            aria-label={`Combine separator for step ${index + 1}`}
-          />
-        </div>
-      );
+      return singleTextArg({
+        value: action.text_combine.separator,
+        placeholder: "Separator",
+        label: `Combine separator for step ${index + 1}`,
+        onCommit: (value) => onChange({ text_combine: { separator: value } }),
+      });
     }
     if ("set_clipboard" in action) {
-      return (
-        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
-          <input
-            type="text"
-            className={formulaArgInputClass()}
-            value={action.set_clipboard.text}
-            {...bindVariableSuggestInput(action.set_clipboard.text, (value) =>
-              onChange({ set_clipboard: { text: value } }),
-            )}
-            placeholder="Text (optional — uses prior output)"
-            aria-label={`Set clipboard text for step ${index + 1}`}
-          />
-        </div>
-      );
+      return singleTextArg({
+        value: action.set_clipboard.text,
+        placeholder: "Text (optional — uses prior output)",
+        label: `Set clipboard text for step ${index + 1}`,
+        onCommit: (value) => onChange({ set_clipboard: { text: value } }),
+      });
     }
     if ("list_folder" in action) {
-      return (
-        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
-          <input
-            type="text"
-            className={formulaArgInputClass()}
-            value={action.list_folder.path}
-            {...bindVariableSuggestInput(action.list_folder.path, (value) =>
-              onChange({ list_folder: { path: value } }),
-            )}
-            placeholder="Folder path"
-            aria-label={`Folder path for step ${index + 1}`}
-          />
-        </div>
-      );
+      return singleTextArg({
+        value: action.list_folder.path,
+        placeholder: "Folder path",
+        label: `Folder path for step ${index + 1}`,
+        onCommit: (value) => onChange({ list_folder: { path: value } }),
+      });
     }
     if ("write_file" in action) {
       return (
@@ -1895,36 +1773,20 @@ function ActionSegmentEditor({
       );
     }
     if ("get_file_metadata" in action) {
-      return (
-        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
-          <input
-            type="text"
-            className={formulaArgInputClass()}
-            value={action.get_file_metadata.path}
-            {...bindVariableSuggestInput(action.get_file_metadata.path, (value) =>
-              onChange({ get_file_metadata: { path: value } }),
-            )}
-            placeholder="File or folder path"
-            aria-label={`Metadata path for step ${index + 1}`}
-          />
-        </div>
-      );
+      return singleTextArg({
+        value: action.get_file_metadata.path,
+        placeholder: "File or folder path",
+        label: `Metadata path for step ${index + 1}`,
+        onCommit: (value) => onChange({ get_file_metadata: { path: value } }),
+      });
     }
     if ("screenshot" in action) {
-      return (
-        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
-          <input
-            type="text"
-            className={formulaArgInputClass()}
-            value={action.screenshot.path ?? ""}
-            {...bindVariableSuggestInput(action.screenshot.path ?? "", (value) =>
-              onChange({ screenshot: { path: value } }),
-            )}
-            placeholder="Output path (optional — temp file)"
-            aria-label={`Screenshot output path for step ${index + 1}`}
-          />
-        </div>
-      );
+      return singleTextArg({
+        value: action.screenshot.path ?? "",
+        placeholder: "Output path (optional — temp file)",
+        label: `Screenshot output path for step ${index + 1}`,
+        onCommit: (value) => onChange({ screenshot: { path: value } }),
+      });
     }
     if ("device_info" in action) {
       return (
@@ -2003,20 +1865,12 @@ function ActionSegmentEditor({
       );
     }
     if ("sub_prompt" in action) {
-      return (
-        <div className="editor-formula-arg-wrap" ref={variableAnchorRef}>
-          <input
-            type="text"
-            className={formulaArgInputClass()}
-            value={action.sub_prompt.prompt}
-            {...bindVariableSuggestInput(action.sub_prompt.prompt, (value) =>
-              onChange({ sub_prompt: { prompt: value } }),
-            )}
-            placeholder="Follow-up question"
-            aria-label={`Follow-up text for step ${index + 1}`}
-          />
-        </div>
-      );
+      return singleTextArg({
+        value: action.sub_prompt.prompt,
+        placeholder: "Follow-up question",
+        label: `Follow-up text for step ${index + 1}`,
+        onCommit: (value) => onChange({ sub_prompt: { prompt: value } }),
+      });
     }
     if ("wait" in action) {
       return (
@@ -2144,11 +1998,7 @@ function ActionSegmentEditor({
         onBlur={() => {
           window.setTimeout(() => {
             setKindOpen(false);
-            setKindQuery(
-              kind === "pending"
-                ? ""
-                : (ACTION_KIND_OPTIONS.find((opt) => opt.id === kind)?.label ?? kind),
-            );
+            setKindQuery(actionKindLabel(kind));
           }, 120);
         }}
         onKeyDown={(e) => {

@@ -1,5 +1,4 @@
-import type { MatchResult } from "../../types";
-import type { HudPhase } from "../../types";
+import type { HudPhase, MatchResult } from "../../types";
 
 export type CenterSelectorInput = {
   phase: HudPhase;
@@ -24,9 +23,7 @@ export function announcableText(
 ): string {
   switch (selected.kind) {
     case "error":
-      return selected.text;
     case "transcript":
-      return selected.text;
     case "action":
       return selected.text;
     case "match":

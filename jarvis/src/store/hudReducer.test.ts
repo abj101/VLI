@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  initialHudState,
-  reduceHudState,
-  sliceTranscriptBySpan,
-} from "./hudReducer";
+import { initialHudState, reduceHudState } from "./hudReducer";
 import type { HudPhase } from "../types";
 
 describe("reduceHudState", () => {
@@ -38,6 +34,7 @@ describe("reduceHudState", () => {
         matched_phrase: "open notepad",
         span_start: 0,
         span_end: 12,
+        remainder: "",
       },
       actionText: "Opening…",
       actionError: "launch failed",
@@ -63,6 +60,7 @@ describe("reduceHudState", () => {
         matched_phrase: "open notepad",
         span_start: 0,
         span_end: 12,
+        remainder: "",
       },
       actionText: "Opening…",
       transcript: "open notepad",
@@ -84,6 +82,7 @@ describe("reduceHudState", () => {
         matched_phrase: "open github",
         span_start: 0,
         span_end: 11,
+        remainder: "",
       },
     };
     const next = reduceHudState(dirty, "hud-phase", { phase: "awaiting_input" });
@@ -132,6 +131,7 @@ describe("reduceHudState", () => {
         matched_phrase: "open notepad",
         span_start: 0,
         span_end: 12,
+        remainder: "",
       },
     };
     const next = reduceHudState(withMatch, "transcript-update", {
@@ -151,6 +151,7 @@ describe("reduceHudState", () => {
         matched_phrase: "open notepad",
         span_start: 0,
         span_end: 12,
+        remainder: "",
       },
     };
     const next = reduceHudState(withMatch, "transcript-update", {
@@ -169,6 +170,7 @@ describe("reduceHudState", () => {
         matched_phrase: "open notepad",
         span_start: 7,
         span_end: 19,
+        remainder: "",
       },
     );
     expect(s.match?.span_start).toBe(7);
@@ -206,20 +208,5 @@ describe("reduceHudState", () => {
       message: "Whisper model missing",
     });
     expect(s.audioError).toBe("Whisper model missing");
-  });
-});
-
-describe("sliceTranscriptBySpan", () => {
-  it("splits text by span for highlight rendering", () => {
-    const r = sliceTranscriptBySpan("please open notepad", 7, 19);
-    expect(r.before).toBe("please ");
-    expect(r.match).toBe("open notepad");
-    expect(r.after).toBe("");
-  });
-
-  it("clamps span to string length", () => {
-    const r = sliceTranscriptBySpan("hi", 0, 100);
-    expect(r.match).toBe("hi");
-    expect(r.after).toBe("");
   });
 });

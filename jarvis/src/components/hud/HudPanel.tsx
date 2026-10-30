@@ -1,7 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { useLayoutEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { HudOverlayMode } from "../../types";
 import { useShallow } from "zustand/react/shallow";
 import { useDebounced } from "../../hooks/useDebounced";
 import { useHudStore } from "../../store/hudStore";
@@ -152,11 +151,8 @@ function HudShell() {
   const centerInput = useHudCenterInput();
   const overlayMode = useHudStore((s) => s.overlayMode);
   // Pin layout for this shell instance so exit fade keeps dictation chrome if mode flips mid-animation.
-  const shellOverlayModeRef = useRef<HudOverlayMode | null>(null);
-  if (shellOverlayModeRef.current === null) {
-    shellOverlayModeRef.current = overlayMode;
-  }
-  const isDictation = shellOverlayModeRef.current === "dictation";
+  const [pinnedOverlayMode] = useState(overlayMode);
+  const isDictation = pinnedOverlayMode === "dictation";
   const selected = useMemo(
     () => selectCenterContent(centerInput),
     [centerInput],

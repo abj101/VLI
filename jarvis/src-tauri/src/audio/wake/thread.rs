@@ -15,6 +15,7 @@ const WAKE_RECV_TICK: Duration = Duration::from_millis(100);
 /// Consecutive mic open failures before surfacing `audio-error` to the HUD (30 × 100 ms).
 const WAKE_MIC_FAIL_EMIT_THRESHOLD: u32 = 30;
 /// Back off wake mic retries when permission is permanently denied.
+#[cfg(target_os = "macos")]
 const WAKE_MIC_DENIED_BACKOFF: Duration = Duration::from_secs(5);
 
 /// Handle to stop and join the wake worker (live reload when settings change).
@@ -159,13 +160,14 @@ fn wake_thread_main(
                         );
                     }
                 }
-                let backoff = if cfg!(target_os = "macos")
-                    && crate::macos::microphone_permission_is_denied()
-                {
+                #[cfg(target_os = "macos")]
+                let backoff = if crate::macos::microphone_permission_is_denied() {
                     WAKE_MIC_DENIED_BACKOFF
                 } else {
                     WAKE_RECV_TICK
                 };
+                #[cfg(not(target_os = "macos"))]
+                let backoff = WAKE_RECV_TICK;
                 std::thread::sleep(backoff);
                 continue;
             }

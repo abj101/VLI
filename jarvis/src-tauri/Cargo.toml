@@ -27,6 +27,7 @@ whisper-vulkan = ["whisper-rs/vulkan"]
 whisper-cuda = ["whisper-rs/cuda"]
 whisper-metal = ["whisper-rs/metal"]
 # On-device LLM tool router (llama.cpp). Example: `cargo build --features llm-local,llm-vulkan`
+# llama-cpp-2 is pinned to the release whose vendored ggml headers match whisper-rs 0.16's (both static; identical ggml ABI).
 llm-local = ["dep:llama-cpp-2", "dep:encoding_rs"]
 llm-vulkan = ["llm-local", "llama-cpp-2/vulkan"]
 llm-cuda = ["llm-local", "llama-cpp-2/cuda"]
@@ -42,7 +43,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 cpal = "0.15"
-whisper-rs = "0.14"
+whisper-rs = "0.16"
 log = "0.4"
 env_logger = "0.11"
 rapidfuzz = "0.5.0"
@@ -59,7 +60,7 @@ url = "2"
 ort = { version = "2.0.0-rc.12", optional = true, default-features = true, features = ["download-binaries", "ndarray"] }
 ndarray = { version = "0.17", optional = true }
 raw-window-handle = "0.6"
-llama-cpp-2 = { version = "0.1", optional = true }
+llama-cpp-2 = { version = "=0.1.135", optional = true }
 encoding_rs = { version = "0.8", optional = true }
 sha2 = "0.10"
 
@@ -98,3 +99,12 @@ windows = { version = "0.61", features = [
 [dev-dependencies]
 tempfile = "3"
 
+# Native deps (ggml/whisper.cpp) are slow in Debug; keep app code debuggable.
+[profile.dev.package.whisper-rs-sys]
+opt-level = 3
+
+[profile.dev.package.llama-cpp-sys-2]
+opt-level = 3
+
+[profile.dev.package."*"]
+opt-level = 2

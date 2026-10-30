@@ -189,3 +189,61 @@ export function formulaArgInputClass(options: FormulaArgInputClassOptions = {}):
   }
   return classes.join(" ");
 }
+
+type VariableTokenContext = {
+  start: number;
+  end: number;
+  query: string;
+};
+
+export function deriveFollowUpVariableMap(actions: FormActionPayload[]) {
+  let next = 0;
+  const byActionIndex = new Map<number, number>();
+  actions.forEach((action, idx) => {
+    if (!("sub_prompt" in action)) return;
+    next += 1;
+    byActionIndex.set(idx, next);
+  });
+  return {
+    byActionIndex,
+    labels: Array.from({ length: next }, (_, i) => `Variable ${i + 1}`),
+  };
+}
+
+export function deriveFormulaVariableLabels(
+  actions: FormActionPayload[],
+  prefixMode: boolean,
+  forActionIndex: number,
+): string[] {
+  const followUp = deriveFollowUpVariableMap(actions);
+  const labels = [...followUp.labels, "{{last_result}}"];
+  if (prefixMode) {
+    labels.push("{{remainder}}", "{{shortcut_input}}");
+  }
+  for (let i = 0; i < forActionIndex; i += 1) {
+    labels.push(`{{step_${i + 1}}}`);
+  }
+  return labels;
+}
+
+export function extractVariableTokenContext(inputValue: string, caret: number): VariableTokenContext | null {
+  const before = inputValue.slice(0, caret);
+  const varMatch = /(^|\s)(Variable(?:\s+\d*)?)$/i.exec(before);
+  if (varMatch) {
+    const token = varMatch[2];
+    return {
+      start: before.length - token.length,
+      end: caret,
+      query: token.replace(/^Variable/i, "").trim(),
+    };
+  }
+  const tplMatch = /\{\{([a-z_]*)$/i.exec(before);
+  if (tplMatch) {
+    return {
+      start: before.length - tplMatch[0].length,
+      end: caret,
+      query: tplMatch[1] ?? "",
+    };
+  }
+  return null;
+}

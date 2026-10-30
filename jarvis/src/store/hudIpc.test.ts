@@ -33,7 +33,7 @@ describe("subscribeHudIpc", () => {
 
   it("registers every HUD channel in a single parallel await", async () => {
     await subscribeHudIpc();
-    expect(listen).toHaveBeenCalledTimes(8);
+    expect(listen).toHaveBeenCalledTimes(7);
   });
 
   it("applies hud_get_phase after listeners attach so phase is not stale", async () => {

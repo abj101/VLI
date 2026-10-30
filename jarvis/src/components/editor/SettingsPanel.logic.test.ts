@@ -1,7 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  hotkeyChordMatchesKeyboardEvent,
-  keyboardEventToHotkeyChord,
   createHotkeyRecordingState,
   isIgnorableHotkeyRecordingEvent,
   processHotkeyRecordingKeyDown,
@@ -136,11 +134,9 @@ describe("SettingsPanel logic", () => {
   });
 
   it("resolves editor material alpha from transparency (0 = opaque, 100 = floor)", () => {
-    expect(resolveEditorMaterialAlphaPct(0, "light")).toBe(100);
-    expect(resolveEditorMaterialAlphaPct(0, "dark")).toBe(100);
-    expect(resolveEditorMaterialAlphaPct(100, "light")).toBe(75);
-    expect(resolveEditorMaterialAlphaPct(100, "dark")).toBe(75);
-    expect(resolveEditorMaterialAlphaPct(50, "dark")).toBe(88);
+    expect(resolveEditorMaterialAlphaPct(0)).toBe(100);
+    expect(resolveEditorMaterialAlphaPct(100)).toBe(75);
+    expect(resolveEditorMaterialAlphaPct(50)).toBe(88);
     expect(resolveEditorSidebarMaterialAlphaPct(0, "light")).toBe(100);
     expect(resolveEditorSidebarMaterialAlphaPct(0, "dark")).toBe(100);
     expect(resolveEditorSidebarMaterialAlphaPct(100, "light")).toBe(80);
@@ -154,7 +150,7 @@ describe("SettingsPanel logic", () => {
       const offset =
         (theme === "light" ? 97 : 98) - (theme === "light" ? 92 : 95);
       for (const transparency of [25, 50, 75, 100]) {
-        const shell = resolveEditorMaterialAlphaPct(transparency, theme);
+        const shell = resolveEditorMaterialAlphaPct(transparency);
         const sidebar = resolveEditorSidebarMaterialAlphaPct(transparency, theme);
         expect(sidebar).toBe(Math.min(100, shell + offset));
       }
@@ -194,46 +190,6 @@ describe("SettingsPanel logic", () => {
     vi.unstubAllGlobals();
   });
 
-  it("matches hotkey chord against keyboard events", () => {
-    const esc = {
-      key: "Escape",
-      ctrlKey: false,
-      shiftKey: false,
-      altKey: false,
-      metaKey: false,
-    } as KeyboardEvent;
-    expect(hotkeyChordMatchesKeyboardEvent("escape", esc)).toBe(true);
-    expect(hotkeyChordMatchesKeyboardEvent("Escape", esc)).toBe(true);
-
-    const j = {
-      key: "j",
-      ctrlKey: true,
-      shiftKey: true,
-      altKey: false,
-      metaKey: false,
-    } as KeyboardEvent;
-    expect(hotkeyChordMatchesKeyboardEvent("ctrl+shift+j", j)).toBe(true);
-    expect(hotkeyChordMatchesKeyboardEvent("ctrl+shift+J", j)).toBe(true);
-
-    const jNoMod = {
-      key: "j",
-      ctrlKey: false,
-      shiftKey: false,
-      altKey: false,
-      metaKey: false,
-    } as KeyboardEvent;
-    expect(hotkeyChordMatchesKeyboardEvent("ctrl+shift+j", jNoMod)).toBe(false);
-
-    const escWithCtrl = {
-      key: "Escape",
-      ctrlKey: true,
-      shiftKey: false,
-      altKey: false,
-      metaKey: false,
-    } as KeyboardEvent;
-    expect(hotkeyChordMatchesKeyboardEvent("escape", escWithCtrl)).toBe(false);
-  });
-
   it("requires non-empty hotkey input", () => {
     expect(validateHotkeyInput("ctrl+shift+j")).toBeNull();
     expect(validateHotkeyInput("   ")).toBe("Hotkey is required.");
@@ -249,35 +205,6 @@ describe("SettingsPanel logic", () => {
     expect(isHotkeyModifierToken("j")).toBe(false);
   });
 
-  it("builds hotkey chord strings from keyboard events", () => {
-    const esc = {
-      key: "Escape",
-      ctrlKey: false,
-      shiftKey: false,
-      altKey: false,
-      metaKey: false,
-    } as KeyboardEvent;
-    expect(keyboardEventToHotkeyChord(esc)).toBe("escape");
-
-    const j = {
-      key: "j",
-      ctrlKey: true,
-      shiftKey: true,
-      altKey: false,
-      metaKey: false,
-    } as KeyboardEvent;
-    expect(keyboardEventToHotkeyChord(j)).toBe("ctrl+shift+j");
-
-    const controlOnly = {
-      key: "Control",
-      ctrlKey: true,
-      shiftKey: false,
-      altKey: false,
-      metaKey: false,
-    } as KeyboardEvent;
-    expect(keyboardEventToHotkeyChord(controlOnly)).toBeNull();
-  });
-
   it("waits for a main key after modifier-only presses during recording", () => {
     let state = createHotkeyRecordingState();
     const ctrlDown = {
@@ -288,7 +215,7 @@ describe("SettingsPanel logic", () => {
       altKey: false,
       metaKey: false,
       getModifierState: () => false,
-    } as KeyboardEvent;
+    } as unknown as KeyboardEvent;
     let step = processHotkeyRecordingKeyDown(ctrlDown, state);
     state = step.next;
     expect(step.action).toEqual({ type: "ignore" });
@@ -302,7 +229,7 @@ describe("SettingsPanel logic", () => {
       altKey: false,
       metaKey: false,
       getModifierState: (mod: string) => mod === "Control",
-    } as KeyboardEvent;
+    } as unknown as KeyboardEvent;
     step = processHotkeyRecordingKeyDown(spaceDown, state);
     expect(step.action).toEqual({ type: "record", chord: "ctrl+space" });
   });
@@ -317,7 +244,7 @@ describe("SettingsPanel logic", () => {
       altKey: false,
       metaKey: false,
       getModifierState: (mod: string) => mod === "Control" || mod === "Shift",
-    } as KeyboardEvent;
+    } as unknown as KeyboardEvent;
     const step = processHotkeyRecordingKeyDown(j, state);
     expect(step.action).toEqual({ type: "record", chord: "ctrl+shift+j" });
   });
@@ -332,7 +259,7 @@ describe("SettingsPanel logic", () => {
       altKey: false,
       metaKey: false,
       getModifierState: (mod: string) => mod === "Shift",
-    } as KeyboardEvent;
+    } as unknown as KeyboardEvent;
     state = processHotkeyRecordingKeyDown(shiftDown, state).next;
 
     const shiftUp = {
@@ -343,7 +270,7 @@ describe("SettingsPanel logic", () => {
       altKey: false,
       metaKey: false,
       getModifierState: () => false,
-    } as KeyboardEvent;
+    } as unknown as KeyboardEvent;
     state = processHotkeyRecordingKeyUp(shiftUp, state);
 
     const spaceDown = {
@@ -354,7 +281,7 @@ describe("SettingsPanel logic", () => {
       altKey: false,
       metaKey: false,
       getModifierState: () => false,
-    } as KeyboardEvent;
+    } as unknown as KeyboardEvent;
     expect(processHotkeyRecordingKeyDown(spaceDown, state).action).toEqual({
       type: "record",
       chord: "space",
@@ -370,7 +297,7 @@ describe("SettingsPanel logic", () => {
       shiftKey: false,
       altKey: false,
       metaKey: false,
-    } as KeyboardEvent;
+    } as unknown as KeyboardEvent;
     expect(isIgnorableHotkeyRecordingEvent(repeat)).toBe(true);
     expect(processHotkeyRecordingKeyDown(repeat, state).action).toEqual({ type: "ignore" });
 
@@ -381,7 +308,7 @@ describe("SettingsPanel logic", () => {
       shiftKey: false,
       altKey: false,
       metaKey: false,
-    } as KeyboardEvent;
+    } as unknown as KeyboardEvent;
     expect(processHotkeyRecordingKeyDown(composing, state).action).toEqual({ type: "ignore" });
   });
 
@@ -393,7 +320,7 @@ describe("SettingsPanel logic", () => {
       shiftKey: false,
       altKey: false,
       metaKey: false,
-    } as KeyboardEvent;
+    } as unknown as KeyboardEvent;
     expect(processHotkeyRecordingKeyDown(escape, state).action).toEqual({ type: "cancel" });
 
     const backspace = {
@@ -402,40 +329,8 @@ describe("SettingsPanel logic", () => {
       shiftKey: false,
       altKey: false,
       metaKey: false,
-    } as KeyboardEvent;
+    } as unknown as KeyboardEvent;
     expect(processHotkeyRecordingKeyDown(backspace, state).action).toEqual({ type: "clear" });
-  });
-
-  it("round-trips keyboard events through chord encoding and matching", () => {
-    const samples = [
-      {
-        key: "Escape",
-        ctrlKey: false,
-        shiftKey: false,
-        altKey: false,
-        metaKey: false,
-      },
-      {
-        key: "j",
-        ctrlKey: true,
-        shiftKey: true,
-        altKey: false,
-        metaKey: false,
-      },
-      {
-        key: "F12",
-        ctrlKey: true,
-        shiftKey: false,
-        altKey: false,
-        metaKey: false,
-      },
-    ] as KeyboardEvent[];
-
-    for (const event of samples) {
-      const chord = keyboardEventToHotkeyChord(event);
-      expect(chord).not.toBeNull();
-      expect(hotkeyChordMatchesKeyboardEvent(chord!, event)).toBe(true);
-    }
   });
 
   it("warms up Vulkan GPU model only when enabling supported Vulkan", () => {

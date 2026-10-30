@@ -9,7 +9,6 @@ import type {
   ActionErrorPayload,
   ActionStatus,
   AudioErrorPayload,
-  HudPhase,
   HudPhasePayload,
   MatchResult,
   TranscriptUpdate,
@@ -30,7 +29,7 @@ function pickHudState(s: HudStore): HudState {
   };
 }
 
-export type HudStore = HudState & {
+type HudStore = HudState & {
   applyIpc: (
     topic: HudWireTopic,
     payload:

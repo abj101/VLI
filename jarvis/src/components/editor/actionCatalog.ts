@@ -1,7 +1,7 @@
 import { isEditorPendingAction, type FormActionPayload } from "../../types";
 import type { ActionKind, ConcreteActionKind } from "./NodeForm.logic";
 
-export type ActionKindOption = {
+type ActionKindOption = {
   id: ConcreteActionKind;
   label: string;
   /** Extra tokens for search (lowercase). */

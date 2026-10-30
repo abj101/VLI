@@ -1,0 +1,4 @@
+# Own target dir so rust-analyzer never invalidates the tauri dev build's native (CMake) caches.
+[cargo]
+targetDir = true
+extraEnv = { LIBCLANG_PATH = "C:\Program Files\LLVM\bin" }
