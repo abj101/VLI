@@ -26,6 +26,7 @@ export interface HudPhaseSnapshot {
 }
 
 export interface TranscriptUpdate {
+  kind?: "growth" | "revision" | "silence_reset";
   text: string;
   is_final: boolean;
   /** Rust tags each pipeline with the HUD `session_id`; optional on the client. */

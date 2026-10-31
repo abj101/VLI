@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { initialHudState, reduceHudState } from "./hudReducer";
 import type { HudPhase } from "../types";
 
+it("keeps the last phrase visible when the decoder resets its silence buffer", () => {
+  const listening = reduceHudState(initialHudState, "hud-phase", {
+    phase: "listening", session_id: 7,
+  });
+  const spoken = reduceHudState(listening, "transcript-update", {
+    text: "open notepad", is_final: false, hud_session_id: 7,
+  });
+  const reset = reduceHudState(spoken, "transcript-update", {
+    text: "", is_final: false, hud_session_id: 7, kind: "silence_reset",
+  });
+  expect(reset.transcript).toBe("open notepad");
+});
+
 describe("reduceHudState", () => {
   it("applies hud-phase and replaces phase", () => {
     const next = reduceHudState(initialHudState, "hud-phase", {

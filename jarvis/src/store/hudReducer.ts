@@ -114,6 +114,10 @@ export function reduceHudState(
       if (state.overlayMode === "dictation") {
         return state;
       }
+      // A decoder buffer reset is not a request to erase the phrase being read.
+      if (u.kind === "silence_reset") {
+        return state;
+      }
       return {
         ...state,
         transcript: u.text,

@@ -60,6 +60,8 @@ pub(crate) const OPEN_SETTINGS_EVENT: &str = "open-settings";
 /// Kept below STT [`audio::stt::SILENCE_RESET_AFTER`] (900 ms) so end-of-phrase routing runs
 /// before rolling decode context clears, but long enough for natural word gaps.
 const SILENCE_BEFORE_MATCH: Duration = Duration::from_millis(800);
+/// Voice wake-ups leave the completed phrase on screen before entering routing.
+const VOICE_SILENCE_BEFORE_MATCH: Duration = Duration::from_millis(1400);
 /// Upper bound for deferred match wait when mic amplitude stays above threshold after speech ends.
 const MATCH_QUIET_MAX_WAIT: Duration = Duration::from_secs(4);
 /// Amplitude above this (0..1) counts as speech for activity / silence detection.
@@ -315,6 +317,8 @@ pub(crate) fn load_default_fuzzy_threshold_pct(app: &AppHandle) -> u16 {
 
 #[derive(Debug)]
 struct HudRuntime {
+    /// Selects the longer quiet window only for a wake-word listening session.
+    wake_activated: bool,
     phase: HudPhase,
     visible: bool,
     session_id: u64,
@@ -359,6 +363,7 @@ impl Default for HudRuntime {
     fn default() -> Self {
         Self {
             phase: HudPhase::default(),
+            wake_activated: false,
             visible: false,
             session_id: 0,
             overlay_mode: HudOverlayMode::Command,
@@ -614,7 +619,12 @@ fn activity_idle_since(last: Option<Instant>, duration: Duration) -> bool {
 }
 
 fn transcript_match_quiet(s: &HudRuntime) -> bool {
-    activity_idle_since(s.last_transcript_activity, SILENCE_BEFORE_MATCH)
+    let quiet_window = if s.wake_activated {
+        VOICE_SILENCE_BEFORE_MATCH
+    } else {
+        SILENCE_BEFORE_MATCH
+    };
+    activity_idle_since(s.last_transcript_activity, quiet_window)
 }
 
 fn speech_match_quiet(s: &HudRuntime) -> bool {
@@ -780,7 +790,7 @@ fn should_attempt_command_match(rt: &HudRuntime) -> bool {
 }
 
 fn should_attempt_match_for_update(rt: &HudRuntime, is_final: bool) -> bool {
-    if is_final {
+    if is_final && !rt.wake_activated {
         return true;
     }
     if !rt.nonempty_transcript_this_listen {
@@ -805,6 +815,16 @@ fn deferred_partial_match_text(
         return None;
     }
     let text = s.pending_transcript.trim();
+    if s.wake_activated {
+        let phrase: String = text
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect();
+        if matches!(phrase.as_str(), "hey" | "jarvis" | "heyjarvis") {
+            return None;
+        }
+    }
     if text.is_empty() {
         return None;
     }
@@ -837,6 +857,7 @@ pub(crate) fn cancel_active_run_in_state(s: &mut HudRuntime) {
 }
 
 fn prepare_hud_listening_session(s: &mut HudRuntime) -> u64 {
+    s.wake_activated = false;
     let now = Instant::now();
     s.dismissed_at = None;
     s.visible = true;
@@ -1305,7 +1326,7 @@ fn process_transcript_update(
         return Ok(());
     }
 
-    let (can_match, can_attempt_this_update) = {
+    let can_match = {
         let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
         if update.hud_session_id != s.session_id {
             debug!(
@@ -1314,12 +1335,23 @@ fn process_transcript_update(
             );
             return Ok(());
         }
-        (
-            should_attempt_command_match(&s),
-            should_attempt_match_for_update(&s, update.is_final),
-        )
+        should_attempt_command_match(&s)
     };
     if update.kind == TranscriptPartialKind::SilenceReset {
+        let deferred = {
+            let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+            if s.wake_activated && can_match && !s.pending_transcript.trim().is_empty() {
+                Some((s.session_id, s.transcript_revision))
+            } else {
+                None
+            }
+        };
+        if let Some((session_id, revision)) = deferred {
+            spawn_deferred_partial_match(
+                app.clone(), Arc::clone(rt), audio.clone(), session_id, revision,
+            );
+            return Ok(());
+        }
         let route_text = {
             let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
             if update.hud_session_id != s.session_id || !should_attempt_command_match(&s) {
@@ -1359,6 +1391,10 @@ fn process_transcript_update(
     }
     touch_speech_on_transcript(rt, &update.text);
     let pending_meta = update_pending_transcript(rt, &update.text);
+    let can_attempt_this_update = {
+        let s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+        should_attempt_match_for_update(&s, update.is_final)
+    };
     if !can_match {
         debug!("flow: skip (not listening or not visible)");
         return Ok(());
@@ -1495,6 +1531,7 @@ fn wake_request_hud(
     }
 
     let session_id = prepare_hud_listening_session(&mut s);
+    s.wake_activated = true;
     drop(s);
 
     let window = app
@@ -2889,6 +2926,30 @@ mod tests {
     use rusqlite::Connection;
     use std::sync::atomic::Ordering;
     use tempfile::tempdir;
+
+    #[test]
+    fn wake_phrase_stays_visible_longer_than_hotkey_phrase() {
+        let mut state = HudRuntime {
+            wake_activated: true,
+            visible: true,
+            phase: HudPhase::Listening,
+            nonempty_transcript_this_listen: true,
+            last_transcript_activity: Some(Instant::now() - Duration::from_millis(1100)),
+            pending_transcript: "open notepad".into(),
+            transcript_revision: 1,
+            ..HudRuntime::default()
+        };
+        assert!(deferred_partial_match_text(&state, 0, 1).is_none());
+        assert!(!should_attempt_match_for_update(&state, true));
+        state.last_transcript_activity = Some(Instant::now() - Duration::from_millis(1500));
+        assert_eq!(deferred_partial_match_text(&state, 0, 1).as_deref(), Some("open notepad"));
+        state.pending_transcript = "Hey, Jarvis.".into();
+        assert!(deferred_partial_match_text(&state, 0, 1).is_none());
+        state.pending_transcript = "open notepad".into();
+        state.last_transcript_activity = Some(Instant::now() - Duration::from_millis(1100));
+        state.wake_activated = false;
+        assert_eq!(deferred_partial_match_text(&state, 0, 1).as_deref(), Some("open notepad"));
+    }
 
     #[test]
     fn open_editor_focuses_existing_window_instead_of_duplicate() {
