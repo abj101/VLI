@@ -193,6 +193,7 @@ fn run_decode(
             .as_nanos()
     );
     let body = inference_multipart(&boundary, &wav);
+    let decode_started = Instant::now();
     let response = ureq::post(&format!(
         "http://127.0.0.1:{}/inference",
         server.process.port
@@ -216,6 +217,11 @@ fn run_decode(
             .map_err(|e| format!("read whisper response: {e}"))?,
     )
     .map_err(|e| format!("parse whisper response: {e}"))?;
+    debug!(
+        "stt: HTTP decode completed in {} ms ({} samples)",
+        decode_started.elapsed().as_millis(),
+        audio_16k.len()
+    );
     value
         .get("text")
         .and_then(serde_json::Value::as_str)

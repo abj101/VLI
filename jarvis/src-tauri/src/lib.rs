@@ -1442,13 +1442,6 @@ fn show_hud_from_hotkey_impl(
     let session_id = s.session_id;
     drop(s);
 
-    if opening_listen && tray::mic_start_allowed(is_paused, phase) {
-        try_start_listening_audio(app, audio, session_id, false, false);
-        if let Some(sid) = listening_session_id.or(Some(session_id)) {
-            spawn_no_match_watchdog(app.clone(), Arc::clone(rt), audio.clone(), sid);
-        }
-    }
-
     let window = app
         .get_webview_window(HUD_WINDOW_LABEL)
         .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
@@ -1466,6 +1459,13 @@ fn show_hud_from_hotkey_impl(
 
     sync_hud_window_from_state(app, rt)?;
     emit_hud_phase(app);
+
+    if opening_listen && tray::mic_start_allowed(is_paused, phase) {
+        try_start_listening_audio(app, audio, session_id, false, false);
+        if let Some(sid) = listening_session_id.or(Some(session_id)) {
+            spawn_no_match_watchdog(app.clone(), Arc::clone(rt), audio.clone(), sid);
+        }
+    }
 
     if defer_hud_window_hide && phase == HudPhase::Stopped {
         schedule_hud_window_hide_when_still_dismissed(app.clone(), Arc::clone(rt));
@@ -1497,12 +1497,6 @@ fn wake_request_hud(
     let session_id = prepare_hud_listening_session(&mut s);
     drop(s);
 
-    // Open the listen mic before window show/focus so post-wake speech is not lost to handoff lag.
-    if tray::mic_start_allowed(is_paused, HudPhase::Listening) {
-        try_start_listening_audio(app, audio, session_id, true, false);
-        spawn_no_match_watchdog(app.clone(), Arc::clone(rt), audio.clone(), session_id);
-    }
-
     let window = app
         .get_webview_window(HUD_WINDOW_LABEL)
         .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
@@ -1513,6 +1507,13 @@ fn wake_request_hud(
 
     sync_hud_window(app, HudPhase::Listening)?;
     emit_hud_phase(app);
+
+    // Publish the visible listening state before cached inference can route a command.
+    // The wake microphone keeps filling preroll until this handoff.
+    if tray::mic_start_allowed(is_paused, HudPhase::Listening) {
+        try_start_listening_audio(app, audio, session_id, true, false);
+        spawn_no_match_watchdog(app.clone(), Arc::clone(rt), audio.clone(), session_id);
+    }
 
     Ok(())
 }

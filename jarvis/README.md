@@ -40,6 +40,11 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
+Windows builds produce an MSI and adjacent CAB files in `src-tauri/target/release/bundle/msi/`.
+Keep the MSI and all CAB files together when distributing or installing: the offline models
+and server runtimes exceed the size supported by a single embedded cabinet. The npm build
+hook copies the external cabinets alongside the MSI automatically.
+
 On macOS, the runtime check expects both server executables on `PATH`.
 
 Other useful commands:

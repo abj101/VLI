@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "targets": ["msi"],
+    "windows": {
+      "wix": {
+        "template": "windows/installer.wxs"
+      }
+    }
+  }
+}
