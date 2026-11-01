@@ -205,12 +205,12 @@ pub fn send_backspaces(_count: usize) -> Result<(), String> {
 
 #[cfg(not(windows))]
 pub(crate) fn send_virtual_key(_vk: u16) -> Result<(), String> {
-    Err("not supported on platform".into())
+    Err("not supported on this platform".into())
 }
 
 #[cfg(not(windows))]
 pub(crate) fn send_virtual_key_chord(_keys: &[u16]) -> Result<(), String> {
-    Err("not supported on platform".into())
+    Err("not supported on this platform".into())
 }
 
 #[cfg(test)]

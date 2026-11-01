@@ -249,7 +249,7 @@ fn execute_shortcut_tool(
                 return crate::input::type_text::send_virtual_key_chord(&[VK_LWIN.0, key]);
             }
             #[cfg(not(windows))]
-            return Err("not supported on platform".into());
+            return Err("not supported on this platform".into());
         }
         _ => return Err(format!("unsupported shortcut `{name}`")),
     };
@@ -278,7 +278,7 @@ fn execute_media_tool(args: &HashMap<String, String>) -> Result<(), String> {
     #[cfg(not(windows))]
     {
         let _ = control;
-        Err("not supported on platform".into())
+        Err("not supported on this platform".into())
     }
 }
 
