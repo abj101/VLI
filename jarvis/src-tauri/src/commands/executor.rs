@@ -264,16 +264,6 @@ pub fn execute_command_with_context(
     app_index: Option<&[AppEntry]>,
     tool_context: Option<ToolCallContext>,
     target_aliases: Option<&[TargetAlias]>,
-) {
-    execute_command_with_db_context(node, runtime, app_index, tool_context, target_aliases, None);
-}
-
-pub fn execute_command_with_db_context(
-    node: &CommandNode,
-    runtime: &impl ActionRuntime,
-    app_index: Option<&[AppEntry]>,
-    tool_context: Option<ToolCallContext>,
-    target_aliases: Option<&[TargetAlias]>,
     command_conn: Option<&Connection>,
 ) {
     debug!(
@@ -302,7 +292,8 @@ pub fn execute_resolved_actions(
     runtime: &impl ActionRuntime,
     app_index: Option<&[AppEntry]>,
     script_conn: Option<&Connection>,
-) {
+) -> Result<(), String> {
+    let mut steps = Vec::new();
     execute_actions(
         actions,
         runtime,
@@ -313,8 +304,12 @@ pub fn execute_resolved_actions(
         None,
         &mut ExecutionContext::default(),
         &mut RunState::default(),
-        None,
+        Some(&mut steps),
     );
+    match steps.into_iter().find_map(|step| step.error) {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 /// Dry-run a command in the editor: same executor as voice, with per-step output capture.
@@ -2000,7 +1995,7 @@ mod tests {
     fn executor_start_dictation_action() {
         let runtime = MockRuntime::default();
         let node = node_with_actions(vec![Action::StartDictation {}, Action::StopDictation {}]);
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.dictation_starts, 1);
         assert_eq!(s.dictation_stops, 1);
@@ -2020,7 +2015,7 @@ mod tests {
             path: "".into(),
             placement: None,
         }]);
-        execute_command_with_context(&node, &runtime, Some(&index), None, None);
+        execute_command_with_context(&node, &runtime, Some(&index), None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.app_calls, vec!["calc.exe".to_string()]);
         assert!(s.errors.is_empty());
@@ -2034,7 +2029,7 @@ mod tests {
             path: "   ".into(),
             placement: None,
         }]);
-        execute_command_with_context(&node, &runtime, Some(&[]), None, None);
+        execute_command_with_context(&node, &runtime, Some(&[]), None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.app_calls, vec!["notepad".to_string()]);
     }
@@ -2054,7 +2049,7 @@ mod tests {
             placement: None,
         }]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert!(s.app_calls.is_empty());
         assert_eq!(s.statuses.len(), 1);
@@ -2069,7 +2064,7 @@ mod tests {
             url: "file:///etc/passwd".into(),
         }]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert!(s.url_calls.is_empty());
         assert_eq!(s.statuses.len(), 1);
@@ -2091,7 +2086,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.app_calls, vec!["notepad.exe".to_string()]);
         assert_eq!(s.url_calls, vec!["https://github.com".to_string()]);
@@ -2113,7 +2108,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.statuses,
@@ -2142,7 +2137,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.script_calls,
@@ -2162,7 +2157,7 @@ mod tests {
             args: vec![],
         }]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert!(s.script_calls.is_empty());
         assert_eq!(s.errors.len(), 1);
@@ -2176,7 +2171,7 @@ mod tests {
             keys: "a'b".into(),
         }]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert!(s.key_calls.is_empty());
         assert_eq!(s.errors.len(), 1);
@@ -2201,7 +2196,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.wait_calls, vec![10]);
         assert_eq!(
@@ -2227,7 +2222,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert!(s.errors.is_empty());
         assert_eq!(s.speak_calls, vec!["task complete".to_string()]);
@@ -2243,7 +2238,7 @@ mod tests {
         let runtime = MockRuntime::default();
         let node = node_with_actions(vec![Action::Speak { text: "   ".into() }]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert!(s.speak_calls.is_empty());
         assert_eq!(s.errors.len(), 1);
@@ -2262,7 +2257,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert!(s.url_calls.is_empty());
         assert!(s.speak_calls.is_empty());
@@ -2282,7 +2277,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.follow_up_prompts,
@@ -2308,7 +2303,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.follow_up_prompts,
@@ -2333,7 +2328,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert!(s
             .speak_calls
@@ -2349,7 +2344,7 @@ mod tests {
             prompt: "Which page should I open?".into(),
         }]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert!(s.statuses.iter().any(|status| status == "follow up"));
         assert!(s.statuses.iter().any(|status| status == "docs"));
@@ -2445,7 +2440,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.follow_up_prompts, vec!["Need input".to_string()]);
         assert!(s.url_calls.is_empty());
@@ -2464,7 +2459,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.speak_calls, vec!["https://example.com/docs".to_string()]);
         assert_eq!(s.url_calls, vec!["https://example.com/docs".to_string()]);
@@ -2501,7 +2496,7 @@ mod tests {
             Action::OpenUrl { url: "   ".into() },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.url_calls,
@@ -2585,7 +2580,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.speak_calls, vec!["pipeline data".to_string()]);
         assert!(s.errors.is_empty());
@@ -2602,7 +2597,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.speak_calls, vec!["api payload".to_string()]);
         assert!(s.errors.is_empty());
@@ -2622,7 +2617,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.speak_calls, vec!["clipboard payload".to_string()]);
         assert!(s.errors.is_empty());
@@ -2644,7 +2639,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.speak_calls, vec!["order-12345 shipped".to_string(), "12345".to_string()]);
         assert!(s.errors.is_empty());
@@ -2669,7 +2664,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.speak_calls,
@@ -2700,7 +2695,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.speak_calls,
@@ -2730,7 +2725,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.speak_calls,
@@ -2754,7 +2749,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.speak_calls.len(), 1);
         assert!(s.speak_calls[0].contains("size_bytes="));
@@ -2802,7 +2797,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.speak_calls.len(), 1);
         assert!(s.speak_calls[0].contains("total_memory_bytes="));
@@ -2823,7 +2818,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.speak_calls.len(), 1);
         let saved = std::path::Path::new(&s.speak_calls[0]);
@@ -2848,7 +2843,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.speak_calls, vec!["copied payload".to_string(), "copied payload".to_string()]);
         assert!(s.errors.is_empty());
@@ -2874,7 +2869,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.speak_calls,
@@ -2901,7 +2896,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(s.speak_calls, vec!["empty".to_string()]);
         assert!(s.errors.is_empty());
@@ -2922,7 +2917,7 @@ mod tests {
             },
         ]);
 
-        execute_command_with_context(&node, &runtime, None, None, None);
+        execute_command_with_context(&node, &runtime, None, None, None, None);
         let s = runtime.snapshot();
         assert_eq!(
             s.speak_calls,
