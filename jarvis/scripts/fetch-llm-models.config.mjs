@@ -4,8 +4,8 @@
  */
 export const llmModels = [
   {
-    file: "qwen2.5-0.5b-instruct-q4_k_m.gguf",
-    url: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    file: "d1-2B-Q4_K_M.gguf",
+    url: "https://huggingface.co/LiquidAI/d1-2B-GGUF/resolve/main/d1-2B-Q4_K_M.gguf",
     label: "router",
   },
   {

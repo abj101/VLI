@@ -233,8 +233,19 @@ pub(crate) fn warmup_router_blocking(app: AppHandle) -> RouterWarmupPayload {
         }
     };
     let use_gpu = status.runtime_available;
+    let warmup_request = serde_json::json!({
+        "state": "Router warmup",
+        "questions": {
+            "warmup": {
+                "type": "choice",
+                "instructions": "Choose an option",
+                "criteria": { "READY": "router is ready", "NONE": "no action" }
+            }
+        }
+    });
     match ensure_router_server(&app, &model_path, use_gpu)
-        .and_then(|()| infer_router_completion(&model_path, "warmup", use_gpu, None))
+        .and_then(|()| crate::llm::local::router_server_port())
+        .and_then(|port| crate::llm::local::systemone(port, &warmup_request))
     {
         Ok(_) => {
             if let Some(cache) = app.try_state::<RouterModelCache>() {

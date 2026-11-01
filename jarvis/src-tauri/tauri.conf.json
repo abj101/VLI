@@ -66,7 +66,7 @@
       "resources/oww/melspectrogram.onnx": "resources/oww/melspectrogram.onnx",
       "resources/oww/embedding_model.onnx": "resources/oww/embedding_model.onnx",
       "resources/oww/hey_jarvis_v0.1.onnx": "resources/oww/hey_jarvis_v0.1.onnx",
-      "resources/qwen2.5-0.5b-instruct-q4_k_m.gguf": "resources/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+      "resources/d1-2B-Q4_K_M.gguf": "resources/d1-2B-Q4_K_M.gguf",
       "resources/qwen2.5-3b-instruct-q4_k_m.gguf": "resources/qwen2.5-3b-instruct-q4_k_m.gguf",
       "resources/bin/": "bin/"
     },

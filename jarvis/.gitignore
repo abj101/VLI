@@ -29,7 +29,6 @@ coverage
 src-tauri/resources/oww/*.onnx
 
 # On-device LLM GGUF (fetch via npm run fetch-models / fetch-llm-models)
-src-tauri/resources/qwen2.5-0.5b-instruct-q4_k_m.gguf
 src-tauri/resources/qwen2.5-3b-instruct-q4_k_m.gguf
 
 # Legacy Picovoice Porcupine assets (wake engine removed; do not commit)

@@ -7,7 +7,7 @@ use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
-pub const ROUTER_MODEL_FILE: &str = "qwen2.5-0.5b-instruct-q4_k_m.gguf";
+pub const ROUTER_MODEL_FILE: &str = "d1-2B-Q4_K_M.gguf";
 pub const COMPOSER_MODEL_FILE: &str = "qwen2.5-3b-instruct-q4_k_m.gguf";
 const ROUTER_N_CTX: u32 = 2048;
 const COMPOSER_N_CTX: u32 = 4096;
@@ -121,6 +121,12 @@ fn sidecar_args(model_path: &str, context: u32, use_gpu: bool) -> Vec<String> {
     ]
 }
 
+fn router_sidecar_args(model_path: &str, use_gpu: bool) -> Vec<String> {
+    let mut args = sidecar_args(model_path, ROUTER_N_CTX, use_gpu);
+    args.extend(["-b".into(), "2048".into(), "-ub".into(), "2048".into()]);
+    args
+}
+
 /// Ensure the single persistent router server matches current model and acceleration settings.
 pub fn ensure_router_server(
     app: &AppHandle,
@@ -141,7 +147,7 @@ pub fn ensure_router_server(
     let sidecar = sidecar::spawn(
         app,
         LLAMA_SERVER_EXE,
-        &sidecar_args(model_path, ROUTER_N_CTX, use_gpu),
+        &router_sidecar_args(model_path, use_gpu),
         "/health",
         SIDECAR_START_TIMEOUT,
     )?;
@@ -163,6 +169,28 @@ pub fn shutdown_router_server() {
 
 fn base_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
+}
+
+pub(crate) fn router_server_port() -> Result<u16, String> {
+    let slot = ROUTER_SERVER
+        .get()
+        .ok_or_else(|| "router llama-server is not running".to_string())?;
+    let guard = slot
+        .lock()
+        .map_err(|_| "router sidecar mutex poisoned".to_string())?;
+    guard
+        .as_ref()
+        .map(|server| server.sidecar.port)
+        .ok_or_else(|| "router llama-server is not running".to_string())
+}
+
+/// Send a decision-model request to llama-server's `/v1/systemone` endpoint.
+pub fn systemone(port: u16, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+    const SYSTEMONE_TIMEOUT: Duration = Duration::from_secs(5);
+    response_json(
+        post_json(port, "/v1/systemone", body, SYSTEMONE_TIMEOUT),
+        "/v1/systemone",
+    )
 }
 
 fn response_json(
@@ -425,4 +453,18 @@ pub fn infer_composer_completion(
     cancel: Arc<AtomicBool>,
 ) -> Result<String, String> {
     worker.infer(prompt, max_tokens, cancel)
+}
+
+#[cfg(test)]
+mod router_args_tests {
+    use super::{router_sidecar_args, sidecar_args, COMPOSER_N_CTX};
+
+    #[test]
+    fn batching_args_are_router_only() {
+        let router = router_sidecar_args("d1.gguf", false);
+        let composer = sidecar_args("composer.gguf", COMPOSER_N_CTX, false);
+        assert!(router.windows(2).any(|args| args == ["-b", "2048"]));
+        assert!(router.windows(2).any(|args| args == ["-ub", "2048"]));
+        assert!(!composer.iter().any(|arg| arg == "-b" || arg == "-ub"));
+    }
 }

@@ -5,6 +5,8 @@ pub mod composer;
 pub mod composer_expect;
 pub mod composer_prompt;
 pub mod composer_validate;
+#[cfg(test)]
+pub mod decider_args;
 
 #[cfg(test)]
 mod composer_eval;

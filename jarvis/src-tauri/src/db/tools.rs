@@ -29,6 +29,63 @@ pub fn ensure_tools_schema(conn: &Connection) -> Result<(), DbError> {
     seed_builtin_media(conn)?;
     seed_builtin_type_text(conn)?;
     seed_builtin_say(conn)?;
+    migrate_builtin_descriptions(conn)?;
+    Ok(())
+}
+
+fn migrate_builtin_descriptions(conn: &Connection) -> Result<(), DbError> {
+    for (name, old, updated) in [
+        (
+            "media",
+            "Controls media playback and volume",
+            "play/pause music, next or previous song/track, volume up/down, mute",
+        ),
+        (
+            "open_target",
+            "Opens an installed app or browser URL from a spoken name",
+            "open or launch an app or program by name, optionally on the left/right",
+        ),
+        (
+            "open_url",
+            "Opens a URL in the default browser",
+            "go to an explicit website address like github.com",
+        ),
+        (
+            "run_registered_script",
+            "Runs an allowlisted user script by id with declared arguments only",
+            "run one of the user's saved scripts by id",
+        ),
+        (
+            "say",
+            "Speaks the requested text aloud",
+            "Jarvis should speak some words aloud",
+        ),
+        (
+            "shortcut",
+            "Runs a common keyboard shortcut",
+            "copy, paste, undo, save, find, new/close/reopen/next tab, refresh, close window, switch app, minimize, show desktop",
+        ),
+        (
+            "snap_window",
+            "Moves the focused window to a screen zone",
+            "move/snap/maximize the current window",
+        ),
+        (
+            "type_text",
+            "Types the requested text into the focused app",
+            "type or write dictated words into the current app",
+        ),
+        (
+            "web_search",
+            "Searches Google for the requested query",
+            "search, google or look something up on the web",
+        ),
+    ] {
+        conn.execute(
+            "UPDATE tools SET description = ?1 WHERE name = ?2 AND builtin = 1 AND description = ?3",
+            rusqlite::params![updated, name, old],
+        )?;
+    }
     Ok(())
 }
 
@@ -38,7 +95,7 @@ fn seed_builtin_web_search(conn: &Connection) -> Result<(), DbError> {
         NewToolDefinition {
             name: "web_search".into(),
             display_name: "Web search".into(),
-            description: "Searches Google for the requested query".into(),
+            description: "search, google or look something up on the web".into(),
             parameters: vec![ToolParameter {
                 name: "query".into(),
                 param_type: "string".into(),
@@ -61,7 +118,7 @@ fn seed_builtin_shortcut(conn: &Connection) -> Result<(), DbError> {
         NewToolDefinition {
             name: "shortcut".into(),
             display_name: "Keyboard shortcut".into(),
-            description: "Runs a common keyboard shortcut".into(),
+            description: "copy, paste, undo, save, find, new/close/reopen/next tab, refresh, close window, switch app, minimize, show desktop".into(),
             parameters: vec![ToolParameter {
                 name: "name".into(),
                 param_type: "enum".into(),
@@ -106,7 +163,7 @@ fn seed_builtin_media(conn: &Connection) -> Result<(), DbError> {
         NewToolDefinition {
             name: "media".into(),
             display_name: "Media control".into(),
-            description: "Controls media playback and volume".into(),
+            description: "play/pause music, next or previous song/track, volume up/down, mute".into(),
             parameters: vec![ToolParameter {
                 name: "control".into(),
                 param_type: "enum".into(),
@@ -139,7 +196,7 @@ fn seed_builtin_type_text(conn: &Connection) -> Result<(), DbError> {
         NewToolDefinition {
             name: "type_text".into(),
             display_name: "Type text".into(),
-            description: "Types the requested text into the focused app".into(),
+            description: "type or write dictated words into the current app".into(),
             parameters: vec![ToolParameter {
                 name: "text".into(),
                 param_type: "string".into(),
@@ -162,7 +219,7 @@ fn seed_builtin_say(conn: &Connection) -> Result<(), DbError> {
         NewToolDefinition {
             name: "say".into(),
             display_name: "Speak text".into(),
-            description: "Speaks the requested text aloud".into(),
+            description: "Jarvis should speak some words aloud".into(),
             parameters: vec![ToolParameter {
                 name: "text".into(),
                 param_type: "string".into(),
@@ -210,7 +267,7 @@ fn seed_builtin_run_registered_script(conn: &Connection) -> Result<(), DbError> 
     let row = NewToolDefinition {
         name: "run_registered_script".into(),
         display_name: "Run registered script".into(),
-        description: "Runs an allowlisted user script by id with declared arguments only".into(),
+        description: "run one of the user's saved scripts by id".into(),
         parameters,
         actions,
         enabled: true,
@@ -246,7 +303,7 @@ fn seed_builtin_open_target(conn: &Connection) -> Result<(), DbError> {
     let row = NewToolDefinition {
         name: "open_target".into(),
         display_name: "Open app or site".into(),
-        description: "Opens an installed app or browser URL from a spoken name".into(),
+        description: "open or launch an app or program by name, optionally on the left/right".into(),
         parameters,
         actions,
         enabled: true,
@@ -272,7 +329,7 @@ fn seed_builtin_open_url(conn: &Connection) -> Result<(), DbError> {
     let row = NewToolDefinition {
         name: "open_url".into(),
         display_name: "Open URL".into(),
-        description: "Opens a URL in the default browser".into(),
+        description: "go to an explicit website address like github.com".into(),
         parameters,
         actions,
         enabled: true,
@@ -299,7 +356,7 @@ fn seed_builtin_snap_window(conn: &Connection) -> Result<(), DbError> {
     let row = NewToolDefinition {
         name: "snap_window".into(),
         display_name: "Snap window".into(),
-        description: "Moves the focused window to a screen zone".into(),
+        description: "move/snap/maximize the current window".into(),
         parameters,
         actions,
         enabled: true,
@@ -542,6 +599,79 @@ mod tests {
             .enum_values
             .iter()
             .any(|value| value == "show_desktop"));
+    }
+
+    #[test]
+    fn builtin_description_migration_preserves_user_edits() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_tools_schema(&conn).unwrap();
+        for (name, description) in [
+            ("media", "Controls media playback and volume"),
+            (
+                "open_target",
+                "Opens an installed app or browser URL from a spoken name",
+            ),
+            ("open_url", "Opens a URL in the default browser"),
+            (
+                "run_registered_script",
+                "Runs an allowlisted user script by id with declared arguments only",
+            ),
+            ("say", "Speaks the requested text aloud"),
+            ("shortcut", "Runs a common keyboard shortcut"),
+            ("snap_window", "Moves the focused window to a screen zone"),
+            ("type_text", "Types the requested text into the focused app"),
+            ("web_search", "Searches Google for the requested query"),
+        ] {
+            conn.execute(
+                "UPDATE tools SET description = ?1 WHERE name = ?2",
+                rusqlite::params![description, name],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "UPDATE tools SET description = 'my custom search description' WHERE name = 'web_search'",
+            [],
+        )
+        .unwrap();
+
+        ensure_tools_schema(&conn).unwrap();
+
+        let expected = [
+            (
+                "media",
+                "play/pause music, next or previous song/track, volume up/down, mute",
+            ),
+            (
+                "open_target",
+                "open or launch an app or program by name, optionally on the left/right",
+            ),
+            ("open_url", "go to an explicit website address like github.com"),
+            (
+                "run_registered_script",
+                "run one of the user's saved scripts by id",
+            ),
+            ("say", "Jarvis should speak some words aloud"),
+            (
+                "shortcut",
+                "copy, paste, undo, save, find, new/close/reopen/next tab, refresh, close window, switch app, minimize, show desktop",
+            ),
+            ("snap_window", "move/snap/maximize the current window"),
+            ("type_text", "type or write dictated words into the current app"),
+        ];
+        for (name, description) in expected {
+            assert_eq!(
+                get_tool_by_name(&conn, name).unwrap().unwrap().description,
+                description,
+                "migrate {name} description",
+            );
+        }
+        assert_eq!(
+            get_tool_by_name(&conn, "web_search")
+                .unwrap()
+                .unwrap()
+                .description,
+            "my custom search description"
+        );
     }
 
     #[test]

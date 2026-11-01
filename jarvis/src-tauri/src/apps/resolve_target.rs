@@ -302,7 +302,7 @@ pub(crate) fn canonicalize_explicit_url(text: &str) -> String {
     }
 }
 
-fn normalize_spoken_url(text: &str) -> String {
+pub(crate) fn normalize_spoken_url(text: &str) -> String {
     let mut s = text.to_lowercase();
     for (spoken, dot) in [
         (" dot com", ".com"),
