@@ -1,6 +1,8 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { useShallow } from "zustand/react/shallow";
 import { useDebounced } from "../../hooks/useDebounced";
 import { useHudStore } from "../../store/hudStore";
@@ -18,6 +20,14 @@ import { HUD_SHELL_TRANSITION_MS, hudShellEase } from "./hudMotion";
 const TRANSCRIPT_ANNOUNCE_DEBOUNCE_MS = 380;
 
 const HUD_SHELL_TRANSITION_S = HUD_SHELL_TRANSITION_MS / 1000;
+const DECIDER_CONFIRM_MS = 6_000;
+const DECIDER_SAVED_MS = 1_500;
+
+type DeciderToolCall = { tool: string; args: Record<string, string> };
+type DeciderConfirmPayload = { transcript: string; tool_calls: DeciderToolCall[] };
+type DeciderConfirmState =
+  | { id: number; kind: "confirm"; payload: DeciderConfirmPayload }
+  | { id: number; kind: "saving" | "saved" | "error" };
 
 /** Tauri drag script only checks `event.target`; delegate from child text/nodes up to the shell. */
 function handleHudDragPointerDown(e: ReactPointerEvent<HTMLElement>) {
@@ -282,12 +292,157 @@ function HudBody() {
 }
 
 export function HudPanel() {
+  const [deciderConfirm, setDeciderConfirm] = useState<DeciderConfirmState | null>(null);
+  const confirmIdRef = useRef(0);
+  const phaseRef = useRef("idle");
+  const activeConfirmationRef = useRef(false);
+
+  useEffect(() => {
+    let unlistenConfirm: (() => void) | undefined;
+    let unlistenPhase: (() => void) | undefined;
+    let cancelled = false;
+    void Promise.all([
+      listen<DeciderConfirmPayload>("decider-confirm", (event) => {
+        const id = ++confirmIdRef.current;
+        activeConfirmationRef.current = true;
+        setDeciderConfirm({ id, kind: "confirm", payload: event.payload });
+        // Done is click-through by default; make the prompt clickable without focusing the app.
+        void getCurrentWindow().show()
+          .then(() => {
+            if (confirmIdRef.current === id && phaseRef.current === "done") {
+              return getCurrentWindow().setIgnoreCursorEvents(false);
+            }
+          })
+          .catch(() => {});
+      }),
+      listen<{ phase: string }>("hud-phase", (event) => {
+        phaseRef.current = event.payload.phase;
+        if (event.payload.phase === "done") {
+          if (activeConfirmationRef.current) {
+            void getCurrentWindow().setIgnoreCursorEvents(false).catch(() => {});
+          }
+          return;
+        }
+        activeConfirmationRef.current = false;
+        confirmIdRef.current += 1;
+        setDeciderConfirm(null);
+      }),
+    ]).then(([stopConfirm, stopPhase]) => {
+      if (cancelled) {
+        stopConfirm();
+        stopPhase();
+      } else {
+        unlistenConfirm = stopConfirm;
+        unlistenPhase = stopPhase;
+      }
+    });
+    return () => {
+      cancelled = true;
+      unlistenConfirm?.();
+      unlistenPhase?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!deciderConfirm) return;
+    const timeout = window.setTimeout(
+      () => {
+        if (confirmIdRef.current !== deciderConfirm.id) return;
+        activeConfirmationRef.current = false;
+        confirmIdRef.current += 1;
+        setDeciderConfirm(null);
+        if (phaseRef.current === "done") {
+          void getCurrentWindow().setIgnoreCursorEvents(true).catch(() => {});
+        }
+      },
+      deciderConfirm.kind === "confirm" || deciderConfirm.kind === "saving"
+        ? DECIDER_CONFIRM_MS
+        : DECIDER_SAVED_MS,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [deciderConfirm]);
+
+  const saveDeciderCommand = async (id: number, payload: DeciderConfirmPayload) => {
+    if (confirmIdRef.current !== id) return;
+    setDeciderConfirm({ id, kind: "saving" });
+    void getCurrentWindow().setIgnoreCursorEvents(true).catch(() => {});
+    try {
+      await invoke("save_learned_command", {
+        transcript: payload.transcript,
+        toolCalls: payload.tool_calls,
+      });
+      if (confirmIdRef.current === id && phaseRef.current === "done") {
+        setDeciderConfirm({ id, kind: "saved" });
+      }
+    } catch (error) {
+      console.error("save_learned_command failed", error);
+      if (confirmIdRef.current === id && phaseRef.current === "done") {
+        setDeciderConfirm({ id, kind: "error" });
+      }
+    }
+  };
+
   return (
     <div
       className="hud-panel-fill"
       data-tauri-drag-region
       onPointerDown={handleHudDragPointerDown}
     >
+      {deciderConfirm && (
+        <div
+          role="dialog"
+          aria-label={deciderConfirm.kind === "confirm" ? "Save learned command" : "Command status"}
+          onPointerDown={(event) => event.stopPropagation()}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 12,
+            padding: 12,
+            background: "rgba(20, 20, 24, 0.96)",
+            color: "white",
+            font: "500 14px system-ui, sans-serif",
+          }}
+        >
+          {deciderConfirm.kind === "confirm" ? (
+            <>
+              <span>Did that work?</span>
+              <button
+                type="button"
+                onClick={() => void saveDeciderCommand(deciderConfirm.id, deciderConfirm.payload)}
+              >
+                Yes
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirmIdRef.current === deciderConfirm.id) {
+                    activeConfirmationRef.current = false;
+                    confirmIdRef.current += 1;
+                  }
+                  setDeciderConfirm(null);
+                  if (phaseRef.current === "done") {
+                    void getCurrentWindow().setIgnoreCursorEvents(true).catch(() => {});
+                  }
+                }}
+              >
+                No
+              </button>
+            </>
+          ) : (
+            <span role="status">
+              {deciderConfirm.kind === "saving"
+                ? "Saving…"
+                : deciderConfirm.kind === "saved"
+                  ? "Saved"
+                  : "Couldn’t save"}
+            </span>
+          )}
+        </div>
+      )}
       <HudBody />
     </div>
   );

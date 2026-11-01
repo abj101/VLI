@@ -1058,6 +1058,54 @@ pub(crate) fn finalize_command_run(app: &AppHandle, rt: &SharedHud, audio: &Shar
     audio::stop_shared_pipeline(app, audio);
 }
 
+/// Finish a successful Tier 2 run while leaving the HUD available for its confirmation prompt.
+/// Call before emitting `decider-confirm`; returns false if the run was stale or cancelled.
+pub(crate) fn finalize_decider_confirmation(
+    app: &AppHandle,
+    rt: &SharedHud,
+    audio: &SharedAudioPipeline,
+    expected_session_id: u64,
+) -> Result<bool, String> {
+    const CONFIRM_VISIBLE_MS: u64 = 6_000;
+
+    {
+        let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+        if !s.visible
+            || s.phase != HudPhase::Executing
+            || s.session_id != expected_session_id
+            || s.active_run_session_id != Some(expected_session_id)
+            || s.active_run_cancel.as_ref().is_some_and(|cancel| cancel.load(Ordering::Relaxed))
+        {
+            return Ok(false);
+        }
+        s.phase = HudPhase::Done;
+        s.active_run_cancel = None;
+        s.active_run_session_id = None;
+        s.pending_follow_up_response = None;
+        s.pending_follow_up_candidate = None;
+        s.pending_follow_up_candidate_at = None;
+    }
+
+    audio::stop_shared_pipeline(app, audio);
+    let sync_result = sync_hud_window_from_state(app, rt);
+    emit_hud_phase(app);
+
+    let app = app.clone();
+    let rt = Arc::clone(rt);
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(CONFIRM_VISIBLE_MS));
+        let should_dismiss = rt.lock().is_ok_and(|s| {
+            s.visible && s.phase == HudPhase::Done && s.session_id == expected_session_id
+        });
+        if should_dismiss {
+            if let Err(error) = dismiss_hud(&app, &rt) {
+                warn!("decider confirmation HUD dismiss: {error}");
+            }
+        }
+    });
+    sync_result.map(|()| true)
+}
+
 /// Stop mic + dismiss command HUD so dictation can start (e.g. hidden `executing` session).
 pub(crate) fn abort_command_hud_session(
     app: &AppHandle,
