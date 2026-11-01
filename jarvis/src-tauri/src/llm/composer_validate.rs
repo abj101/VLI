@@ -630,6 +630,21 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_run_tool() {
+        let raw = RawComposerCommand {
+            trigger: None,
+            trigger_phrases: vec!["run it".into()],
+            match_mode: MatchMode::Phrase,
+            actions: vec![Action::RunTool {
+                tool: "web_search".into(),
+                args: std::collections::HashMap::from([("query".into(), "rust".into())]),
+            }],
+        };
+        let err = validate_command_draft(raw).unwrap_err();
+        assert!(err.iter().any(|message| message.contains("run_tool")));
+    }
+
+    #[test]
     fn validate_accepts_speak_tool() {
         let raw = RawComposerTool {
             name: "speak_text".into(),

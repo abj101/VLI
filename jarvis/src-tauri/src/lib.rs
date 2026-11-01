@@ -1967,7 +1967,10 @@ fn save_learned_command(
     let conn = open_db_connection(&app)?;
     let actions = learned_actions_from_tool_calls(&conn, &tool_calls)?;
     let rows = db::get_all_commands(&conn).map_err(|e| e.to_string())?;
-    if let Some(existing) = rows.iter().find(|node| node.trigger_phrases.iter().any(|phrase| phrase == &trigger)) {
+    if let Some(existing) = rows
+        .iter()
+        .find(|node| node.trigger_phrases.iter().any(|phrase| phrase == &trigger))
+    {
         return Ok(existing.clone());
     }
     let row = NewCommandNode {
@@ -1979,7 +1982,8 @@ fn save_learned_command(
         match_mode: MatchMode::Phrase,
     };
     let id = db::insert_command(&conn, &row).map_err(|e| e.to_string())?;
-    let saved = db::get_command_by_id(&conn, id).map_err(|e| e.to_string())?
+    let saved = db::get_command_by_id(&conn, id)
+        .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("created learned command {id} was not found"))?;
     refresh_command_cache(&app, &command_cache)?;
     emit_editor_commands_changed(&app);
@@ -2984,7 +2988,7 @@ pub fn run() {
             list_commands,
             get_command,
             create_command,
-save_learned_command,
+            save_learned_command,
             update_command,
             delete_command,
             test_command,
