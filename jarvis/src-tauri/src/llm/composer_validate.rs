@@ -393,6 +393,7 @@ fn validate_action_fields(action: &Action) -> Result<(), String> {
     match action {
         Action::OpenUrl { url } => validate_http_url(url, "open_url"),
         Action::HttpGet { url } => validate_http_url(url, "http_get"),
+        Action::RunTool { .. } => Err("run_tool is not allowed in composer output".into()),
         Action::RunCommand { command_id, .. } if *command_id == 0 => {
             Err("run_command requires a non-zero command_id".into())
         }

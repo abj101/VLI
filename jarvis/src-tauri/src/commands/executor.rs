@@ -265,6 +265,17 @@ pub fn execute_command_with_context(
     tool_context: Option<ToolCallContext>,
     target_aliases: Option<&[TargetAlias]>,
 ) {
+    execute_command_with_db_context(node, runtime, app_index, tool_context, target_aliases, None);
+}
+
+pub fn execute_command_with_db_context(
+    node: &CommandNode,
+    runtime: &impl ActionRuntime,
+    app_index: Option<&[AppEntry]>,
+    tool_context: Option<ToolCallContext>,
+    target_aliases: Option<&[TargetAlias]>,
+    command_conn: Option<&Connection>,
+) {
     debug!(
         "executor: execute_command node_id={} name={:?} actions={}",
         node.id,
@@ -278,7 +289,7 @@ pub fn execute_command_with_context(
         tool_context.as_ref(),
         target_aliases,
         None,
-        None,
+        command_conn,
         &mut ExecutionContext::from_tool_context(tool_context.as_ref()),
         &mut RunState::default(),
         None,
@@ -394,7 +405,14 @@ fn execute_actions(
                 step_collector.as_deref_mut(),
             )
         } else {
-            execute_one_action(&resolved, runtime, app_index, target_aliases, script_conn)
+            execute_one_action(
+                &resolved,
+                runtime,
+                app_index,
+                target_aliases,
+                script_conn,
+                command_conn,
+            )
         };
         match outcome {
             Ok(outcome) => {
@@ -590,6 +608,7 @@ fn action_kind_label(action: &Action) -> &'static str {
         Action::Speak { .. } => "speak",
         Action::SubPrompt { .. } => "sub_prompt",
         Action::RunCommand { .. } => "run_command",
+        Action::RunTool { .. } => "run_tool",
         Action::ReadFile { .. } => "read_file",
         Action::HttpGet { .. } => "http_get",
         Action::GetClipboard {} => "get_clipboard",
@@ -630,6 +649,7 @@ fn execute_one_action(
     app_index: Option<&[AppEntry]>,
     target_aliases: Option<&[TargetAlias]>,
     script_conn: Option<&Connection>,
+    command_conn: Option<&Connection>,
 ) -> Result<ActionOutcome, String> {
     match action {
         Action::OpenTarget { target, placement } => {
@@ -730,6 +750,12 @@ fn execute_one_action(
             })?;
             crate::commands::tools::execute_registered_script(conn, script_id, args, runtime)?;
             Ok(outcome_from_status(format!("Ran registered script {script_id}")))
+        }
+        Action::RunTool { tool, args } => {
+            let conn = command_conn
+                .ok_or_else(|| "RunTool requires a database connection".to_string())?;
+            crate::commands::tools::execute_tool(conn, tool, args, runtime, app_index)?;
+            Ok(outcome_from_status(format!("Ran tool {tool}")))
         }
         Action::SendKeys { keys } => {
             validate_send_keys(keys)?;
@@ -897,6 +923,10 @@ pub fn resolve_action_templates(
         Action::RunRegisteredScript { script_id, args } => Action::RunRegisteredScript {
             script_id: render(script_id),
             args: args.iter().map(|arg| render(arg)).collect(),
+        },
+        Action::RunTool { tool, args } => Action::RunTool {
+            tool: tool.clone(),
+            args: args.clone(),
         },
         Action::SendKeys { keys } => Action::SendKeys { keys: render(keys) },
         Action::Wait { ms } => Action::Wait { ms: *ms },

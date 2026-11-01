@@ -112,6 +112,11 @@ pub enum Action {
         #[serde(default)]
         input: Option<String>,
     },
+    /// Replay a previously validated tool invocation.
+    RunTool {
+        tool: String,
+        args: std::collections::HashMap<String, String>,
+    },
     /// Read a text file from disk; output is file contents.
     ReadFile { path: String },
     /// HTTP GET request; output is response body text.
