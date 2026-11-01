@@ -134,56 +134,42 @@ pub(crate) fn send_virtual_key(
 #[cfg(windows)]
 pub(crate) fn send_virtual_key_chord(keys: &[u16]) -> Result<(), String> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+        KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VIRTUAL_KEY,
     };
 
-    let mut inputs = Vec::with_capacity(keys.len() * 2);
-    for &key in keys {
-        inputs.push(INPUT {
+    let key_input = |key: u16, up: bool| {
+        let mut flags = if up {
+            KEYEVENTF_KEYUP
+        } else {
+            KEYBD_EVENT_FLAGS::default()
+        };
+        // Nav cluster / Win keys: without this, Shift+arrows arrive as numpad keys.
+        if matches!(key, 0x21..=0x28 | 0x2D | 0x2E | 0x5B | 0x5C | 0x6F | 0x90) {
+            flags |= KEYEVENTF_EXTENDEDKEY;
+        }
+        INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
-                    wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(key),
+                    wVk: VIRTUAL_KEY(key),
                     wScan: 0,
-                    dwFlags: Default::default(),
+                    dwFlags: flags,
                     time: 0,
                     dwExtraInfo: 0,
                 },
             },
-        });
-    }
-    for &key in keys.iter().rev() {
-        inputs.push(INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(key),
-                    wScan: 0,
-                    dwFlags: KEYEVENTF_KEYUP,
-                    time: 0,
-                    dwExtraInfo: 0,
-                },
-            },
-        });
-    }
+        }
+    };
+
+    let inputs: Vec<_> = keys
+        .iter()
+        .map(|&k| key_input(k, false))
+        .chain(keys.iter().rev().map(|&k| key_input(k, true)))
+        .collect();
     let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
     if sent != inputs.len() as u32 {
-        let releases: Vec<_> = keys
-            .iter()
-            .rev()
-            .map(|&key| INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(key),
-                        wScan: 0,
-                        dwFlags: KEYEVENTF_KEYUP,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            })
-            .collect();
+        let releases: Vec<_> = keys.iter().rev().map(|&k| key_input(k, true)).collect();
         unsafe { SendInput(&releases, std::mem::size_of::<INPUT>() as i32) };
         return Err(format!(
             "SendInput accepted {sent}/{} key events",
