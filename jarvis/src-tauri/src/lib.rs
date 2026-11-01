@@ -516,13 +516,9 @@ pub(crate) fn try_start_listening_audio(
     use_wake_preroll: bool,
     for_dictation: bool,
 ) {
-    let wake_preroll_16k = if use_wake_preroll {
-        app.try_state::<audio::WakePreroll>()
-            .map(|p| p.take_snapshot())
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
+    // Windows shares the mic, so the wake stream keeps running until the listen stream is live
+    // (AudioPipeline::start releases it). Elsewhere release it first.
+    #[cfg(not(windows))]
     if let Some(suppressed) = app.try_state::<audio::WakeMicSuppressed>() {
         suppressed.0.store(true, Ordering::SeqCst);
     }
@@ -536,7 +532,7 @@ pub(crate) fn try_start_listening_audio(
     drop(old);
 
     let choice = load_stt_pipeline_choice(app);
-    match audio::AudioPipeline::start(app, hud_session_id, choice, wake_preroll_16k, for_dictation)
+    match audio::AudioPipeline::start(app, hud_session_id, choice, use_wake_preroll, for_dictation)
     {
         Ok(p) => {
             let mut g = slot.lock().unwrap();
@@ -817,12 +813,34 @@ fn deferred_partial_match_text(
     Some(text.to_string())
 }
 
+/// Wake preroll seeds Whisper, so a no-pause "hey jarvis open discord" decodes with the wake
+/// phrase in front. Drop it so routing sees just the command.
+fn strip_wake_prefix(text: &str) -> &str {
+    let mut rest = text.trim();
+    while let Some(word) = rest.split_whitespace().next() {
+        let w: String = word
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect();
+        if !matches!(w.as_str(), "hey" | "hay" | "hi" | "ok" | "okay" | "jarvis" | "javis" | "jervis") {
+            break;
+        }
+        rest = rest[word.len()..].trim_start();
+    }
+    rest
+}
+
 fn update_pending_transcript(rt: &SharedHud, text: &str) -> Option<(u64, u64)> {
-    let trimmed = text.trim();
+    let mut s = rt.lock().ok()?;
+    let trimmed = if s.wake_activated {
+        strip_wake_prefix(text)
+    } else {
+        text.trim()
+    };
     if trimmed.is_empty() {
         return None;
     }
-    let mut s = rt.lock().ok()?;
     if !should_attempt_command_match(&s) {
         return None;
     }
@@ -2714,6 +2732,12 @@ pub fn run() {
             let app_models = app.handle().clone();
             if !audio::whisper_models::is_whisper_model_installed(&app_models, &model_id) {
                 let _ = audio::whisper_models::spawn_whisper_model_download(app_models, model_id);
+            } else {
+                // Cold whisper-server start + first GPU decode otherwise lands on the first "hey jarvis".
+                let use_gpu = app_settings.local_whisper_use_gpu;
+                std::thread::spawn(move || {
+                    audio::stt::warm_whisper_server(&app_models, &model_id, use_gpu);
+                });
             }
         }
         let app_router = app.handle().clone();
@@ -3039,6 +3063,14 @@ mod tests {
     use rusqlite::Connection;
     use std::sync::atomic::Ordering;
     use tempfile::tempdir;
+
+    #[test]
+    fn strip_wake_prefix_leaves_only_the_command() {
+        assert_eq!(super::strip_wake_prefix("Hey, Jarvis. Open Discord."), "Open Discord.");
+        assert_eq!(super::strip_wake_prefix("hey jarvis put chrome on the left"), "put chrome on the left");
+        assert_eq!(super::strip_wake_prefix("Hey Jarvis."), "");
+        assert_eq!(super::strip_wake_prefix("open notepad"), "open notepad");
+    }
 
     #[test]
     fn wake_phrase_stays_visible_longer_than_hotkey_phrase() {

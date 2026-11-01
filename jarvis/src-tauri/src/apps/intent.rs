@@ -50,6 +50,44 @@ pub fn parse_open_intent(transcript: &str) -> Option<(String, Option<String>)> {
     None
 }
 
+const TILE_VERBS: &[&str] = &["tile", "put", "move", "snap", "place"];
+
+/// Retile one or two windows: "put discord on the left and chrome on the right",
+/// "tile discord and chrome" (first left, second right), "move spotify right".
+/// A lone target needs a side; `None` for anything else.
+pub fn parse_tile_intent(transcript: &str) -> Option<Vec<(String, Option<String>)>> {
+    let lower = transcript.trim().to_lowercase();
+    let lower = lower.strip_prefix("please ").unwrap_or(&lower);
+    let rest = TILE_VERBS
+        .iter()
+        .find_map(|verb| lower.strip_prefix(verb)?.strip_prefix(' '))?;
+    let rest = rest
+        .trim_end_matches(|c: char| c.is_ascii_punctuation())
+        .trim_end_matches(" side by side");
+    let parts: Vec<&str> = rest.split(" and ").collect();
+    let defaults: &[&str] = match parts.len() {
+        1 => &[""],
+        2 => &["left_half", "right_half"],
+        _ => return None,
+    };
+    let mut out = Vec::new();
+    for (part, default) in parts.iter().zip(defaults) {
+        let (target, zone) = match strip_placement_suffix(part) {
+            (t, Some(z)) => (t, Some(z)),
+            (t, None) => match t.rsplit_once(' ') {
+                Some((head, "left")) => (head.to_string(), Some("left_half".to_string())),
+                Some((head, "right")) => (head.to_string(), Some("right_half".to_string())),
+                _ => (t, Some(default.to_string()).filter(|d| !d.is_empty())),
+            },
+        };
+        if target.trim().is_empty() || zone.is_none() {
+            return None;
+        }
+        out.push((target.trim().to_string(), zone));
+    }
+    Some(out)
+}
+
 /// App index lookup first, then explicit URL, then unknown (no silent `.com` guess).
 pub fn classify_open_target(
     target: &str,
@@ -212,6 +250,26 @@ mod tests {
         let (target, placement) = parse_open_intent("open brave on the left").expect("parsed");
         assert_eq!(target, "brave");
         assert_eq!(placement.as_deref(), Some("left_half"));
+    }
+
+    #[test]
+    fn parse_tile_intent_reads_sides_and_defaults() {
+        let l = || Some("left_half".to_string());
+        let r = || Some("right_half".to_string());
+        assert_eq!(
+            parse_tile_intent("Put Discord on the left and Chrome on the right."),
+            Some(vec![("discord".into(), l()), ("chrome".into(), r())])
+        );
+        assert_eq!(
+            parse_tile_intent("tile discord and chrome side by side"),
+            Some(vec![("discord".into(), l()), ("chrome".into(), r())])
+        );
+        assert_eq!(
+            parse_tile_intent("move spotify right"),
+            Some(vec![("spotify".into(), r())])
+        );
+        assert_eq!(parse_tile_intent("put discord"), None);
+        assert_eq!(parse_tile_intent("open discord on the left"), None);
     }
 
     #[test]

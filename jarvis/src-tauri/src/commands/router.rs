@@ -13,7 +13,7 @@ use crate::{
         open_target::execute_open_target_with_aliases,
         ToolCallContext,
     },
-    apps::intent::{classify_open_target, parse_open_intent, OpenIntent},
+    apps::intent::{classify_open_target, parse_open_intent, parse_tile_intent, OpenIntent},
     db::{self, get_all_tools, get_app_settings, get_all_target_aliases, CommandNode},
     finalize_command_run,
     hide_hud_window,
@@ -459,6 +459,24 @@ pub(crate) fn tier0_open_classification(
     })
 }
 
+/// Tier 0 retile: every named window must resolve, else let the router take it
+/// ("put this window on the left" is `snap_window`).
+pub(crate) fn tier0_tile_classification(
+    text: &str,
+    app_index: &[crate::apps::AppEntry],
+    aliases: &[db::TargetAlias],
+) -> Option<Vec<OpenIntent>> {
+    parse_tile_intent(text)?
+        .into_iter()
+        .map(|(target, placement)| {
+            match classify_open_target(&target, placement, app_index, aliases) {
+                OpenIntent::Unknown { .. } => None,
+                intent => Some(intent),
+            }
+        })
+        .collect()
+}
+
 fn try_tier0_open_intent(
     app: &AppHandle,
     rt: &SharedHud,
@@ -474,7 +492,10 @@ fn try_tier0_open_intent(
         .ok()
         .and_then(|conn| get_all_target_aliases(&conn).ok())
         .unwrap_or_default();
-    let classification = tier0_open_classification(text, app_index_snapshot.as_slice(), &aliases)?;
+    let classification = match tier0_tile_classification(text, &app_index_snapshot, &aliases) {
+        Some(intents) => Ok(intents),
+        None => tier0_open_classification(text, &app_index_snapshot, &aliases)?.map(|i| vec![i]),
+    };
 
     listening_gate(rt).ok()?;
     info!("flow: TIER0 open intent");
@@ -485,7 +506,7 @@ fn try_tier0_open_intent(
         finalize_command_run(app, rt, audio);
         return Some(Ok(()));
     }
-    let intent = classification.expect("checked Err branch above");
+    let intents = classification.expect("checked Err branch above");
 
     let _ = set_phase(app, rt, HudPhase::Matched).ok()?;
 
@@ -519,28 +540,31 @@ fn try_tier0_open_intent(
                 return;
             }
         };
-        let result = match intent {
-            OpenIntent::App { target, placement, .. } => execute_open_target_with_aliases(
-                &target,
-                placement.as_deref(),
-                &alias_snapshot,
-                &runtime,
-                Some(index.as_slice()),
-            ),
-            OpenIntent::Url { url, placement } => {
-                use std::collections::HashMap;
-                let mut args = HashMap::from([("url".to_string(), url)]);
-                if let Some(p) = placement.filter(|z| !z.trim().is_empty()) {
-                    args.insert("placement".to_string(), p);
+        for intent in intents {
+            let result = match intent {
+                OpenIntent::App { target, placement, .. } => execute_open_target_with_aliases(
+                    &target,
+                    placement.as_deref(),
+                    &alias_snapshot,
+                    &runtime,
+                    Some(index.as_slice()),
+                ),
+                OpenIntent::Url { url, placement } => {
+                    use std::collections::HashMap;
+                    let mut args = HashMap::from([("url".to_string(), url)]);
+                    if let Some(p) = placement.filter(|z| !z.trim().is_empty()) {
+                        args.insert("placement".to_string(), p);
+                    }
+                    execute_tool(&conn, "open_url", &args, &runtime, Some(index.as_slice()))
+                        .map(|_| "Opening URL…".to_string())
                 }
-                execute_tool(&conn, "open_url", &args, &runtime, Some(index.as_slice()))
-                    .map(|_| "Opening URL…".to_string())
-            }
-            OpenIntent::Unknown { .. } => unreachable!("tier0 rejects Unknown before execution"),
-        };
-        if let Err(err) = result {
-            if err != ACTION_RUN_CANCELLED_MSG {
-                runtime.emit_error(&err);
+                OpenIntent::Unknown { .. } => unreachable!("tier0 rejects Unknown before execution"),
+            };
+            if let Err(err) = result {
+                if err != ACTION_RUN_CANCELLED_MSG {
+                    runtime.emit_error(&err);
+                }
+                break;
             }
         }
     });
@@ -845,6 +869,18 @@ mod tests {
         ));
         #[cfg(not(target_os = "macos"))]
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn tier0_tile_needs_every_window_to_resolve() {
+        let index = vec![AppEntry {
+            display_name: "Discord".into(),
+            exe_path: r"C:\Discord\Discord.exe".into(),
+            icon_data_url: None,
+        }];
+        let intents = tier0_tile_classification("put discord on the right", &index, &[]).unwrap();
+        assert!(matches!(&intents[..], [OpenIntent::App { placement: Some(p), .. }] if p == "right_half"));
+        assert!(tier0_tile_classification("put this window on the left", &index, &[]).is_none());
     }
 
     #[test]

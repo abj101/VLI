@@ -8,10 +8,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 const WAKE_RECV_TICK: Duration = Duration::from_millis(100);
+/// OWW scores stay hot for several frames, and the wake mic now outlives the hit until the
+/// listen stream opens — ignore repeat hits inside this window.
+const WAKE_REFIRE_COOLDOWN: Duration = Duration::from_secs(2);
 /// Consecutive mic open failures before surfacing `audio-error` to the HUD (30 × 100 ms).
 const WAKE_MIC_FAIL_EMIT_THRESHOLD: u32 = 30;
 /// Back off wake mic retries when permission is permanently denied.
@@ -113,6 +116,7 @@ fn wake_thread_main(
     let mut mic_open_failures: u32 = 0;
     let mut mic_error_emitted = false;
     let mut last_mic_error: Option<String> = None;
+    let mut last_wake: Option<Instant> = None;
 
     let open_mic = |app: &AppHandle, last_err: &mut Option<String>| -> Option<WakeMic> {
         let (pcm_tx, pcm_rx) = std::sync::mpsc::channel();
@@ -214,7 +218,7 @@ fn wake_thread_main(
                         }
                     };
                     pending_i16.drain(..len);
-                    if hit {
+                    if hit && rearm_wake(&mut last_wake) {
                         let _ = app.emit("wake-detected", json!({ "backend": &backend_label }));
                         on_wake();
                     }
@@ -232,7 +236,7 @@ fn wake_thread_main(
                         continue;
                     }
                 };
-                if hit {
+                if hit && rearm_wake(&mut last_wake) {
                     let _ = app.emit("wake-detected", json!({ "backend": &backend_label }));
                     on_wake();
                 }
@@ -246,9 +250,24 @@ fn wake_thread_main(
     info!("wake: thread exiting ({backend_label})");
 }
 
+fn rearm_wake(last: &mut Option<Instant>) -> bool {
+    if last.is_some_and(|t| t.elapsed() < WAKE_REFIRE_COOLDOWN) {
+        return false;
+    }
+    *last = Some(Instant::now());
+    true
+}
+
 #[cfg(test)]
 mod tests {
-    use super::extend_i16_from_f32;
+    use super::{extend_i16_from_f32, rearm_wake};
+
+    #[test]
+    fn wake_refire_is_ignored_inside_cooldown() {
+        let mut last = None;
+        assert!(rearm_wake(&mut last));
+        assert!(!rearm_wake(&mut last));
+    }
 
     #[test]
     fn extend_i16_clamps_to_i16_range() {

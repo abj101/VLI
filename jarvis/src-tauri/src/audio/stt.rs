@@ -152,6 +152,74 @@ fn run_decode(
         .0
         .lock()
         .map_err(|_| "whisper server state poisoned".to_string())?;
+    let port = ensure_whisper_server(app, &mut cached, model_path, use_gpu)?;
+    let decode_started = Instant::now();
+    let text = match post_inference(port, &wav, &vocabulary_prompt(app)) {
+        Ok(text) => text,
+        Err(e) => {
+            *cached = None;
+            return Err(e);
+        }
+    };
+    debug!(
+        "stt: HTTP decode completed in {} ms ({} samples)",
+        decode_started.elapsed().as_millis(),
+        audio_16k.len()
+    );
+    Ok(text)
+}
+
+/// Spawn whisper-server and run one throwaway decode so the first real listen is warm.
+pub fn warm_whisper_server(app: &AppHandle, model_id: &str, use_gpu: bool) {
+    let started = Instant::now();
+    let result = crate::audio::whisper_models::ensure_whisper_model(app, model_id).and_then(|path| {
+        let state = app.state::<WhisperServerState>();
+        let mut cached = state
+            .0
+            .lock()
+            .map_err(|_| "whisper server state poisoned".to_string())?;
+        let port = ensure_whisper_server(app, &mut cached, &path, use_gpu)?;
+        post_inference(port, &pcm_wav_16k(&vec![0.0; TARGET_RATE as usize]), "")
+    });
+    match result {
+        Ok(_) => log::info!("stt: whisper warm in {} ms", started.elapsed().as_millis()),
+        Err(e) => log::warn!("stt: whisper warmup failed: {e}"),
+    }
+}
+
+/// Whisper's initial prompt biases spelling toward these words ("Claude", not "cloud").
+/// Short installed-app names, since those are what people say out loud.
+fn vocabulary_prompt(app: &AppHandle) -> String {
+    let mut names: Vec<String> = app
+        .try_state::<crate::AppIndexStore>()
+        .and_then(|s| s.read().ok().map(|g| g.iter().map(|e| e.display_name.clone()).collect()))
+        .unwrap_or_default();
+    names.retain(|n| {
+        n.split_whitespace().count() <= 2
+            && n.chars().all(|c| c.is_alphabetic() || c == ' ')
+            && !n.to_lowercase().contains("uninstall")
+    });
+    names.sort_by_key(|n| (n.len(), n.to_lowercase()));
+    names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    // ponytail: shortest names first, capped well under Whisper's ~224-token prompt window.
+    let mut prompt = String::from("Hey Jarvis, open Claude");
+    for name in names {
+        if prompt.len() + name.len() > 600 {
+            break;
+        }
+        prompt.push_str(", ");
+        prompt.push_str(&name);
+    }
+    prompt.push('.');
+    prompt
+}
+
+fn ensure_whisper_server(
+    app: &AppHandle,
+    cached: &mut Option<WhisperServer>,
+    model_path: &Path,
+    use_gpu: bool,
+) -> Result<u16, String> {
     let needs_restart = cached
         .as_ref()
         .is_some_and(|s| s.model_path != model_path || s.use_gpu != use_gpu);
@@ -184,7 +252,10 @@ fn run_decode(
             use_gpu,
         });
     }
-    let server = cached.as_ref().expect("server initialized");
+    Ok(cached.as_ref().expect("server initialized").process.port)
+}
+
+fn post_inference(port: u16, wav: &[u8], prompt: &str) -> Result<String, String> {
     let boundary = format!(
         "jarvis-{}",
         SystemTime::now()
@@ -192,36 +263,21 @@ fn run_decode(
             .unwrap_or_default()
             .as_nanos()
     );
-    let body = inference_multipart(&boundary, &wav);
-    let decode_started = Instant::now();
-    let response = ureq::post(&format!(
-        "http://127.0.0.1:{}/inference",
-        server.process.port
-    ))
-    .set(
-        "Content-Type",
-        &format!("multipart/form-data; boundary={boundary}"),
-    )
-    .timeout(Duration::from_secs(30))
-    .send_bytes(&body);
-    let response = match response {
-        Ok(response) => response,
-        Err(e) => {
-            *cached = None;
-            return Err(format!("whisper inference request failed: {e}"));
-        }
-    };
+    let body = inference_multipart(&boundary, wav, prompt);
+    let response = ureq::post(&format!("http://127.0.0.1:{port}/inference"))
+        .set(
+            "Content-Type",
+            &format!("multipart/form-data; boundary={boundary}"),
+        )
+        .timeout(Duration::from_secs(30))
+        .send_bytes(&body)
+        .map_err(|e| format!("whisper inference request failed: {e}"))?;
     let value: serde_json::Value = serde_json::from_str(
         &response
             .into_string()
             .map_err(|e| format!("read whisper response: {e}"))?,
     )
     .map_err(|e| format!("parse whisper response: {e}"))?;
-    debug!(
-        "stt: HTTP decode completed in {} ms ({} samples)",
-        decode_started.elapsed().as_millis(),
-        audio_16k.len()
-    );
     value
         .get("text")
         .and_then(serde_json::Value::as_str)
@@ -251,9 +307,10 @@ fn pcm_wav_16k(samples: &[f32]) -> Vec<u8> {
     wav
 }
 
-fn inference_multipart(boundary: &str, wav: &[u8]) -> Vec<u8> {
-    let mut body = Vec::with_capacity(wav.len() + 256);
-    for (name, value) in [("response_format", "json"), ("temperature", "0")] {
+fn inference_multipart(boundary: &str, wav: &[u8], prompt: &str) -> Vec<u8> {
+    let mut body = Vec::with_capacity(wav.len() + prompt.len() + 256);
+    let fields = [("response_format", "json"), ("temperature", "0"), ("prompt", prompt)];
+    for (name, value) in fields.into_iter().filter(|(_, v)| !v.is_empty()) {
         body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
     }
     body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n").as_bytes());
@@ -608,7 +665,8 @@ mod tests {
 
     #[test]
     fn multipart_contains_json_temperature_and_audio_file() {
-        let body = String::from_utf8(inference_multipart("boundary-test", b"RIFF")).unwrap();
+        let body = String::from_utf8(inference_multipart("boundary-test", b"RIFF", "Hey Jarvis, open Claude.")).unwrap();
+        assert!(body.contains("name=\"prompt\"\r\n\r\nHey Jarvis, open Claude."));
         assert!(body.contains("name=\"response_format\"\r\n\r\njson"));
         assert!(body.contains("name=\"temperature\"\r\n\r\n0"));
         assert!(body.contains("name=\"file\"; filename=\"audio.wav\""));

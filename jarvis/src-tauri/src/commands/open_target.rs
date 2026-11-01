@@ -280,6 +280,14 @@ fn resolve_app_launch_path(
         }
     }
     if trimmed.contains('\\') || trimmed.contains('/') || trimmed.ends_with(".exe") || trimmed.ends_with(".app") {
+        // Learned aliases can outlive versioned install dirs (Discord's app-1.0.N after an update).
+        let path = std::path::Path::new(trimmed);
+        if path.is_absolute() && !path.exists() {
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if let Some(hit) = app_index.and_then(|e| crate::apps::resolve_app(stem, e)) {
+                return Ok(hit.exe_path.clone());
+            }
+        }
         return Ok(trimmed.to_string());
     }
     if let Some(entries) = app_index {
@@ -464,6 +472,27 @@ mod tests {
         assert_eq!(
             runtime.state.lock().unwrap().app_calls,
             vec![r"C:\JarvisTestOnly\no-real-brave-xyz.exe".to_string()]
+        );
+    }
+
+    #[test]
+    fn stale_alias_path_falls_back_to_index_by_exe_stem() {
+        let runtime = MockRuntime::default();
+        let index = vec![AppEntry {
+            display_name: "Discord".into(),
+            exe_path: r"C:\JarvisTestOnly\Discord\Discord.exe".into(),
+            icon_data_url: None,
+        }];
+        let aliases = vec![TargetAlias {
+            spoken: "discord".into(),
+            kind: TargetAliasKind::App,
+            value: r"C:\JarvisTestOnly\Discord\app-1.0.9241\Discord.exe".into(),
+        }];
+        execute_open_target_with_aliases("discord", None, &aliases, &runtime, Some(&index))
+            .expect("open discord");
+        assert_eq!(
+            runtime.state.lock().unwrap().app_calls,
+            vec![r"C:\JarvisTestOnly\Discord\Discord.exe".to_string()]
         );
     }
 

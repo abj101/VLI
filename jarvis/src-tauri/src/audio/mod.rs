@@ -63,16 +63,29 @@ impl AudioPipeline {
 
 impl AudioPipeline {
     /// Starts default input → PCM channel. STT worker depends on `choice`; mic + amplitude run if capture succeeds.
-    /// `wake_preroll_16k` — recent wake-mic audio at 16 kHz (mono f32) to seed Whisper after wake word.
+    /// `use_wake_preroll` — seed Whisper with recent wake-mic audio (16 kHz mono f32) after wake word.
     pub fn start(
         app: &AppHandle,
         hud_session_id: u64,
         choice: SttPipelineChoice,
-        wake_preroll_16k: Vec<f32>,
+        use_wake_preroll: bool,
         for_dictation: bool,
     ) -> Result<Self, String> {
         let (pcm_tx, pcm_rx) = std::sync::mpsc::channel();
-        let (capture, sample_rate) = capture::start_capture(app.clone(), pcm_tx, true)?;
+        let capture_result = capture::start_capture(app.clone(), pcm_tx, true);
+        // Snapshot only once this stream is live and then release the wake mic, so words spoken
+        // right after "hey jarvis" land in preroll or here instead of falling in between.
+        let wake_preroll_16k = if use_wake_preroll {
+            app.try_state::<WakePreroll>()
+                .map(|p| p.take_snapshot())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        if let Some(suppressed) = app.try_state::<WakeMicSuppressed>() {
+            suppressed.0.store(true, Ordering::SeqCst);
+        }
+        let (capture, sample_rate) = capture_result?;
         let cancel = Arc::new(AtomicBool::new(false));
 
         let stt = match choice {
