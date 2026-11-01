@@ -109,6 +109,30 @@ describe("NodeForm logic", () => {
     expect(payload.actions).toEqual([{ open_url: { url: "https://example.com" } }]);
   });
 
+  it("preserves run_tool names and literal args through command editing", () => {
+    const action = {
+      run_tool: {
+        tool: "web_search",
+        args: { query: "cats + dogs & birds" },
+      },
+    };
+    const model = modelFromNode({ ...makeNode(), actions: [action] });
+
+    expect(toCommandPayload(model).actions).toEqual([action]);
+  });
+
+  it("requires a tool name for run_tool actions", () => {
+    const errors = validateFormModel({
+      id: null,
+      triggerPhrases: ["do thing"],
+      enabled: true,
+      prefixMode: false,
+      actions: [{ run_tool: { tool: " ", args: {} } }],
+    });
+
+    expect(errors.actionErrors[0]).toBe("Tool name is required.");
+  });
+
   it("maps prefix mode to match_mode prefix in payload", () => {
     const payload = toCommandPayload({
       id: 3,
@@ -121,6 +145,7 @@ describe("NodeForm logic", () => {
   });
 
   it("defaultActionForKind returns expected shape", () => {
+    expect(defaultActionForKind("run_tool")).toEqual({ run_tool: { tool: "", args: {} } });
     expect(defaultActionForKind("open_app")).toEqual({ open_app: { name: "", path: "" } });
     expect(defaultActionForKind("open_url")).toEqual({ open_url: { url: "" } });
     expect(defaultActionForKind("run_script")).toEqual({ run_script: { script: "", args: [] } });

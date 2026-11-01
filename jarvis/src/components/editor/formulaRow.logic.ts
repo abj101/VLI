@@ -72,6 +72,9 @@ function actionSnippet(action: ActionPayload): string {
   if ("run_command" in action) {
     return action.run_command.input?.trim() || String(action.run_command.command_id || "");
   }
+  if ("run_tool" in action) {
+    return `${action.run_tool.tool} ${JSON.stringify(action.run_tool.args)}`.trim();
+  }
   return action.sub_prompt.prompt;
 }
 

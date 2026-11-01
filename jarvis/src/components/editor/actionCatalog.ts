@@ -35,6 +35,11 @@ export const ACTION_KIND_OPTIONS: ActionKindOption[] = [
     haystack: "run command compose nested shortcut pipeline",
   },
   {
+    id: "run_tool",
+    label: "Run tool",
+    haystack: "run tool builtin web search shortcut media type text say arguments",
+  },
+  {
     id: "get_clipboard",
     label: "Get clipboard",
     haystack: "get clipboard copy paste read text",
@@ -132,6 +137,7 @@ export function getActionKind(action: FormActionPayload): ActionKind {
   if ("speak" in action) return "speak";
   if ("wait" in action) return "wait";
   if ("run_command" in action) return "run_command";
+  if ("run_tool" in action) return "run_tool";
   if ("read_file" in action) return "read_file";
   if ("http_get" in action) return "http_get";
   if ("get_clipboard" in action) return "get_clipboard";
