@@ -35,7 +35,11 @@ struct ExpectCall {
 }
 
 fn cases() -> Vec<Case> {
-    serde_json::from_str(FIXTURES).expect("router_eval_cases.json parses")
+    // ROUTER_EVAL_CASES=<path> scores a held-out file instead of the tuned fixtures.
+    let text = std::env::var("ROUTER_EVAL_CASES")
+        .map(|path| std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}")))
+        .unwrap_or_else(|_| FIXTURES.to_string());
+    serde_json::from_str(&text).expect("eval cases parse")
 }
 
 fn seeded_db() -> (tempfile::TempDir, Connection, Vec<ToolDefinition>) {

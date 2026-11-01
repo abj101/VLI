@@ -36,15 +36,37 @@ fn app_kind(context: &str) -> Option<&'static str> {
 
 /// Actions whose meaning depends on the focused app. d1 picks the plain meaning;
 /// `bind_unspecified` turns it into a real tool call for the app type.
-const UNSPECIFIED: [(&str, &str); 3] = [
-    ("go_back", "go back or one step back, without naming a song, page or tab"),
+const UNSPECIFIED: [(&str, &str); 5] = [
+    ("go_back", "go back, back up or one step back, without naming a song, page or tab"),
     ("go_next", "go to the next one, without naming a song or tab"),
     ("close_this", "close or get rid of this, without naming a tab, window or app"),
+    ("left_one", "the one on the left, without naming a tab or window"),
+    ("right_one", "the one on the right, without naming a tab or window"),
 ];
+
+/// True when every word of the script's name (or id) is spoken, allowing small slips.
+fn names_script(transcript: &str, display_name: &str, id: &str) -> bool {
+    let spoken: Vec<String> = transcript
+        .to_lowercase()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    [display_name.to_lowercase(), id.to_lowercase().replace(['_', '-'], " ")]
+        .iter()
+        .any(|name| {
+            let words: Vec<&str> = name.split_whitespace().filter(|w| w.len() > 2).collect();
+            !words.is_empty()
+                && words.iter().all(|word| {
+                    spoken
+                        .iter()
+                        .any(|s| rapidfuzz::fuzz::ratio(word.chars(), s.chars()) >= 0.8)
+                })
+        })
+}
 
 fn bind_unspecified(
     action: &str,
-    kind: &str,
+    kind: Option<&str>,
     transcript: &str,
 ) -> Option<(&'static str, &'static str, &'static str)> {
     // A named thing beats the app type: "skip to the next song" in a browser is media.
@@ -56,7 +78,7 @@ fn bind_unspecified(
     } else if names_tab {
         "browser"
     } else {
-        kind
+        kind.unwrap_or("other")
     };
     Some(match (action, kind) {
         ("go_back", "browser") if names_tab => ("shortcut", "name", "previous_tab"),
@@ -67,6 +89,11 @@ fn bind_unspecified(
         ("go_next", _) => ("shortcut", "name", "next_tab"),
         ("close_this", "browser" | "code editor") => ("shortcut", "name", "close_tab"),
         ("close_this", _) => ("shortcut", "name", "close_window"),
+        // Tabs in tabbed apps; otherwise the window Jarvis tiled on that side.
+        ("left_one", "browser" | "code editor") => ("shortcut", "name", "previous_tab"),
+        ("left_one", _) => ("focus_side", "side", "left"),
+        ("right_one", "browser" | "code editor") => ("shortcut", "name", "next_tab"),
+        ("right_one", _) => ("focus_side", "side", "right"),
         _ => return None,
     })
 }
@@ -89,7 +116,7 @@ fn option_hint(value: &str, context: Option<&str>) -> String {
     }
     match value {
         "cut" => "cut, cut that out",
-        "undo" => "undo, take that back, go back one step",
+        "undo" => "undo, take that back, go back one step, reverse my last edit, bring back what i deleted",
         "redo" => "redo, put the change back",
         "select_all" => "select all, highlight everything",
         "find" => "find a word on this page",
@@ -99,11 +126,13 @@ fn option_hint(value: &str, context: Option<&str>) -> String {
         "next_tab" => "next tab, the tab on the right",
         "previous_tab" => "previous tab, the tab on the left",
         "close_window" => "close this window or app",
-        "switch_app" => "switch to another app",
+        "switch_app" => "switch to another app, alt tab, jump to my other window",
+        "show_desktop" => "show the desktop, clear everything off the screen, minimize everything",
         "minimize" => "minimize, hide or put away this window",
         "next" => "next or skip song/track",
         "previous" => "previous song/track, go back a track",
-        "play_pause" => "play, pause or resume music",
+        "play_pause" => "play, pause, stop or resume the music",
+        "mute" => "mute or silence all sound",
         "maximize" => "maximize, full screen",
         _ => return value.replace('_', " "),
     }
@@ -146,7 +175,12 @@ fn systemone_request_details(
     let mut criteria = Map::new();
     let mut questions = Map::new();
     let mut enabled_count = 0usize;
-    for tool in tools.iter().filter(|tool| tool.enabled) {
+    // Reached only through code: spoken key names, or "the left/right one". As d1
+    // options they steal "next tab" and "switch windows".
+    for tool in tools
+        .iter()
+        .filter(|tool| tool.enabled && !matches!(tool.name.as_str(), "press_keys" | "focus_side"))
+    {
         if tool.parameters.iter().any(|param| {
             param.param_type == "enum"
                 && param.required
@@ -213,7 +247,7 @@ fn systemone_request_details(
     }
     let kind = context.and_then(app_kind);
     if !include_details {
-        if kind.is_some() && criteria.len() + 1 + UNSPECIFIED.len() <= 20 {
+        if context.is_some() && criteria.len() + 1 + UNSPECIFIED.len() <= 20 {
             for (action, hint) in UNSPECIFIED {
                 criteria.insert(action.into(), json!(hint));
             }
@@ -328,15 +362,35 @@ fn decide_clause<F>(
 where
     F: FnMut(&Value) -> Result<Value, String>,
 {
+    // A spoken key combo ("alt tab", "control z") is exact; no model needed.
+    if let Some(keys) = crate::llm::decider_args::spoken_keys(transcript) {
+        if tools.iter().any(|t| t.name == "press_keys" && t.enabled) {
+            return Ok(RouterToolCallWithConfidence {
+                call: RouterToolCall {
+                    tool: "press_keys".into(),
+                    args: [("keys".to_string(), keys)].into(),
+                },
+                confidence: 1.0,
+            });
+        }
+    }
     let body = systemone_request_details(conn, transcript, context, tools, false)?;
     let response = infer(&body).map_err(|e| error(RouterErrorCode::InferFailed, e))?;
     let (name, confidence) = choice(&response, "tool")?;
-    let name = name.to_string();
+    // "close spotify" names an app: closing the focused window would close the wrong thing.
+    let name = if matches!(name, "shortcut" | "close_this")
+        && extract_args("close_app", transcript).is_some()
+        && tools.iter().any(|t| t.name == "close_app" && t.enabled)
+    {
+        "close_app".to_string()
+    } else {
+        name.to_string()
+    };
     // Free-text tools already require an explicit verb ("say ..."), so only the
     // verb-less tools need the remark check.
     let verb_guarded = matches!(
         name.as_str(),
-        "open_target" | "open_url" | "web_search" | "type_text" | "say"
+        "open_target" | "open_url" | "web_search" | "type_text" | "say" | "close_app"
     );
     if !verb_guarded && response["answers"].get("instruction").is_some() {
         let (kind, instruction_confidence) = choice(&response, "instruction")?;
@@ -412,8 +466,7 @@ where
     F: FnMut(&Value) -> Result<Value, String>,
 {
     if let Some((tool_name, key, value)) = context
-        .and_then(app_kind)
-        .and_then(|kind| bind_unspecified(name, kind, transcript))
+        .and_then(|context| bind_unspecified(name, app_kind(context), transcript))
     {
         let tool = tools
             .iter()
@@ -433,6 +486,20 @@ where
             },
             confidence,
         });
+    }
+    // "left"/"right" lure d1 toward snapping; a named tab or an open verb means
+    // something else, so let the next choice take it.
+    if name == "snap_window"
+        && (transcript
+            .to_lowercase()
+            .split_whitespace()
+            .any(|w| w == "tab" || w == "tabs")
+            || crate::llm::decider_args::starts_with_open_verb(transcript))
+    {
+        return Err(error(
+            RouterErrorCode::LowConfidence,
+            "could not extract a window to snap: the command names a tab or an app",
+        ));
     }
     // d1 often reads a spoken address ("youtube dot com") as an app name.
     let name = if name == "open_target"
@@ -508,13 +575,19 @@ where
             }
             ids.remove(0)
         };
-        if get_registered_script(conn, &script_id)
+        let script = get_registered_script(conn, &script_id)
             .map_err(|e| error(RouterErrorCode::SchemaInvalid, e.to_string()))?
-            .is_none()
-        {
+            .ok_or_else(|| {
+                error(
+                    RouterErrorCode::SchemaInvalid,
+                    "d1 selected an unknown registered script",
+                )
+            })?;
+        // Scripts can do anything, so only run one the user actually named.
+        if !names_script(transcript, &script.display_name, &script.id) {
             return Err(error(
-                RouterErrorCode::SchemaInvalid,
-                "d1 selected an unknown registered script",
+                RouterErrorCode::LowConfidence,
+                format!("`{}` wasn't named, so it won't run", script.display_name),
             ));
         }
         args.insert("script_id".into(), json!(script_id));
@@ -734,6 +807,30 @@ mod tests {
     }
 
     #[test]
+    fn snapping_yields_to_a_named_tab() {
+        let (_dir, conn) = db();
+        let tools = get_all_tools(&conn).unwrap();
+        let route = decide_with(&conn, &tools, "go to the tab on the left", 0.5, |body| {
+            if body["questions"].get("tool").is_some() {
+                Ok(json!({"answers":{"tool":{"choice":"snap_window","confidence":0.6,
+                    "probabilities":{"snap_window":0.6,"shortcut":0.38,"NONE":0.02}}}}))
+            } else {
+                Ok(json!({"answers":{"shortcut__name":{"choice":"previous_tab","confidence":0.9}}}))
+            }
+        })
+        .unwrap();
+        assert_eq!(route.tool_calls[0].args["name"], "previous_tab");
+    }
+
+    #[test]
+    fn scripts_run_only_when_named() {
+        assert!(names_script("run my morning routine", "Morning Routine", "morning_routine"));
+        assert!(names_script("start the morning routin script", "Morning Routine", "x"));
+        assert!(!names_script("do that again", "Morning Routine", "morning_routine"));
+        assert!(!names_script("run the routine", "Morning Routine", "morning_routine"));
+    }
+
+    #[test]
     fn app_kind_reads_only_the_app_name() {
         assert_eq!(app_kind("the user is in Visual Studio Code (window: \"a.rs\")"), Some("code editor"));
         assert_eq!(app_kind("the user is in Google Chrome (window: \"Spotify\")"), Some("browser"));
@@ -761,8 +858,8 @@ mod tests {
         assert_eq!(close.args["name"], "close_tab");
         let close = route("the user is in File Explorer", "close_this");
         assert_eq!(close.args["name"], "close_window");
-        assert_eq!(bind_unspecified("go_next", "browser", "skip to the next song"), Some(("media", "control", "next")));
-        assert_eq!(bind_unspecified("go_back", "music player", "go back a tab"), Some(("shortcut", "name", "previous_tab")));
+        assert_eq!(bind_unspecified("go_next", Some("browser"), "skip to the next song"), Some(("media", "control", "next")));
+        assert_eq!(bind_unspecified("go_back", Some("music player"), "go back a tab"), Some(("shortcut", "name", "previous_tab")));
 
         let remark = decide_with_infer(&conn, &tools, "this music takes me back", Some("the user is in Spotify"), 0.5, |_| {
             Ok(json!({"answers":{"tool":{"choice":"media","confidence":0.9},

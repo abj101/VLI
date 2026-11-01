@@ -1,625 +1,1669 @@
 [
   {
     "say": "copy that",
-    "expect": [{"tool": "shortcut", "args": {"name": "copy"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "copy"
+        }
+      }
+    ]
   },
   {
     "say": "copy this",
-    "expect": [{"tool": "shortcut", "args": {"name": "copy"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "copy"
+        }
+      }
+    ]
   },
   {
     "say": "please copy it",
-    "expect": [{"tool": "shortcut", "args": {"name": "copy"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "copy"
+        }
+      }
+    ]
   },
   {
     "say": "paste",
-    "expect": [{"tool": "shortcut", "args": {"name": "paste"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "paste"
+        }
+      }
+    ]
   },
   {
     "say": "paste that",
-    "expect": [{"tool": "shortcut", "args": {"name": "paste"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "paste"
+        }
+      }
+    ]
   },
   {
     "say": "paste it here",
-    "expect": [{"tool": "shortcut", "args": {"name": "paste"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "paste"
+        }
+      }
+    ]
   },
   {
     "say": "cut that",
-    "expect": [{"tool": "shortcut", "args": {"name": "cut"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "cut"
+        }
+      }
+    ]
   },
   {
     "say": "cut this",
-    "expect": [{"tool": "shortcut", "args": {"name": "cut"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "cut"
+        }
+      }
+    ]
   },
   {
     "say": "cut it",
-    "expect": [{"tool": "shortcut", "args": {"name": "cut"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "cut"
+        }
+      }
+    ]
   },
   {
     "say": "undo that",
-    "expect": [{"tool": "shortcut", "args": {"name": "undo"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "undo"
+        }
+      }
+    ]
   },
   {
     "say": "undo my last change",
-    "expect": [{"tool": "shortcut", "args": {"name": "undo"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "undo"
+        }
+      }
+    ]
   },
   {
     "say": "please undo that",
-    "expect": [{"tool": "shortcut", "args": {"name": "undo"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "undo"
+        }
+      }
+    ]
   },
   {
     "say": "redo",
-    "expect": [{"tool": "shortcut", "args": {"name": "redo"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "redo"
+        }
+      }
+    ]
   },
   {
     "say": "redo that",
-    "expect": [{"tool": "shortcut", "args": {"name": "redo"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "redo"
+        }
+      }
+    ]
   },
   {
     "say": "redo the change",
-    "expect": [{"tool": "shortcut", "args": {"name": "redo"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "redo"
+        }
+      }
+    ]
   },
   {
     "say": "select all",
-    "expect": [{"tool": "shortcut", "args": {"name": "select_all"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "select_all"
+        }
+      }
+    ]
   },
   {
     "say": "select everything",
-    "expect": [{"tool": "shortcut", "args": {"name": "select_all"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "select_all"
+        }
+      }
+    ]
   },
   {
     "say": "highlight everything",
-    "expect": [{"tool": "shortcut", "args": {"name": "select_all"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "select_all"
+        }
+      }
+    ]
   },
   {
     "say": "save this",
-    "expect": [{"tool": "shortcut", "args": {"name": "save"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "save"
+        }
+      }
+    ]
   },
   {
     "say": "save the file",
-    "expect": [{"tool": "shortcut", "args": {"name": "save"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "save"
+        }
+      }
+    ]
   },
   {
     "say": "save it",
-    "expect": [{"tool": "shortcut", "args": {"name": "save"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "save"
+        }
+      }
+    ]
   },
   {
     "say": "find on page",
-    "expect": [{"tool": "shortcut", "args": {"name": "find"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "find"
+        }
+      }
+    ]
   },
   {
     "say": "find text on this page",
-    "expect": [{"tool": "shortcut", "args": {"name": "find"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "find"
+        }
+      }
+    ]
   },
   {
     "say": "find in page",
-    "expect": [{"tool": "shortcut", "args": {"name": "find"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "find"
+        }
+      }
+    ]
   },
   {
     "say": "go back a page",
-    "expect": [{"tool": "shortcut", "args": {"name": "browser_back"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "browser_back"
+        }
+      }
+    ]
   },
   {
     "say": "go to the previous page",
-    "expect": [{"tool": "shortcut", "args": {"name": "browser_back"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "browser_back"
+        }
+      }
+    ]
   },
   {
     "say": "please go back a page",
-    "expect": [{"tool": "shortcut", "args": {"name": "browser_back"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "browser_back"
+        }
+      }
+    ]
   },
   {
     "say": "go forward a page",
-    "expect": [{"tool": "shortcut", "args": {"name": "browser_forward"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "browser_forward"
+        }
+      }
+    ]
   },
   {
     "say": "go forward one page",
-    "expect": [{"tool": "shortcut", "args": {"name": "browser_forward"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "browser_forward"
+        }
+      }
+    ]
   },
   {
     "say": "forward a page",
-    "expect": [{"tool": "shortcut", "args": {"name": "browser_forward"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "browser_forward"
+        }
+      }
+    ]
   },
   {
     "say": "new tab",
-    "expect": [{"tool": "shortcut", "args": {"name": "new_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "new_tab"
+        }
+      }
+    ]
   },
   {
     "say": "open a new tab",
-    "expect": [{"tool": "shortcut", "args": {"name": "new_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "new_tab"
+        }
+      }
+    ]
   },
   {
     "say": "please open a new tab",
-    "expect": [{"tool": "shortcut", "args": {"name": "new_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "new_tab"
+        }
+      }
+    ]
   },
   {
     "say": "close this tab",
-    "expect": [{"tool": "shortcut", "args": {"name": "close_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "close_tab"
+        }
+      }
+    ]
   },
   {
     "say": "close the tab",
-    "expect": [{"tool": "shortcut", "args": {"name": "close_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "close_tab"
+        }
+      }
+    ]
   },
   {
     "say": "close the current tab",
-    "expect": [{"tool": "shortcut", "args": {"name": "close_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "close_tab"
+        }
+      }
+    ]
   },
   {
     "say": "reopen the last tab",
-    "expect": [{"tool": "shortcut", "args": {"name": "reopen_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "reopen_tab"
+        }
+      }
+    ]
   },
   {
     "say": "reopen the tab i just closed",
-    "expect": [{"tool": "shortcut", "args": {"name": "reopen_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "reopen_tab"
+        }
+      }
+    ]
   },
   {
     "say": "bring back the tab i closed",
-    "expect": [{"tool": "shortcut", "args": {"name": "reopen_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "reopen_tab"
+        }
+      }
+    ]
   },
   {
     "say": "next tab",
-    "expect": [{"tool": "shortcut", "args": {"name": "next_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "next_tab"
+        }
+      }
+    ]
   },
   {
     "say": "switch to the next tab",
-    "expect": [{"tool": "shortcut", "args": {"name": "next_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "next_tab"
+        }
+      }
+    ]
   },
   {
     "say": "go to the next tab",
-    "expect": [{"tool": "shortcut", "args": {"name": "next_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "next_tab"
+        }
+      }
+    ]
   },
   {
     "say": "previous tab",
-    "expect": [{"tool": "shortcut", "args": {"name": "previous_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "previous_tab"
+        }
+      }
+    ]
   },
   {
     "say": "go to the previous tab",
-    "expect": [{"tool": "shortcut", "args": {"name": "previous_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "previous_tab"
+        }
+      }
+    ]
   },
   {
     "say": "switch to the tab before this one",
-    "expect": [{"tool": "shortcut", "args": {"name": "previous_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "previous_tab"
+        }
+      }
+    ]
   },
   {
     "say": "refresh the page",
-    "expect": [{"tool": "shortcut", "args": {"name": "refresh"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "refresh"
+        }
+      }
+    ]
   },
   {
     "say": "reload the page",
-    "expect": [{"tool": "shortcut", "args": {"name": "refresh"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "refresh"
+        }
+      }
+    ]
   },
   {
     "say": "refresh this",
-    "expect": [{"tool": "shortcut", "args": {"name": "refresh"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "refresh"
+        }
+      }
+    ]
   },
   {
     "say": "close this window",
-    "expect": [{"tool": "shortcut", "args": {"name": "close_window"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "close_window"
+        }
+      }
+    ]
   },
   {
     "say": "close the window",
-    "expect": [{"tool": "shortcut", "args": {"name": "close_window"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "close_window"
+        }
+      }
+    ]
   },
   {
     "say": "close the app window",
-    "expect": [{"tool": "shortcut", "args": {"name": "close_window"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "close_window"
+        }
+      }
+    ]
   },
   {
     "say": "switch apps",
-    "expect": [{"tool": "shortcut", "args": {"name": "switch_app"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "switch_app"
+        }
+      }
+    ]
   },
   {
     "say": "switch to another app",
-    "expect": [{"tool": "shortcut", "args": {"name": "switch_app"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "switch_app"
+        }
+      }
+    ]
   },
   {
     "say": "switch windows",
-    "expect": [{"tool": "shortcut", "args": {"name": "switch_app"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "switch_app"
+        }
+      }
+    ]
   },
   {
     "say": "minimize this window",
-    "expect": [{"tool": "shortcut", "args": {"name": "minimize"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "minimize"
+        }
+      }
+    ]
   },
   {
     "say": "minimize the window",
-    "expect": [{"tool": "shortcut", "args": {"name": "minimize"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "minimize"
+        }
+      }
+    ]
   },
   {
     "say": "minimize that",
-    "expect": [{"tool": "shortcut", "args": {"name": "minimize"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "minimize"
+        }
+      }
+    ]
   },
   {
     "say": "show the desktop",
-    "expect": [{"tool": "shortcut", "args": {"name": "show_desktop"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "show_desktop"
+        }
+      }
+    ]
   },
   {
     "say": "show my desktop",
-    "expect": [{"tool": "shortcut", "args": {"name": "show_desktop"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "show_desktop"
+        }
+      }
+    ]
   },
   {
     "say": "go to the desktop",
-    "expect": [{"tool": "shortcut", "args": {"name": "show_desktop"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "show_desktop"
+        }
+      }
+    ]
   },
   {
     "say": "pause the music",
-    "expect": [{"tool": "media", "args": {"control": "play_pause"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "play_pause"
+        }
+      }
+    ]
   },
   {
     "say": "play music",
-    "expect": [{"tool": "media", "args": {"control": "play_pause"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "play_pause"
+        }
+      }
+    ]
   },
   {
     "say": "resume the music",
-    "expect": [{"tool": "media", "args": {"control": "play_pause"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "play_pause"
+        }
+      }
+    ]
   },
   {
     "say": "can you pause the music",
-    "expect": [{"tool": "media", "args": {"control": "play_pause"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "play_pause"
+        }
+      }
+    ]
   },
   {
     "say": "next song",
-    "expect": [{"tool": "media", "args": {"control": "next"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "next"
+        }
+      }
+    ]
   },
   {
     "say": "skip this song",
-    "expect": [{"tool": "media", "args": {"control": "next"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "next"
+        }
+      }
+    ]
   },
   {
     "say": "skip to the next song",
-    "expect": [{"tool": "media", "args": {"control": "next"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "next"
+        }
+      }
+    ]
   },
   {
     "say": "previous song",
-    "expect": [{"tool": "media", "args": {"control": "previous"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "previous"
+        }
+      }
+    ]
   },
   {
     "say": "previous track",
-    "expect": [{"tool": "media", "args": {"control": "previous"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "previous"
+        }
+      }
+    ]
   },
   {
     "say": "go back to the last song",
-    "expect": [{"tool": "media", "args": {"control": "previous"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "previous"
+        }
+      }
+    ]
   },
   {
     "say": "turn it up",
-    "expect": [{"tool": "media", "args": {"control": "volume_up"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "volume_up"
+        }
+      }
+    ]
   },
   {
     "say": "turn up the volume",
-    "expect": [{"tool": "media", "args": {"control": "volume_up"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "volume_up"
+        }
+      }
+    ]
   },
   {
     "say": "volume up",
-    "expect": [{"tool": "media", "args": {"control": "volume_up"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "volume_up"
+        }
+      }
+    ]
   },
   {
     "say": "turn it down",
-    "expect": [{"tool": "media", "args": {"control": "volume_down"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "volume_down"
+        }
+      }
+    ]
   },
   {
     "say": "turn down the volume",
-    "expect": [{"tool": "media", "args": {"control": "volume_down"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "volume_down"
+        }
+      }
+    ]
   },
   {
     "say": "lower the volume",
-    "expect": [{"tool": "media", "args": {"control": "volume_down"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "volume_down"
+        }
+      }
+    ]
   },
   {
     "say": "mute",
-    "expect": [{"tool": "media", "args": {"control": "mute"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "mute"
+        }
+      }
+    ]
   },
   {
     "say": "mute the sound",
-    "expect": [{"tool": "media", "args": {"control": "mute"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "mute"
+        }
+      }
+    ]
   },
   {
     "say": "mute it",
-    "expect": [{"tool": "media", "args": {"control": "mute"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "mute"
+        }
+      }
+    ]
   },
   {
     "say": "open spotify",
-    "expect": [{"tool": "open_target", "args": {"target": "spotify"}}]
+    "expect": [
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "spotify"
+        }
+      }
+    ]
   },
   {
     "say": "launch discord",
-    "expect": [{"tool": "open_target", "args": {"target": "discord"}}]
+    "expect": [
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "discord"
+        }
+      }
+    ]
   },
   {
     "say": "open chrome",
-    "expect": [{"tool": "open_target", "args": {"target": "chrome"}}]
+    "expect": [
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "chrome"
+        }
+      }
+    ]
   },
   {
     "say": "open notepad on the left",
-    "expect": [{"tool": "open_target", "args": {"target": "notepad", "placement": "left_half"}}]
+    "expect": [
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "notepad",
+          "placement": "left_half"
+        }
+      }
+    ]
   },
   {
     "say": "open calculator on the right",
-    "expect": [{"tool": "open_target", "args": {"target": "calculator", "placement": "right_half"}}]
+    "expect": [
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "calculator",
+          "placement": "right_half"
+        }
+      }
+    ]
   },
   {
     "say": "open visual studio code maximized",
-    "expect": [{"tool": "open_target", "args": {"target": "visual studio code", "placement": "maximize"}}]
+    "expect": [
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "visual studio code",
+          "placement": "maximize"
+        }
+      }
+    ]
   },
   {
     "say": "open file explorer",
-    "expect": [{"tool": "open_target", "args": {"target": "file explorer"}}]
+    "expect": [
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "file explorer"
+        }
+      }
+    ]
   },
   {
     "say": "start steam",
-    "expect": [{"tool": "open_target", "args": {"target": "steam"}}]
+    "expect": [
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "steam"
+        }
+      }
+    ]
   },
   {
     "say": "go to github.com",
-    "expect": [{"tool": "open_url", "args": {"url": "github.com"}}]
+    "expect": [
+      {
+        "tool": "open_url",
+        "args": {
+          "url": "github.com"
+        }
+      }
+    ]
   },
   {
     "say": "open youtube dot com",
-    "expect": [{"tool": "open_url", "args": {"url": "youtube.com"}}]
+    "expect": [
+      {
+        "tool": "open_url",
+        "args": {
+          "url": "youtube.com"
+        }
+      }
+    ]
   },
   {
     "say": "go to wikipedia dot org",
-    "expect": [{"tool": "open_url", "args": {"url": "wikipedia.org"}}]
+    "expect": [
+      {
+        "tool": "open_url",
+        "args": {
+          "url": "wikipedia.org"
+        }
+      }
+    ]
   },
   {
     "say": "open reddit.com",
-    "expect": [{"tool": "open_url", "args": {"url": "reddit.com"}}]
+    "expect": [
+      {
+        "tool": "open_url",
+        "args": {
+          "url": "reddit.com"
+        }
+      }
+    ]
   },
   {
     "say": "open amazon dot com",
-    "expect": [{"tool": "open_url", "args": {"url": "amazon.com"}}]
+    "expect": [
+      {
+        "tool": "open_url",
+        "args": {
+          "url": "amazon.com"
+        }
+      }
+    ]
   },
   {
     "say": "search for rust traits",
-    "expect": [{"tool": "web_search", "args": {"query": "rust traits"}}]
+    "expect": [
+      {
+        "tool": "web_search",
+        "args": {
+          "query": "rust traits"
+        }
+      }
+    ]
   },
   {
     "say": "google best pizza near me",
-    "expect": [{"tool": "web_search", "args": {"query": "best pizza near me"}}]
+    "expect": [
+      {
+        "tool": "web_search",
+        "args": {
+          "query": "best pizza near me"
+        }
+      }
+    ]
   },
   {
     "say": "look up the weather in chicago",
-    "expect": [{"tool": "web_search", "args": {"query": "weather in chicago"}}]
+    "expect": [
+      {
+        "tool": "web_search",
+        "args": {
+          "query": "weather in chicago"
+        }
+      }
+    ]
   },
   {
     "say": "search for cheap flights to tokyo",
-    "expect": [{"tool": "web_search", "args": {"query": "cheap flights to tokyo"}}]
+    "expect": [
+      {
+        "tool": "web_search",
+        "args": {
+          "query": "cheap flights to tokyo"
+        }
+      }
+    ]
   },
   {
     "say": "search the web for how to make bread",
-    "expect": [{"tool": "web_search", "args": {"query": "how to make bread"}}]
+    "expect": [
+      {
+        "tool": "web_search",
+        "args": {
+          "query": "how to make bread"
+        }
+      }
+    ]
   },
   {
     "say": "look up python list comprehensions",
-    "expect": [{"tool": "web_search", "args": {"query": "python list comprehensions"}}]
+    "expect": [
+      {
+        "tool": "web_search",
+        "args": {
+          "query": "python list comprehensions"
+        }
+      }
+    ]
   },
   {
     "say": "type hello world",
-    "expect": [{"tool": "type_text", "args": {"text": "hello world"}}]
+    "expect": [
+      {
+        "tool": "type_text",
+        "args": {
+          "text": "hello world"
+        }
+      }
+    ]
   },
   {
     "say": "write meeting at three",
-    "expect": [{"tool": "type_text", "args": {"text": "meeting at three"}}]
+    "expect": [
+      {
+        "tool": "type_text",
+        "args": {
+          "text": "meeting at three"
+        }
+      }
+    ]
   },
   {
     "say": "enter thanks for your help",
-    "expect": [{"tool": "type_text", "args": {"text": "thanks for your help"}}]
+    "expect": [
+      {
+        "tool": "type_text",
+        "args": {
+          "text": "thanks for your help"
+        }
+      }
+    ]
   },
   {
     "say": "dictate i will be late",
-    "expect": [{"tool": "type_text", "args": {"text": "i will be late"}}]
+    "expect": [
+      {
+        "tool": "type_text",
+        "args": {
+          "text": "i will be late"
+        }
+      }
+    ]
   },
   {
     "say": "type sounds good",
-    "expect": [{"tool": "type_text", "args": {"text": "sounds good"}}]
+    "expect": [
+      {
+        "tool": "type_text",
+        "args": {
+          "text": "sounds good"
+        }
+      }
+    ]
   },
   {
     "say": "write running late be there soon",
-    "expect": [{"tool": "type_text", "args": {"text": "running late be there soon"}}]
+    "expect": [
+      {
+        "tool": "type_text",
+        "args": {
+          "text": "running late be there soon"
+        }
+      }
+    ]
   },
   {
     "say": "say good morning",
-    "expect": [{"tool": "say", "args": {"text": "good morning"}}]
+    "expect": [
+      {
+        "tool": "say",
+        "args": {
+          "text": "good morning"
+        }
+      }
+    ]
   },
   {
     "say": "speak hello there",
-    "expect": [{"tool": "say", "args": {"text": "hello there"}}]
+    "expect": [
+      {
+        "tool": "say",
+        "args": {
+          "text": "hello there"
+        }
+      }
+    ]
   },
   {
     "say": "tell me hello from jarvis",
-    "expect": [{"tool": "say", "args": {"text": "hello from jarvis"}}]
+    "expect": [
+      {
+        "tool": "say",
+        "args": {
+          "text": "hello from jarvis"
+        }
+      }
+    ]
   },
   {
     "say": "snap this window to the left",
-    "expect": [{"tool": "snap_window", "args": {"zone": "left_half"}}]
+    "expect": [
+      {
+        "tool": "snap_window",
+        "args": {
+          "zone": "left_half"
+        }
+      }
+    ]
   },
   {
     "say": "snap the window to the right",
-    "expect": [{"tool": "snap_window", "args": {"zone": "right_half"}}]
+    "expect": [
+      {
+        "tool": "snap_window",
+        "args": {
+          "zone": "right_half"
+        }
+      }
+    ]
   },
   {
     "say": "maximize the window",
-    "expect": [{"tool": "snap_window", "args": {"zone": "maximize"}}]
+    "expect": [
+      {
+        "tool": "snap_window",
+        "args": {
+          "zone": "maximize"
+        }
+      }
+    ]
   },
   {
     "say": "maximize this window",
-    "expect": [{"tool": "snap_window", "args": {"zone": "maximize"}}]
+    "expect": [
+      {
+        "tool": "snap_window",
+        "args": {
+          "zone": "maximize"
+        }
+      }
+    ]
   },
   {
     "say": "pause the moosic",
-    "expect": [{"tool": "media", "args": {"control": "play_pause"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "play_pause"
+        }
+      }
+    ]
   },
   {
     "say": "open spot if i",
-    "expect": [{"tool": "open_target", "args": {"target": "spot"}}]
+    "expect": [
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "spot"
+        }
+      }
+    ]
   },
   {
     "say": "next sing",
-    "expect": [{"tool": "media", "args": {"control": "next"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "next"
+        }
+      }
+    ]
   },
   {
     "say": "turn the volum up",
-    "expect": [{"tool": "media", "args": {"control": "volume_up"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "volume_up"
+        }
+      }
+    ]
   },
   {
     "say": "copee that",
-    "expect": [{"tool": "shortcut", "args": {"name": "copy"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "copy"
+        }
+      }
+    ]
   },
   {
     "say": "undu that",
-    "expect": [{"tool": "shortcut", "args": {"name": "undo"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "undo"
+        }
+      }
+    ]
   },
   {
     "say": "go bak a page",
-    "expect": [{"tool": "shortcut", "args": {"name": "browser_back"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "browser_back"
+        }
+      }
+    ]
   },
   {
     "say": "serch for rust traits",
-    "expect": [{"tool": "web_search", "args": {"query": "rust traits"}}]
+    "expect": [
+      {
+        "tool": "web_search",
+        "args": {
+          "query": "rust traits"
+        }
+      }
+    ]
   },
   {
     "say": "mute the sownd",
-    "expect": [{"tool": "media", "args": {"control": "mute"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "mute"
+        }
+      }
+    ]
   },
   {
     "say": "open chrome and search for cheap flights",
     "expect": [
-      {"tool": "open_target", "args": {"target": "chrome"}},
-      {"tool": "web_search", "args": {"query": "cheap flights"}}
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "chrome"
+        }
+      },
+      {
+        "tool": "web_search",
+        "args": {
+          "query": "cheap flights"
+        }
+      }
     ]
   },
   {
     "say": "copy that and open notepad",
     "expect": [
-      {"tool": "shortcut", "args": {"name": "copy"}},
-      {"tool": "open_target", "args": {"target": "notepad"}}
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "copy"
+        }
+      },
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "notepad"
+        }
+      }
     ]
   },
   {
     "say": "pause the music and minimize this window",
     "expect": [
-      {"tool": "media", "args": {"control": "play_pause"}},
-      {"tool": "shortcut", "args": {"name": "minimize"}}
+      {
+        "tool": "media",
+        "args": {
+          "control": "play_pause"
+        }
+      },
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "minimize"
+        }
+      }
     ]
   },
   {
     "say": "open a new tab then go to github.com",
     "expect": [
-      {"tool": "shortcut", "args": {"name": "new_tab"}},
-      {"tool": "open_url", "args": {"url": "github.com"}}
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "new_tab"
+        }
+      },
+      {
+        "tool": "open_url",
+        "args": {
+          "url": "github.com"
+        }
+      }
     ]
   },
   {
     "say": "open spotify and play music",
     "expect": [
-      {"tool": "open_target", "args": {"target": "spotify"}},
-      {"tool": "media", "args": {"control": "play_pause"}}
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "spotify"
+        }
+      },
+      {
+        "tool": "media",
+        "args": {
+          "control": "play_pause"
+        }
+      }
     ]
   },
   {
     "say": "snap this window to the left and mute",
     "expect": [
-      {"tool": "snap_window", "args": {"zone": "left_half"}},
-      {"tool": "media", "args": {"control": "mute"}}
+      {
+        "tool": "snap_window",
+        "args": {
+          "zone": "left_half"
+        }
+      },
+      {
+        "tool": "media",
+        "args": {
+          "control": "mute"
+        }
+      }
     ]
   },
   {
     "say": "search for rust traits then open youtube dot com",
     "expect": [
-      {"tool": "web_search", "args": {"query": "rust traits"}},
-      {"tool": "open_url", "args": {"url": "youtube.com"}}
+      {
+        "tool": "web_search",
+        "args": {
+          "query": "rust traits"
+        }
+      },
+      {
+        "tool": "open_url",
+        "args": {
+          "url": "youtube.com"
+        }
+      }
     ]
   },
   {
     "say": "select all and copy",
     "expect": [
-      {"tool": "shortcut", "args": {"name": "select_all"}},
-      {"tool": "shortcut", "args": {"name": "copy"}}
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "select_all"
+        }
+      },
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "copy"
+        }
+      }
     ]
   },
   {
     "say": "open notepad then type hello world",
     "expect": [
-      {"tool": "open_target", "args": {"target": "notepad"}},
-      {"tool": "type_text", "args": {"text": "hello world"}}
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "notepad"
+        }
+      },
+      {
+        "tool": "type_text",
+        "args": {
+          "text": "hello world"
+        }
+      }
     ]
   },
   {
     "say": "turn it up and skip this song",
     "expect": [
-      {"tool": "media", "args": {"control": "volume_up"}},
-      {"tool": "media", "args": {"control": "next"}}
+      {
+        "tool": "media",
+        "args": {
+          "control": "volume_up"
+        }
+      },
+      {
+        "tool": "media",
+        "args": {
+          "control": "next"
+        }
+      }
     ]
   },
   {
     "say": "save this and close this window",
     "expect": [
-      {"tool": "shortcut", "args": {"name": "save"}},
-      {"tool": "shortcut", "args": {"name": "close_window"}}
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "save"
+        }
+      },
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "close_window"
+        }
+      }
     ]
   },
   {
     "say": "go back",
     "focus": "the user is in Google Chrome",
-    "expect": [{"tool": "shortcut", "args": {"name": "browser_back"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "browser_back"
+        }
+      }
+    ]
   },
   {
     "say": "back",
     "focus": "the user is in Google Chrome",
-    "expect": [{"tool": "shortcut", "args": {"name": "browser_back"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "browser_back"
+        }
+      }
+    ]
   },
   {
     "say": "next",
     "focus": "the user is in Google Chrome",
-    "expect": [{"tool": "shortcut", "args": {"name": "next_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "next_tab"
+        }
+      }
+    ]
   },
   {
     "say": "next one",
     "focus": "the user is in Google Chrome",
-    "expect": [{"tool": "shortcut", "args": {"name": "next_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "next_tab"
+        }
+      }
+    ]
   },
   {
     "say": "skip",
     "focus": "the user is in Google Chrome",
-    "expect": [{"tool": "shortcut", "args": {"name": "next_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "next_tab"
+        }
+      }
+    ]
   },
   {
     "say": "close this",
     "focus": "the user is in Google Chrome",
-    "expect": [{"tool": "shortcut", "args": {"name": "close_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "close_tab"
+        }
+      }
+    ]
   },
   {
     "say": "close it",
     "focus": "the user is in Google Chrome",
-    "expect": [{"tool": "shortcut", "args": {"name": "close_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "close_tab"
+        }
+      }
+    ]
   },
   {
     "say": "next song",
     "focus": "the user is in Google Chrome",
-    "expect": [{"tool": "media", "args": {"control": "next"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "next"
+        }
+      }
+    ]
   },
   {
     "say": "type hello",
     "focus": "the user is in Google Chrome",
-    "expect": [{"tool": "type_text", "args": {"text": "hello"}}]
+    "expect": [
+      {
+        "tool": "type_text",
+        "args": {
+          "text": "hello"
+        }
+      }
+    ]
   },
   {
     "say": "go back",
     "focus": "the user is in Spotify",
-    "expect": [{"tool": "media", "args": {"control": "previous"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "previous"
+        }
+      }
+    ]
   },
   {
     "say": "next",
     "focus": "the user is in Spotify",
-    "expect": [{"tool": "media", "args": {"control": "next"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "next"
+        }
+      }
+    ]
   },
   {
     "say": "skip",
     "focus": "the user is in Spotify",
-    "expect": [{"tool": "media", "args": {"control": "next"}}]
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "next"
+        }
+      }
+    ]
   },
   {
     "say": "close this tab",
     "focus": "the user is in Spotify",
-    "expect": [{"tool": "shortcut", "args": {"name": "close_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "close_tab"
+        }
+      }
+    ]
   },
   {
     "say": "i love this song",
@@ -639,32 +1683,74 @@
   {
     "say": "go back",
     "focus": "the user is in Notepad",
-    "expect": [{"tool": "shortcut", "args": {"name": "undo"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "undo"
+        }
+      }
+    ]
   },
   {
     "say": "close this",
     "focus": "the user is in Notepad",
-    "expect": [{"tool": "shortcut", "args": {"name": "close_window"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "close_window"
+        }
+      }
+    ]
   },
   {
     "say": "close it",
     "focus": "the user is in File Explorer",
-    "expect": [{"tool": "shortcut", "args": {"name": "close_window"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "close_window"
+        }
+      }
+    ]
   },
   {
     "say": "go back",
     "focus": "the user is in Visual Studio Code",
-    "expect": [{"tool": "shortcut", "args": {"name": "undo"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "undo"
+        }
+      }
+    ]
   },
   {
     "say": "next one",
     "focus": "the user is in Visual Studio Code",
-    "expect": [{"tool": "shortcut", "args": {"name": "next_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "next_tab"
+        }
+      }
+    ]
   },
   {
     "say": "close this",
     "focus": "the user is in Visual Studio Code",
-    "expect": [{"tool": "shortcut", "args": {"name": "close_tab"}}]
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "close_tab"
+        }
+      }
+    ]
   },
   {
     "say": "hmm never mind",
@@ -765,5 +1851,242 @@
   {
     "say": "cool cool cool",
     "expect": []
+  },
+  {
+    "say": "alt tab",
+    "expect": [
+      {
+        "tool": "press_keys",
+        "args": {
+          "keys": "%{TAB}"
+        }
+      }
+    ]
+  },
+  {
+    "say": "control z",
+    "expect": [
+      {
+        "tool": "press_keys",
+        "args": {
+          "keys": "^z"
+        }
+      }
+    ]
+  },
+  {
+    "say": "press control shift t",
+    "expect": [
+      {
+        "tool": "press_keys",
+        "args": {
+          "keys": "^+t"
+        }
+      }
+    ]
+  },
+  {
+    "say": "hit enter",
+    "expect": [
+      {
+        "tool": "press_keys",
+        "args": {
+          "keys": "{ENTER}"
+        }
+      }
+    ]
+  },
+  {
+    "say": "press escape",
+    "expect": [
+      {
+        "tool": "press_keys",
+        "args": {
+          "keys": "{ESC}"
+        }
+      }
+    ]
+  },
+  {
+    "say": "alt f4",
+    "expect": [
+      {
+        "tool": "press_keys",
+        "args": {
+          "keys": "%{F4}"
+        }
+      }
+    ]
+  },
+  {
+    "say": "lock the computer",
+    "expect": [
+      {
+        "tool": "lock_computer",
+        "args": {}
+      }
+    ]
+  },
+  {
+    "say": "lock my screen",
+    "expect": [
+      {
+        "tool": "lock_computer",
+        "args": {}
+      }
+    ]
+  },
+  {
+    "say": "close spotify",
+    "expect": [
+      {
+        "tool": "close_app",
+        "args": {
+          "target": "spotify"
+        }
+      }
+    ]
+  },
+  {
+    "say": "quit discord",
+    "expect": [
+      {
+        "tool": "close_app",
+        "args": {
+          "target": "discord"
+        }
+      }
+    ]
+  },
+  {
+    "say": "close the notepad app",
+    "expect": [
+      {
+        "tool": "close_app",
+        "args": {
+          "target": "notepad"
+        }
+      }
+    ]
+  },
+  {
+    "say": "switch to chrome",
+    "expect": [
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "chrome"
+        }
+      }
+    ]
+  },
+  {
+    "say": "tile spotify on the right",
+    "expect": [
+      {
+        "tool": "open_target",
+        "args": {
+          "target": "spotify",
+          "placement": "right_half"
+        }
+      }
+    ]
+  },
+  {
+    "say": "clear everything off the screen",
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "show_desktop"
+        }
+      }
+    ]
+  },
+  {
+    "say": "stop the music",
+    "expect": [
+      {
+        "tool": "media",
+        "args": {
+          "control": "play_pause"
+        }
+      }
+    ]
+  },
+  {
+    "say": "reverse my last edit",
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "undo"
+        }
+      }
+    ]
+  },
+  {
+    "say": "do that again",
+    "expect": []
+  },
+  {
+    "say": "the left one",
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "previous_tab"
+        }
+      }
+    ],
+    "focus": "the user is in Google Chrome"
+  },
+  {
+    "say": "the right one",
+    "expect": [
+      {
+        "tool": "shortcut",
+        "args": {
+          "name": "next_tab"
+        }
+      }
+    ],
+    "focus": "the user is in Visual Studio Code"
+  },
+  {
+    "say": "switch to the left one",
+    "expect": [
+      {
+        "tool": "focus_side",
+        "args": {
+          "side": "left"
+        }
+      }
+    ],
+    "focus": "the user is in Notepad"
+  },
+  {
+    "say": "the right one",
+    "expect": [
+      {
+        "tool": "focus_side",
+        "args": {
+          "side": "right"
+        }
+      }
+    ],
+    "focus": "the user is in Microsoft Excel"
+  },
+  {
+    "say": "go to the window on the left",
+    "expect": [
+      {
+        "tool": "focus_side",
+        "args": {
+          "side": "left"
+        }
+      }
+    ],
+    "focus": "the user is in Notepad"
   }
 ]

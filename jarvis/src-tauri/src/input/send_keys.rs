@@ -16,6 +16,8 @@ const VK_SHIFT: u16 = 0x10;
 const VK_CONTROL: u16 = 0x11;
 #[cfg(windows)]
 const VK_MENU: u16 = 0x12;
+#[cfg(windows)]
+const VK_LWIN: u16 = 0x5B;
 
 /// Parse .NET SendKeys syntax into SendInput ops. `None` = needs the PowerShell
 /// fallback (`(...)` groups, `{KEY n}` repeats, modified punctuation, unknown names).
@@ -26,10 +28,12 @@ fn parse_windows_send_keys(keys: &str) -> Option<Vec<WinKeyOp>> {
     let mut chars = keys.chars();
     while let Some(ch) = chars.next() {
         let key = match ch {
-            '^' | '+' | '%' => {
+            // `#` (Windows key) is ours; .NET SendKeys has no Win modifier.
+            '^' | '+' | '%' | '#' => {
                 let vk = match ch {
                     '^' => VK_CONTROL,
                     '+' => VK_SHIFT,
+                    '#' => VK_LWIN,
                     _ => VK_MENU,
                 };
                 if !mods.contains(&vk) {

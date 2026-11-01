@@ -66,6 +66,26 @@ pub fn execute_tool(
     if tool_id == "media" {
         return execute_media_tool(args);
     }
+    if tool_id == "lock_computer" {
+        return lock_computer();
+    }
+    if tool_id == "close_app" {
+        let target = args.get("target").expect("required arg validated");
+        let app = crate::apps::resolve_app(target, app_index.unwrap_or(&[]))
+            .ok_or_else(|| format!("Couldn't find {target}"))?;
+        if !crate::window::close_app_window(&app.exe_path, &app.display_name)? {
+            return Err(format!("{} isn't open", app.display_name));
+        }
+        runtime.emit_status(&format!("Closed {}", app.display_name));
+        return Ok(());
+    }
+    if tool_id == "focus_side" {
+        let side = args.get("side").expect("required arg validated");
+        if !crate::window::focus_window_on_side(side)? {
+            return Err(format!("No window on the {side}"));
+        }
+        return Ok(());
+    }
     if tool_id == "type_text" {
         return crate::input::type_text::type_unicode(
             args.get("text").expect("required arg validated"),
@@ -256,6 +276,23 @@ fn execute_shortcut_tool(
         _ => return Err(format!("unsupported shortcut `{name}`")),
     };
     runtime.send_keys(keys)
+}
+
+fn lock_computer() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let status = crate::process::hidden_command("rundll32.exe")
+            .arg("user32.dll,LockWorkStation")
+            .status()
+            .map_err(|e| format!("failed to lock: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("failed to lock: rundll32 exited with {status}"))
+        }
+    }
+    #[cfg(not(windows))]
+    Err("locking is only supported on Windows".into())
 }
 
 fn execute_media_tool(args: &HashMap<String, String>) -> Result<(), String> {

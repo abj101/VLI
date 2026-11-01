@@ -7,7 +7,7 @@ use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 use windows::core::BOOL;
-use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, TRUE};
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, TRUE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, MONITOR_DEFAULTTOPRIMARY,
     MONITOR_DEFAULTTONEAREST, MONITORINFO,
@@ -16,9 +16,10 @@ use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetAncestor, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
-    IsWindowVisible, SetForegroundWindow, SetWindowPos, ShowWindow, GA_ROOT, HWND_TOP,
-    SW_MAXIMIZE, SW_RESTORE, SWP_NOZORDER, SWP_SHOWWINDOW,
+    EnumWindows, GetAncestor, GetForegroundWindow, GetWindowRect, GetWindowTextW,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, PostMessageW, SetForegroundWindow,
+    SetWindowPos, ShowWindow, GA_ROOT, HWND_TOP, SW_MAXIMIZE, SW_RESTORE, SWP_NOZORDER,
+    SWP_SHOWWINDOW, WM_CLOSE,
 };
 
 /// Minimum title / display-name fuzzy ratio for existing-window focus.
@@ -114,6 +115,72 @@ pub fn focus_existing_app_window(
         apply_zone(hwnd, validate_placement_zone(zone)?, monitor)?;
     }
     Ok(true)
+}
+
+/// Ask an app's main window to close, like clicking its X. `false` when it isn't open.
+pub fn close_app_window(exe_path: &str, display_name: &str) -> Result<bool, String> {
+    let Some(hwnd) = find_existing_window_for_app(exe_path, display_name) else {
+        return Ok(false);
+    };
+    unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) }
+        .map_err(|e| format!("could not close {display_name}: {e}"))?;
+    Ok(true)
+}
+
+/// Focus the topmost window sitting on the `left` or `right` half of the primary monitor.
+/// Maximized and minimized windows aren't on a side, so they're skipped.
+pub fn focus_window_on_side(side: &str) -> Result<bool, String> {
+    let left = match side {
+        "left" => true,
+        "right" => false,
+        other => return Err(format!("unsupported side `{other}`")),
+    };
+    let work = monitor_work_area(unsafe { GetForegroundWindow() }, DEFAULT_MONITOR)?;
+    let mut ctx = SideCtx {
+        left,
+        mid: (work.left + work.right) / 2,
+        width: work.right - work.left,
+        own_pid: std::process::id(),
+        found: None,
+    };
+    unsafe {
+        let _ = EnumWindows(Some(enum_find_side), LPARAM(&mut ctx as *mut _ as isize));
+    }
+    let Some(hwnd) = ctx.found else {
+        return Ok(false);
+    };
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+    }
+    Ok(true)
+}
+
+struct SideCtx {
+    left: bool,
+    mid: i32,
+    width: i32,
+    own_pid: u32,
+    found: Option<HWND>,
+}
+
+unsafe extern "system" fn enum_find_side(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let ctx = &mut *(lparam.0 as *mut SideCtx);
+    if ctx.found.is_some()
+        || !is_placeable_top_level(hwnd)
+        || IsIconic(hwnd).as_bool()
+        || window_title(hwnd).is_none()
+        || window_pid(hwnd) == Some(ctx.own_pid)
+    {
+        return TRUE;
+    }
+    let mut rect = RECT::default();
+    if GetWindowRect(hwnd, &mut rect).is_err() || (rect.right - rect.left) * 4 > ctx.width * 3 {
+        return TRUE;
+    }
+    if ((rect.left + rect.right) / 2 < ctx.mid) == ctx.left {
+        ctx.found = Some(hwnd);
+    }
+    TRUE
 }
 
 pub fn snap_foreground_window(zone: &str, monitor: &str) -> Result<(), String> {

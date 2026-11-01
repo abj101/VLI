@@ -304,20 +304,25 @@ pub(crate) fn canonicalize_explicit_url(text: &str) -> String {
 }
 
 pub(crate) fn normalize_spoken_url(text: &str) -> String {
-    let mut s = text.to_lowercase();
-    for (spoken, dot) in [
-        (" dot com", ".com"),
-        (" dot org", ".org"),
-        (" dot net", ".net"),
-        (" dot edu", ".edu"),
-        (" dot io", ".io"),
-        (" dot co uk", ".co.uk"),
-        (" dot co", ".co"),
-        (" dot uk", ".uk"),
-    ] {
-        s = s.replace(spoken, dot);
+    // "docs dot google dot com" -> "docs.google.com"; any "dot" between words joins them.
+    let lower = text.to_lowercase().replace(" dot co uk", " dot co dot uk");
+    let words: Vec<&str> = lower.split_whitespace().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < words.len() {
+        if words[i] == "dot" && !out.is_empty() && i + 1 < words.len() {
+            out.push('.');
+            out.push_str(words[i + 1]);
+            i += 2;
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(words[i]);
+        i += 1;
     }
-    s
+    out
 }
 
 fn has_domain_tld_pattern(t: &str) -> bool {

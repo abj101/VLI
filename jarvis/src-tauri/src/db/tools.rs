@@ -29,6 +29,7 @@ pub fn ensure_tools_schema(conn: &Connection) -> Result<(), DbError> {
     seed_builtin_media(conn)?;
     seed_builtin_type_text(conn)?;
     seed_builtin_say(conn)?;
+    seed_builtin_desktop_tools(conn)?;
     migrate_builtin_descriptions(conn)?;
     migrate_builtin_shortcut_enum(conn)?;
     Ok(())
@@ -300,6 +301,68 @@ fn seed_builtin_say(conn: &Connection) -> Result<(), DbError> {
             builtin: true,
         },
     )
+}
+
+/// Keystrokes, lock, close-by-name and side focus. Their `actions` are placeholders where
+/// `execute_tool` runs them natively, like `shortcut`.
+fn seed_builtin_desktop_tools(conn: &Connection) -> Result<(), DbError> {
+    let string_param = |name: &str, description: &str| ToolParameter {
+        name: name.into(),
+        param_type: "string".into(),
+        description: Some(description.into()),
+        required: true,
+        enum_values: vec![],
+    };
+    for (name, display_name, description, parameters, keys) in [
+        (
+            "press_keys",
+            "Press keys",
+            "press a key or key combination by name, like alt tab, control z or press enter",
+            vec![string_param("keys", "SendKeys string, e.g. %{TAB}")],
+            "{{keys}}",
+        ),
+        (
+            "lock_computer",
+            "Lock computer",
+            "lock the computer or lock the screen",
+            vec![],
+            "",
+        ),
+        (
+            "close_app",
+            "Close app",
+            "close or quit an app by its name, like close spotify",
+            vec![string_param("target", "App name to close")],
+            "",
+        ),
+        (
+            "focus_side",
+            "Focus side window",
+            "switch to the window tiled on the left or right side of the screen",
+            vec![ToolParameter {
+                name: "side".into(),
+                param_type: "enum".into(),
+                description: Some("Screen side".into()),
+                required: true,
+                enum_values: vec!["left".into(), "right".into()],
+            }],
+            "",
+        ),
+    ] {
+        seed_tool_if_missing(
+            conn,
+            NewToolDefinition {
+                name: name.into(),
+                display_name: display_name.into(),
+                description: description.into(),
+                parameters,
+                actions: vec![Action::SendKeys { keys: keys.into() }],
+                enabled: true,
+                builtin: true,
+            },
+        )?;
+    }
+    Ok(())
 }
 
 fn seed_tool_if_missing(conn: &Connection, row: NewToolDefinition) -> Result<(), DbError> {

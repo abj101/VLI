@@ -350,3 +350,11 @@ mod tests {
         assert_eq!(right.width, left.width);
     }
 }
+
+pub fn close_app_window(_exe_path: &str, _display_name: &str) -> Result<bool, String> {
+    Err("closing apps by name is only supported on Windows".to_string())
+}
+
+pub fn focus_window_on_side(_side: &str) -> Result<bool, String> {
+    Err("focusing tiled windows is only supported on Windows".to_string())
+}
