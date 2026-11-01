@@ -221,6 +221,7 @@ fn action_kind(action: &Action) -> &'static str {
         Action::Speak { .. } => "speak",
         Action::SubPrompt { .. } => "sub_prompt",
         Action::RunCommand { .. } => "run_command",
+        Action::RunTool { .. } => "run_tool",
         Action::ReadFile { .. } => "read_file",
         Action::HttpGet { .. } => "http_get",
         Action::GetClipboard {} => "get_clipboard",
