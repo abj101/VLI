@@ -8,7 +8,7 @@ use crate::{
     commands::{
         executor::{ActionRuntime, TauriActionRuntime},
         execute_tool, match_command,
-    matcher::MatchResult,
+        matcher::MatchResult,
         open_target::execute_open_target_with_aliases,
         ToolCallContext,
     },
@@ -738,7 +738,7 @@ mod tests {
     #[derive(Default)]
     struct MockRuntimeState {
         opened_apps: Vec<String>,
-opened_urls: Vec<String>,
+    opened_urls: Vec<String>,
         statuses: Vec<String>,
         errors: Vec<String>,
     }
@@ -754,8 +754,8 @@ opened_urls: Vec<String>,
             Ok(())
         }
 
-fn open_url(&self, url: &str) -> Result<(), String> {
-    self.state.lock().unwrap().opened_urls.push(url.to_string());
+        fn open_url(&self, url: &str) -> Result<(), String> {
+            self.state.lock().unwrap().opened_urls.push(url.to_string());
             Ok(())
         }
 
@@ -864,47 +864,50 @@ fn open_url(&self, url: &str) -> Result<(), String> {
         assert!(runtime.state.lock().unwrap().errors.is_empty());
         assert_eq!(runtime.state.lock().unwrap().opened_apps, ["GitHubDesktop.exe"]);
     }
-#[test]
-fn learned_two_tool_command_matches_and_replays_run_tool_actions() {
-    let (_dir, conn) = test_conn();
-    let calls = vec![
-        crate::llm::router::RouterToolCall {
-            tool: "web_search".into(),
-            args: HashMap::from([("query".into(), "spotify".into())]),
-        },
-        crate::llm::router::RouterToolCall {
-            tool: "web_search".into(),
-            args: HashMap::from([("query".into(), "play".into())]),
-        },
-    ];
-    let actions = crate::learned_actions_from_tool_calls(&conn, &calls)
-        .expect("validate and build replay actions");
-    let learned = db::NewCommandNode {
-        name: "open spotify and play".into(),
-        trigger_phrases: vec!["open spotify and play".into()],
-        actions: actions.clone(),
-        enabled: true,
-        fuzzy_threshold_pct: 80,
-        match_mode: MatchMode::Phrase,
-    };
-    db::insert_command(&conn, &learned).expect("insert learned command");
-    let nodes = db::get_all_commands(&conn).expect("load learned command");
-    let matched = match_command("open spotify and play", &nodes).expect("phrase match");
-    let node = nodes
-        .iter()
-        .find(|node| node.id.to_string() == matched.node_id)
-        .expect("matched node");
-    assert_eq!(node.actions, actions);
-    assert!(node.actions.iter().all(|action| matches!(action, Action::RunTool { .. })));
+    #[test]
+    fn learned_two_tool_command_matches_and_replays_run_tool_actions() {
+        let (_dir, conn) = test_conn();
+        let calls = vec![
+            crate::llm::router::RouterToolCall {
+                tool: "web_search".into(),
+                args: HashMap::from([("query".into(), "spotify".into())]),
+            },
+            crate::llm::router::RouterToolCall {
+                tool: "web_search".into(),
+                args: HashMap::from([("query".into(), "play".into())]),
+            },
+        ];
+        let actions = crate::learned_actions_from_tool_calls(&conn, &calls)
+            .expect("validate and build replay actions");
+        let learned = db::NewCommandNode {
+            name: "open spotify and play".into(),
+            trigger_phrases: vec!["open spotify and play".into()],
+            actions: actions.clone(),
+            enabled: true,
+            fuzzy_threshold_pct: 80,
+            match_mode: MatchMode::Phrase,
+        };
+        db::insert_command(&conn, &learned).expect("insert learned command");
+        let nodes = db::get_all_commands(&conn).expect("load learned command");
+        let matched = match_command("open spotify and play", &nodes).expect("phrase match");
+        let node = nodes
+            .iter()
+            .find(|node| node.id.to_string() == matched.node_id)
+            .expect("matched node");
+        assert_eq!(node.actions, actions);
+        assert!(node
+            .actions
+            .iter()
+            .all(|action| matches!(action, Action::RunTool { .. })));
 
-    let runtime = MockRuntime::default();
-    execute_command_with_db_context(node, &runtime, None, None, None, Some(&conn));
-    assert_eq!(
-        runtime.state.lock().unwrap().opened_urls,
-        [
-            "https://www.google.com/search?q=spotify",
-            "https://www.google.com/search?q=play",
-        ]
-    );
-}
+        let runtime = MockRuntime::default();
+        execute_command_with_db_context(node, &runtime, None, None, None, Some(&conn));
+        assert_eq!(
+            runtime.state.lock().unwrap().opened_urls,
+            [
+                "https://www.google.com/search?q=spotify",
+                "https://www.google.com/search?q=play",
+            ]
+        );
+    }
 }

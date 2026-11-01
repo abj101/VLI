@@ -55,8 +55,8 @@ type CommandAction =
   | { wait: { ms: number } }
   | { speak: { text: string } }
   | { sub_prompt: { prompt: string } }
-| { run_command: { command_id: number; input?: string } }
-| { run_tool: { tool: string; args: Record<string, string> } }
+  | { run_command: { command_id: number; input?: string } }
+  | { run_tool: { tool: string; args: Record<string, string> } }
   | { read_file: { path: string } }
   | { http_get: { url: string } }
   | { get_clipboard: Record<string, never> }
