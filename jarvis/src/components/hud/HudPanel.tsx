@@ -294,36 +294,63 @@ function HudBody() {
 export function HudPanel() {
   const [deciderConfirm, setDeciderConfirm] = useState<DeciderConfirmState | null>(null);
   const confirmIdRef = useRef(0);
-  const phaseRef = useRef("idle");
+  const phaseRef = useRef({ phase: "idle", sessionId: 0 });
   const activeConfirmationRef = useRef(false);
+  const activeConfirmationSessionRef = useRef<number | null>(null);
 
   useEffect(() => {
     let unlistenConfirm: (() => void) | undefined;
     let unlistenPhase: (() => void) | undefined;
     let cancelled = false;
+    const showConfirmation = (
+      payload: DeciderConfirmPayload,
+      sessionId: number,
+    ) => {
+      const id = ++confirmIdRef.current;
+      activeConfirmationRef.current = true;
+      activeConfirmationSessionRef.current = sessionId;
+      setDeciderConfirm({ id, kind: "confirm", payload });
+      // Done is click-through by default; make the prompt clickable without focusing the app.
+      void getCurrentWindow().show()
+        .then(() => {
+          if (
+            confirmIdRef.current === id &&
+            phaseRef.current.phase === "done" &&
+            phaseRef.current.sessionId === sessionId
+          ) {
+            return getCurrentWindow().setIgnoreCursorEvents(false);
+          }
+        })
+        .catch(() => {});
+    };
     void Promise.all([
       listen<DeciderConfirmPayload>("decider-confirm", (event) => {
-        const id = ++confirmIdRef.current;
-        activeConfirmationRef.current = true;
-        setDeciderConfirm({ id, kind: "confirm", payload: event.payload });
-        // Done is click-through by default; make the prompt clickable without focusing the app.
-        void getCurrentWindow().show()
-          .then(() => {
-            if (confirmIdRef.current === id && phaseRef.current === "done") {
-              return getCurrentWindow().setIgnoreCursorEvents(false);
-            }
-          })
-          .catch(() => {});
+        const state = useHudStore.getState();
+        const sessionId = phaseRef.current.sessionId;
+        if (
+          phaseRef.current.phase !== "done" ||
+          state.sessionId !== sessionId
+        ) {
+          return;
+        }
+        showConfirmation(event.payload, sessionId);
       }),
-      listen<{ phase: string }>("hud-phase", (event) => {
-        phaseRef.current = event.payload.phase;
+      listen<{ phase: string; session_id?: number }>("hud-phase", (event) => {
+        const state = useHudStore.getState();
+        const sessionId = event.payload.session_id ?? state.sessionId;
+        if (sessionId < phaseRef.current.sessionId) return;
+        phaseRef.current = { phase: event.payload.phase, sessionId };
         if (event.payload.phase === "done") {
-          if (activeConfirmationRef.current) {
+          if (
+            activeConfirmationRef.current &&
+            activeConfirmationSessionRef.current === sessionId
+          ) {
             void getCurrentWindow().setIgnoreCursorEvents(false).catch(() => {});
           }
           return;
         }
         activeConfirmationRef.current = false;
+        activeConfirmationSessionRef.current = null;
         confirmIdRef.current += 1;
         setDeciderConfirm(null);
       }),
@@ -348,10 +375,15 @@ export function HudPanel() {
     const timeout = window.setTimeout(
       () => {
         if (confirmIdRef.current !== deciderConfirm.id) return;
+        const sessionId = activeConfirmationSessionRef.current;
         activeConfirmationRef.current = false;
+        activeConfirmationSessionRef.current = null;
         confirmIdRef.current += 1;
         setDeciderConfirm(null);
-        if (phaseRef.current === "done") {
+        if (
+          phaseRef.current.phase === "done" &&
+          phaseRef.current.sessionId === sessionId
+        ) {
           void getCurrentWindow().setIgnoreCursorEvents(true).catch(() => {});
         }
       },
@@ -371,12 +403,20 @@ export function HudPanel() {
         transcript: payload.transcript,
         toolCalls: payload.tool_calls,
       });
-      if (confirmIdRef.current === id && phaseRef.current === "done") {
+      if (
+        confirmIdRef.current === id &&
+        phaseRef.current.phase === "done" &&
+        phaseRef.current.sessionId === activeConfirmationSessionRef.current
+      ) {
         setDeciderConfirm({ id, kind: "saved" });
       }
     } catch (error) {
       console.error("save_learned_command failed", error);
-      if (confirmIdRef.current === id && phaseRef.current === "done") {
+      if (
+        confirmIdRef.current === id &&
+        phaseRef.current.phase === "done" &&
+        phaseRef.current.sessionId === activeConfirmationSessionRef.current
+      ) {
         setDeciderConfirm({ id, kind: "error" });
       }
     }
@@ -419,12 +459,17 @@ export function HudPanel() {
               <button
                 type="button"
                 onClick={() => {
+                  const sessionId = activeConfirmationSessionRef.current;
                   if (confirmIdRef.current === deciderConfirm.id) {
                     activeConfirmationRef.current = false;
+                    activeConfirmationSessionRef.current = null;
                     confirmIdRef.current += 1;
                   }
                   setDeciderConfirm(null);
-                  if (phaseRef.current === "done") {
+                  if (
+                    phaseRef.current.phase === "done" &&
+                    phaseRef.current.sessionId === sessionId
+                  ) {
                     void getCurrentWindow().setIgnoreCursorEvents(true).catch(() => {});
                   }
                 }}

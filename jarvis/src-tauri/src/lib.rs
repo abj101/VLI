@@ -1066,7 +1066,8 @@ pub(crate) fn finalize_decider_confirmation(
     audio: &SharedAudioPipeline,
     expected_session_id: u64,
 ) -> Result<bool, String> {
-    const CONFIRM_VISIBLE_MS: u64 = 6_000;
+    // The UI prompt expires at 6s; leave half a second for a late Yes/save response.
+    const CONFIRM_VISIBLE_MS: u64 = 6_500;
 
     {
         let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
