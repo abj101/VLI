@@ -73,7 +73,7 @@ pub fn execute_tool(
     }
     let resolved = substitute_tool_args(&tool.actions, args);
     reject_unsandboxed_run_script(&resolved)?;
-    execute_resolved_actions(&resolved, runtime, app_index, Some(conn));
+    execute_resolved_actions(&resolved, runtime, app_index, Some(conn))?;
     Ok(())
 }
 
@@ -297,6 +297,8 @@ mod tests {
         url_calls: Vec<String>,
         key_calls: Vec<String>,
         script_calls: Vec<(String, Vec<String>)>,
+        speak_calls: Vec<String>,
+        fail_speak: bool,
         statuses: Vec<String>,
         errors: Vec<String>,
     }
@@ -334,8 +336,14 @@ mod tests {
             Ok(())
         }
 
-        fn speak(&self, _text: &str) -> Result<(), String> {
-            Ok(())
+        fn speak(&self, text: &str) -> Result<(), String> {
+            let mut state = self.state.lock().unwrap();
+            state.speak_calls.push(text.to_string());
+            if state.fail_speak {
+                Err("mock speak failed".into())
+            } else {
+                Ok(())
+            }
         }
 
         fn request_follow_up(&self, _prompt: &str) -> Result<String, String> {
@@ -432,6 +440,40 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("invalid value"));
+    }
+
+    #[test]
+    fn execute_tool_say_propagates_speak_failure() {
+        let (_dir, conn) = test_conn();
+        let runtime = MockRuntime::default();
+        runtime.state.lock().unwrap().fail_speak = true;
+        let err = execute_tool(
+            &conn,
+            "say",
+            &HashMap::from([("text".to_string(), "hello".to_string())]),
+            &runtime,
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err, "mock speak failed");
+        let state = runtime.state.lock().unwrap();
+        assert_eq!(state.speak_calls, ["hello"]);
+        assert_eq!(state.errors, ["mock speak failed"]);
+    }
+
+    #[test]
+    fn execute_tool_say_succeeds_when_speak_succeeds() {
+        let (_dir, conn) = test_conn();
+        let runtime = MockRuntime::default();
+        execute_tool(
+            &conn,
+            "say",
+            &HashMap::from([("text".to_string(), "hello".to_string())]),
+            &runtime,
+            None,
+        )
+        .expect("execute say");
+        assert_eq!(runtime.state.lock().unwrap().speak_calls, ["hello"]);
     }
 
     #[test]
