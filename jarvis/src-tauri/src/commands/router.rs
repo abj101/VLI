@@ -7,6 +7,7 @@ use crate::{
     cancel_active_run_in_state,
     commands::{
         executor::{ActionRuntime, TauriActionRuntime},
+        execute_command_with_context,
         execute_tool, match_command,
         matcher::MatchResult,
         open_target::execute_open_target_with_aliases,
@@ -31,7 +32,6 @@ use crate::{
     await_follow_up_input,
     CommandCache, SharedHud, ACTION_RUN_CANCELLED_MSG,
 };
-use crate::commands::executor::execute_command_with_db_context;
 use log::{debug, info, warn};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -240,7 +240,7 @@ fn execute_tier1_match(
             cancel_flag,
         );
         let command_conn = open_db_connection(&app_h).ok();
-        execute_command_with_db_context(
+        execute_command_with_context(
             &node,
             &runtime,
             Some(app_index_snapshot.as_slice()),
@@ -901,7 +901,7 @@ mod tests {
             .all(|action| matches!(action, Action::RunTool { .. })));
 
         let runtime = MockRuntime::default();
-        execute_command_with_db_context(node, &runtime, None, None, None, Some(&conn));
+        execute_command_with_context(node, &runtime, None, None, None, Some(&conn));
         assert_eq!(
             runtime.state.lock().unwrap().opened_urls,
             [
