@@ -958,6 +958,62 @@ function AppIconImg({
   );
 }
 
+function RunToolArgsField({
+  args,
+  label,
+  onChange,
+}: {
+  args: Record<string, string>;
+  label: string;
+  onChange: (args: Record<string, string>) => void;
+}) {
+  const serializedArgs = JSON.stringify(args, null, 2);
+  const errorId = `${label.toLowerCase().replace(/\s+/g, "-")}-error`;
+  const [value, setValue] = useState(() => serializedArgs);
+  const [hasError, setHasError] = useState(false);
+
+  const updateArgs = (nextValue: string) => {
+    setValue(nextValue);
+    try {
+      const parsed: unknown = JSON.parse(nextValue);
+      if (
+        parsed === null ||
+        Array.isArray(parsed) ||
+        typeof parsed !== "object" ||
+        !Object.values(parsed).every((item) => typeof item === "string")
+      ) {
+        setHasError(true);
+        return;
+      }
+      const nextArgs = parsed as Record<string, string>;
+      setHasError(false);
+      onChange(nextArgs);
+    } catch {
+      setHasError(true);
+    }
+  };
+
+  return (
+    <div className="editor-formula-arg-wrap editor-formula-arg-wrap--stack">
+      <textarea
+        className={formulaArgInputClass()}
+        rows={3}
+        value={value}
+        onChange={(event) => updateArgs(event.target.value)}
+        aria-label={label}
+        aria-invalid={hasError}
+        aria-describedby={hasError ? errorId : undefined}
+        spellCheck={false}
+      />
+      {hasError ? (
+        <div className="editor-composer-error" id={errorId} role="alert">
+          Use a JSON object with string values.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ActionSegmentEditor({
   action,
   index,
@@ -1580,6 +1636,29 @@ function ActionSegmentEditor({
             )}
             placeholder="Input (optional)"
             aria-label={`Run command input for step ${index + 1}`}
+          />
+        </div>
+      );
+    }
+    if ("run_tool" in action) {
+      return (
+        <div className="editor-formula-arg-wrap editor-formula-arg-wrap--stack">
+          <input
+            type="text"
+            className={formulaArgInputClass()}
+            value={action.run_tool.tool}
+            onChange={(event) =>
+              onChange({
+                run_tool: { ...action.run_tool, tool: event.target.value },
+              })
+            }
+            placeholder="Tool name"
+            aria-label={`Tool name for step ${index + 1}`}
+          />
+          <RunToolArgsField
+            args={action.run_tool.args}
+            label={`Tool arguments for step ${index + 1}`}
+            onChange={(args) => onChange({ run_tool: { ...action.run_tool, args } })}
           />
         </div>
       );

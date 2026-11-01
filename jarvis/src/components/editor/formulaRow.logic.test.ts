@@ -3,11 +3,28 @@ import { editorPendingAction } from "../../types";
 import {
   appExeDisplayLabel,
   applyRemoveActionAt,
+  commandNodeSearchHaystack,
   computeInsetRemoveAllowed,
   deriveAppSearchMeta,
   deriveOpenAppDisplayMode,
   formulaArgInputClass,
 } from "./formulaRow.logic";
+
+describe("run_tool formula summary", () => {
+  it("includes the tool name and serialized args", () => {
+    const haystack = commandNodeSearchHaystack({
+      id: 4,
+      name: "Search cats",
+      trigger_phrases: ["search cats"],
+      actions: [{ run_tool: { tool: "web_search", args: { query: "cats & dogs" } } }],
+      enabled: true,
+      fuzzy_threshold_pct: 80,
+      created_at: "2026-01-01T00:00:00Z",
+    });
+
+    expect(haystack).toContain('run_tool web_search {"query":"cats & dogs"}');
+  });
+});
 
 describe("deriveAppSearchMeta", () => {
   it("shows searching feedback while request is in-flight", () => {

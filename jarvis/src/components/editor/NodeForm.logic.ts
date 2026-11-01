@@ -17,6 +17,7 @@ export type ActionKind =
   | "wait"
   | "sub_prompt"
   | "run_command"
+  | "run_tool"
   | "read_file"
   | "http_get"
   | "get_clipboard"
@@ -83,6 +84,8 @@ export function defaultActionForKind(kind: ConcreteActionKind): ActionPayload {
       return { sub_prompt: { prompt: "" } };
     case "run_command":
       return { run_command: { command_id: 0, input: "" } };
+    case "run_tool":
+      return { run_tool: { tool: "", args: {} } };
     case "read_file":
       return { read_file: { path: "" } };
     case "http_get":
@@ -236,6 +239,14 @@ export function validateFormModel(model: FormModel): FormErrors {
     if ("sub_prompt" in action) {
       if (action.sub_prompt.prompt.trim().length === 0) {
         errors.actionErrors[index] = "Follow-up text is required.";
+      }
+    }
+    if ("run_tool" in action) {
+      if (action.run_tool.tool.trim().length === 0) {
+        errors.actionErrors[index] = "Tool name is required.";
+      }
+      if (Object.keys(action.run_tool.args).some((key) => key.trim().length === 0)) {
+        errors.actionErrors[index] = "Tool argument names cannot be empty.";
       }
     }
   });
