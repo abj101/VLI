@@ -24,6 +24,165 @@ pub fn ensure_tools_schema(conn: &Connection) -> Result<(), DbError> {
     seed_builtin_open_target(conn)?;
     seed_builtin_snap_window(conn)?;
     seed_builtin_run_registered_script(conn)?;
+    seed_builtin_web_search(conn)?;
+    seed_builtin_shortcut(conn)?;
+    seed_builtin_media(conn)?;
+    seed_builtin_type_text(conn)?;
+    seed_builtin_say(conn)?;
+    Ok(())
+}
+
+fn seed_builtin_web_search(conn: &Connection) -> Result<(), DbError> {
+    seed_tool_if_missing(
+        conn,
+        NewToolDefinition {
+            name: "web_search".into(),
+            display_name: "Web search".into(),
+            description: "Searches Google for the requested query".into(),
+            parameters: vec![ToolParameter {
+                name: "query".into(),
+                param_type: "string".into(),
+                description: Some("Search terms".into()),
+                required: true,
+                enum_values: vec![],
+            }],
+            actions: vec![Action::OpenUrl {
+                url: "https://www.google.com/search?q={{query}}".into(),
+            }],
+            enabled: true,
+            builtin: true,
+        },
+    )
+}
+
+fn seed_builtin_shortcut(conn: &Connection) -> Result<(), DbError> {
+    seed_tool_if_missing(
+        conn,
+        NewToolDefinition {
+            name: "shortcut".into(),
+            display_name: "Keyboard shortcut".into(),
+            description: "Runs a common keyboard shortcut".into(),
+            parameters: vec![ToolParameter {
+                name: "name".into(),
+                param_type: "enum".into(),
+                description: Some("Shortcut to run".into()),
+                required: true,
+                enum_values: [
+                    "copy",
+                    "paste",
+                    "cut",
+                    "undo",
+                    "redo",
+                    "select_all",
+                    "save",
+                    "find",
+                    "new_tab",
+                    "close_tab",
+                    "reopen_tab",
+                    "next_tab",
+                    "previous_tab",
+                    "refresh",
+                    "close_window",
+                    "switch_app",
+                    "minimize",
+                    "show_desktop",
+                ]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            }],
+            actions: vec![Action::SendKeys {
+                keys: "{{name}}".into(),
+            }],
+            enabled: true,
+            builtin: true,
+        },
+    )
+}
+
+fn seed_builtin_media(conn: &Connection) -> Result<(), DbError> {
+    seed_tool_if_missing(
+        conn,
+        NewToolDefinition {
+            name: "media".into(),
+            display_name: "Media control".into(),
+            description: "Controls media playback and volume".into(),
+            parameters: vec![ToolParameter {
+                name: "control".into(),
+                param_type: "enum".into(),
+                description: Some("Media action".into()),
+                required: true,
+                enum_values: [
+                    "play_pause",
+                    "next",
+                    "previous",
+                    "volume_up",
+                    "volume_down",
+                    "mute",
+                ]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            }],
+            actions: vec![Action::SendKeys {
+                keys: "{{control}}".into(),
+            }],
+            enabled: true,
+            builtin: true,
+        },
+    )
+}
+
+fn seed_builtin_type_text(conn: &Connection) -> Result<(), DbError> {
+    seed_tool_if_missing(
+        conn,
+        NewToolDefinition {
+            name: "type_text".into(),
+            display_name: "Type text".into(),
+            description: "Types the requested text into the focused app".into(),
+            parameters: vec![ToolParameter {
+                name: "text".into(),
+                param_type: "string".into(),
+                description: Some("Text to type".into()),
+                required: true,
+                enum_values: vec![],
+            }],
+            actions: vec![Action::SendKeys {
+                keys: "{{text}}".into(),
+            }],
+            enabled: true,
+            builtin: true,
+        },
+    )
+}
+
+fn seed_builtin_say(conn: &Connection) -> Result<(), DbError> {
+    seed_tool_if_missing(
+        conn,
+        NewToolDefinition {
+            name: "say".into(),
+            display_name: "Speak text".into(),
+            description: "Speaks the requested text aloud".into(),
+            parameters: vec![ToolParameter {
+                name: "text".into(),
+                param_type: "string".into(),
+                description: Some("Text to speak".into()),
+                required: true,
+                enum_values: vec![],
+            }],
+            actions: vec![Action::Speak {
+                text: "{{text}}".into(),
+            }],
+            enabled: true,
+            builtin: true,
+        },
+    )
+}
+
+fn seed_tool_if_missing(conn: &Connection, row: NewToolDefinition) -> Result<(), DbError> {
+    if get_tool_by_name(conn, &row.name)?.is_none() {
+        insert_tool(conn, &row)?;
+    }
     Ok(())
 }
 
@@ -39,9 +198,7 @@ fn seed_builtin_run_registered_script(conn: &Connection) -> Result<(), DbError> 
         ToolParameter {
             name: "args".into(),
             param_type: "string".into(),
-            description: Some(
-                "Optional JSON array of string arguments, e.g. [\"staging\"]".into(),
-            ),
+            description: Some("Optional JSON array of string arguments, e.g. [\"staging\"]".into()),
             required: false,
             enum_values: vec![],
         },
@@ -77,15 +234,9 @@ fn seed_builtin_open_target(conn: &Connection) -> Result<(), DbError> {
         ToolParameter {
             name: "placement".into(),
             param_type: "enum".into(),
-            description: Some(
-                "Optional window zone: left_half, right_half, maximize".into(),
-            ),
+            description: Some("Optional window zone: left_half, right_half, maximize".into()),
             required: false,
-            enum_values: vec![
-                "left_half".into(),
-                "right_half".into(),
-                "maximize".into(),
-            ],
+            enum_values: vec!["left_half".into(), "right_half".into(), "maximize".into()],
         },
     ];
     let actions = vec![Action::OpenTarget {
@@ -139,11 +290,7 @@ fn seed_builtin_snap_window(conn: &Connection) -> Result<(), DbError> {
         param_type: "enum".into(),
         description: Some("Window zone for the focused window".into()),
         required: true,
-        enum_values: vec![
-            "left_half".into(),
-            "right_half".into(),
-            "maximize".into(),
-        ],
+        enum_values: vec!["left_half".into(), "right_half".into(), "maximize".into()],
     }];
     let actions = vec![Action::PlaceWindow {
         zone: "{{zone}}".into(),
@@ -283,7 +430,9 @@ fn validate_new_tool(row: &NewToolDefinition) -> Result<(), DbError> {
         return Err(DbError::Validation("display_name is required".into()));
     }
     if row.actions.is_empty() {
-        return Err(DbError::Validation("at least one action is required".into()));
+        return Err(DbError::Validation(
+            "at least one action is required".into(),
+        ));
     }
     let mut seen = std::collections::HashSet::new();
     for param in &row.parameters {
@@ -375,6 +524,27 @@ mod tests {
     }
 
     #[test]
+    fn init_db_seeds_decider_builtins_and_shortcut_enums() {
+        let (_dir, conn) = open_temp();
+        for name in ["web_search", "shortcut", "media", "type_text", "say"] {
+            let tool = get_tool_by_name(&conn, name)
+                .unwrap()
+                .expect("builtin tool");
+            assert!(tool.builtin && tool.enabled);
+            assert_eq!(tool.parameters.len(), 1);
+        }
+        let shortcut = get_tool_by_name(&conn, "shortcut").unwrap().unwrap();
+        assert!(shortcut.parameters[0]
+            .enum_values
+            .iter()
+            .any(|value| value == "minimize"));
+        assert!(shortcut.parameters[0]
+            .enum_values
+            .iter()
+            .any(|value| value == "show_desktop"));
+    }
+
+    #[test]
     fn tool_crud_round_trip() {
         let (_dir, conn) = open_temp();
         let id = insert_tool(
@@ -410,9 +580,7 @@ mod tests {
                 display_name: "Speak Updated".into(),
                 description: "Says goodbye".into(),
                 parameters: vec![],
-                actions: vec![Action::Speak {
-                    text: "bye".into(),
-                }],
+                actions: vec![Action::Speak { text: "bye".into() }],
                 enabled: false,
                 builtin: false,
             },

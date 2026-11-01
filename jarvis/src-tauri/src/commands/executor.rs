@@ -1359,7 +1359,7 @@ fn validate_send_keys(keys: &str) -> Result<(), String> {
     if trimmed.len() > 128 {
         return Err("SendKeys keys exceeds max length of 128".to_string());
     }
-    if trimmed.chars().any(is_shell_metachar) {
+    if trimmed.chars().any(|c| matches!(c, '\'' | '"' | '`' | '\n' | '\r')) {
         return Err(format!(
             "SendKeys contains forbidden shell metacharacters: `{trimmed}`"
         ));
@@ -2143,7 +2143,7 @@ mod tests {
     fn rejects_unsafe_send_keys_payloads() {
         let runtime = MockRuntime::default();
         let node = node_with_actions(vec![Action::SendKeys {
-            keys: "CTRL+ALT+DEL;shutdown".into(),
+            keys: "a'b".into(),
         }]);
 
         execute_command_with_context(&node, &runtime, None, None, None);
@@ -2151,6 +2151,13 @@ mod tests {
         assert!(s.key_calls.is_empty());
         assert_eq!(s.errors.len(), 1);
         assert!(s.errors[0].contains("SendKeys contains forbidden shell metacharacters"));
+    }
+
+    #[test]
+    fn validate_send_keys_allows_shortcut_modifiers_and_rejects_quotes() {
+        assert!(validate_send_keys("^c").is_ok());
+        assert!(validate_send_keys("%{F4}").is_ok());
+        assert!(validate_send_keys("a'b").is_err());
     }
 
     #[test]
