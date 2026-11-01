@@ -59,27 +59,62 @@ pub fn build_tool_catalog(tools: &[ToolDefinition]) -> Vec<Value> {
     enabled.iter().map(|t| tool_catalog_entry(t)).collect()
 }
 
-const SYSTEM_INSTRUCTIONS: &str = r#"You are a voice-command router. Given the user transcript and available tools, pick one or more tool calls (max 3).
+const SYSTEM_INSTRUCTIONS: &str = r#"You route voice commands to available tools. Choose one or more tool calls (maximum 3).
 
-Respond with a single JSON object only — no markdown, no explanation:
-{ "tool_calls": [ { "tool": "<tool_name>", "args": { ... } }, ... ], "confidence": <0.0-1.0> }
+Return exactly one JSON object with `tool_calls` and `confidence`. Every call must name a catalog tool and provide arguments that match its parameter schema. Omit optional arguments you do not need. Set confidence from 0.0 to 1.0 based on the whole plan. If nothing matches, return the closest tool with low confidence.
 
-Legacy single-call shape is also accepted:
-{ "tool": "<tool_name>", "args": { ... }, "confidence": <0.0-1.0> }
+Routing:
+- Use `open_target` for installed apps and generic "open X" requests.
+- Use `open_url` only when the transcript contains an explicit URL or domain. Never guess a URL for an app name.
+- Use `shortcut` for editing, tab, and window keyboard actions such as copy or close tab.
+- Use `media` for playback and volume controls.
+- Use `web_search` when the user asks to search, Google, or look something up.
+- Use `type_text` when the user dictates text to enter in the current app.
+- Use `say` only when the user asks Jarvis to speak something.
 
-Rules:
-- Prefer "tool_calls" for multi-step intents (e.g. open app then snap window).
-- At most 3 tool calls per response.
-- Each "tool" must be one of the catalog tool names.
-- Each "args" object must match that tool's parameter schema.
-- "confidence" is how sure you are about the whole plan (0.0–1.0).
-- Omit optional args when not needed.
-- If nothing matches, use the closest tool with low confidence.
-- Use `open_target` for app names and generic "open X" intents (installed apps, programs).
-- Use `open_url` only when the transcript contains an explicit URL or domain (e.g. contains `.com`, `http://`, `https://`, `www.`).
-- Never invent URLs from app names (do not guess `https://{name}.com`).
-- When unsure between app and site, prefer `open_target` with lower confidence rather than guessing a URL."#;
+Examples:
+Transcript: "copy that"
+{"tool_calls":[{"tool":"shortcut","args":{"name":"copy"}}],"confidence":0.9}
 
+Transcript: "open spotify and play"
+{"tool_calls":[{"tool":"open_target","args":{"target":"spotify"}},{"tool":"media","args":{"control":"play_pause"}}],"confidence":0.9}
+
+Transcript: "search for rust traits"
+{"tool_calls":[{"tool":"web_search","args":{"query":"rust traits"}}],"confidence":0.9}"#;
+
+/// Build the llama-server constrained decoding schema for enabled tools.
+pub fn build_router_schema(tools: &[ToolDefinition]) -> Value {
+    let variants = tools
+        .iter()
+        .filter(|tool| tool.enabled)
+        .map(|tool| {
+            json!({
+                "type": "object",
+                "properties": {
+                    "tool": { "const": tool.name },
+                    "args": tool_catalog_entry(tool)["parameters"].clone()
+                },
+                "required": ["tool", "args"],
+                "additionalProperties": false
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "type": "object",
+        "properties": {
+            "tool_calls": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": crate::llm::router::MAX_ROUTER_TOOL_CALLS,
+                "items": { "anyOf": variants }
+            },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "required": ["tool_calls", "confidence"],
+        "additionalProperties": false
+    })
+}
 /// Full prompt text for local inference (chat template applied separately when available).
 pub fn build_router_prompt(transcript: &str, tools: &[ToolDefinition]) -> String {
     let catalog = build_tool_catalog(tools);
@@ -141,5 +176,26 @@ mod tests {
         assert!(prompt.contains("put brave on the left"));
         assert!(prompt.contains("\"name\": \"open_target\""));
         assert!(prompt.contains("left_half"));
+        assert!(prompt.contains("Use `shortcut`"));
+        assert!(prompt.contains("Transcript: put brave on the left\n\nJSON:"));
+    }
+
+    #[test]
+    fn router_schema_limits_and_enumerates_enabled_tools() {
+        let first = sample_open_target();
+        let mut second = sample_open_target();
+        second.name = "open_url".into();
+        let schema = build_router_schema(&[first, second]);
+        let variants = schema["properties"]["tool_calls"]["items"]["anyOf"]
+            .as_array()
+            .unwrap();
+
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0]["properties"]["tool"]["const"], "open_target");
+        assert_eq!(variants[1]["properties"]["tool"]["const"], "open_url");
+        assert_eq!(
+            schema["properties"]["tool_calls"]["maxItems"],
+            crate::llm::router::MAX_ROUTER_TOOL_CALLS
+        );
     }
 }

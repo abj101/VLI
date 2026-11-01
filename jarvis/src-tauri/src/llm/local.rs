@@ -220,6 +220,7 @@ fn complete(
     prompt: &str,
     n_predict: i32,
     cancel: Option<&AtomicBool>,
+    json_schema: Option<&serde_json::Value>,
     timeout: Duration,
 ) -> Result<String, String> {
     if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
@@ -227,6 +228,9 @@ fn complete(
     }
     let prompt = render_prompt(port, system, prompt, timeout)?;
     let mut body = serde_json::json!({ "prompt": prompt, "n_predict": n_predict, "temperature": 0.1, "seed": 42, "top_k": 1, "cache_prompt": true });
+    if let Some(schema) = json_schema {
+        body["json_schema"] = schema.clone();
+    }
     if cancel.is_some() {
         body["stream"] = serde_json::Value::Bool(true);
     }
@@ -287,6 +291,7 @@ pub fn infer_router_completion(
     _model_path: &str,
     prompt: &str,
     _use_gpu: bool,
+    json_schema: Option<&serde_json::Value>,
 ) -> Result<String, String> {
     let app = APP_HANDLE
         .get()
@@ -307,6 +312,7 @@ pub fn infer_router_completion(
         prompt,
         MAX_GENERATED_TOKENS,
         None,
+        json_schema,
         COMPOSER_INFER_TIMEOUT,
     )
 }
@@ -372,6 +378,7 @@ impl ComposerInferWorker {
                         &req.prompt,
                         req.max_tokens.clamp(1, COMPOSER_MAX_MAX_TOKENS),
                         Some(&req.cancel),
+                        None,
                         COMPOSER_INFER_TIMEOUT,
                     );
                     let _ = req.respond_to.send(result);
