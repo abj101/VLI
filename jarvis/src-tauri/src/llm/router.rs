@@ -53,7 +53,7 @@ impl RouterError {
 
 /// Abstraction for unit tests (mock) and local GGUF inference.
 pub trait RouterInfer {
-    fn infer(&self, prompt: &str) -> Result<String, String>;
+    fn infer(&self, prompt: &str, json_schema: &Value) -> Result<String, String>;
 }
 
 #[derive(Debug, Deserialize)]
@@ -316,7 +316,8 @@ pub fn route_transcript_with_infer(
     infer: &impl RouterInfer,
 ) -> Result<RouterRouteResult, RouterError> {
     let prompt = crate::llm::prompt::build_router_prompt(transcript, tools);
-    let completion = infer.infer(&prompt).map_err(|message| RouterError {
+    let schema = crate::llm::prompt::build_router_schema(tools);
+    let completion = infer.infer(&prompt, &schema).map_err(|message| RouterError {
         code: RouterErrorCode::InferFailed,
         message,
     })?;
@@ -327,7 +328,7 @@ pub fn route_transcript_with_infer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
+    use crate::db::{init_db, insert_tool, Action, NewToolDefinition, ToolParameter};
     use rusqlite::Connection;
     use serde_json::json;
     use tempfile::tempdir;
@@ -335,7 +336,7 @@ mod tests {
     struct MockInfer(&'static str);
 
     impl RouterInfer for MockInfer {
-        fn infer(&self, _prompt: &str) -> Result<String, String> {
+        fn infer(&self, _prompt: &str, _json_schema: &Value) -> Result<String, String> {
             Ok(self.0.to_string())
         }
     }
@@ -381,6 +382,45 @@ mod tests {
             Some("left_half")
         );
         assert!(result.confidence >= 0.7);
+    }
+
+    #[test]
+    fn route_shortcut_copy_validates() {
+        let (_dir, conn) = test_conn();
+        insert_tool(
+            &conn,
+            &NewToolDefinition {
+                name: "shortcut".into(),
+                display_name: "Keyboard shortcut".into(),
+                description: "Perform a supported keyboard shortcut.".into(),
+                parameters: vec![ToolParameter {
+                    name: "name".into(),
+                    param_type: "enum".into(),
+                    description: None,
+                    required: true,
+                    enum_values: vec!["copy".into(), "paste".into()],
+                }],
+                actions: vec![Action::SendKeys {
+                    keys: "{{name}}".into(),
+                }],
+                enabled: true,
+                builtin: true,
+            },
+        )
+        .unwrap();
+        let tools = crate::db::get_all_tools(&conn).unwrap();
+        let mock = MockInfer(
+            r#"{"tool_calls":[{"tool":"shortcut","args":{"name":"copy"}}],"confidence":0.9}"#,
+        );
+        let result = route_transcript_with_infer(&conn, &tools, "copy that", 0.7, &mock)
+            .expect("shortcut call validates");
+
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].tool, "shortcut");
+        assert_eq!(
+            result.tool_calls[0].args.get("name").map(String::as_str),
+            Some("copy")
+        );
     }
 
     #[test]

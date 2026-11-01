@@ -169,8 +169,8 @@ struct LocalInfer {
 }
 
 impl RouterInfer for LocalInfer {
-    fn infer(&self, prompt: &str) -> Result<String, String> {
-        infer_router_completion(&self.model_path, prompt, self.use_gpu)
+    fn infer(&self, prompt: &str, json_schema: &serde_json::Value) -> Result<String, String> {
+        infer_router_completion(&self.model_path, prompt, self.use_gpu, Some(json_schema))
     }
 }
 
@@ -234,7 +234,7 @@ pub(crate) fn warmup_router_blocking(app: AppHandle) -> RouterWarmupPayload {
     };
     let use_gpu = status.runtime_available;
     match ensure_router_server(&app, &model_path, use_gpu)
-        .and_then(|()| infer_router_completion(&model_path, "warmup", use_gpu))
+        .and_then(|()| infer_router_completion(&model_path, "warmup", use_gpu, None))
     {
         Ok(_) => {
             if let Some(cache) = app.try_state::<RouterModelCache>() {

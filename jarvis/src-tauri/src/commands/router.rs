@@ -41,8 +41,8 @@ struct LocalInfer {
 }
 
 impl RouterInfer for LocalInfer {
-    fn infer(&self, prompt: &str) -> Result<String, String> {
-        infer_router_completion(&self.model_path, prompt, self.use_gpu)
+    fn infer(&self, prompt: &str, json_schema: &serde_json::Value) -> Result<String, String> {
+        infer_router_completion(&self.model_path, prompt, self.use_gpu, Some(json_schema))
     }
 }
 
@@ -631,7 +631,7 @@ mod tests {
     struct MockInfer(&'static str);
 
     impl RouterInfer for MockInfer {
-        fn infer(&self, _prompt: &str) -> Result<String, String> {
+        fn infer(&self, _prompt: &str, _json_schema: &serde_json::Value) -> Result<String, String> {
             Ok(self.0.to_string())
         }
     }
