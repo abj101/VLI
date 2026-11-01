@@ -5,7 +5,6 @@ import {
   applyEditorThemeToDocument,
   applyEditorTransparencyToDocument,
   applyHudTransparencyToDocument,
-  normalizeSttProvider,
   normalizeDictationHotkeyMode,
   DEFAULT_LOCAL_WHISPER_MODEL,
   normalizeLocalWhisperModel,
@@ -13,7 +12,6 @@ import {
   normalizeThemePreference,
   parseEditorTransparencySettingValue,
   parseHudTransparencySettingValue,
-  parseRemoteSttTimeoutSecs,
   EDITOR_TRANSPARENCY_DEFAULT,
   HUD_TRANSPARENCY_DEFAULT,
   parseThresholdSettingValue,
@@ -27,7 +25,6 @@ import {
   processHotkeyRecordingKeyUp,
   type HotkeyRecordingState,
   type EditorThemePreference,
-  type SttProvider,
   type DictationHotkeyMode,
   type LocalWhisperModelId,
 } from "../editor/SettingsPanel.logic";
@@ -113,19 +110,9 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
   const [wakeEngine, setWakeEngine] = useState("oww");
   const [owwThreshold, setOwwThreshold] = useState(0.7);
 
-  const [sttProvider, setSttProvider] = useState<SttProvider>("local");
-  const [remoteSttUrl, setRemoteSttUrl] = useState("");
-  const [remoteSttModel, setRemoteSttModel] = useState("");
-  const [remoteSttTimeoutSecs, setRemoteSttTimeoutSecs] = useState(30);
-  const [remoteSttKeyStored, setRemoteSttKeyStored] = useState(false);
-  const [remoteSttKeyInput, setRemoteSttKeyInput] = useState("");
-  const [savingRemoteStt, setSavingRemoteStt] = useState(false);
   const [localWhisperUseGpu, setLocalWhisperUseGpu] = useState(false);
   const [localWhisperModel, setLocalWhisperModel] = useState(DEFAULT_LOCAL_WHISPER_MODEL);
   const [llmRouterTier2Enabled, setLlmRouterTier2Enabled] = useState(false);
-  const [llmRouterWarmupOnLaunch, setLlmRouterWarmupOnLaunch] = useState(false);
-  const [llmRouterConfidenceThreshold, setLlmRouterConfidenceThreshold] = useState(0.7);
-  const [llmRouterModelPath, setLlmRouterModelPath] = useState("");
   const [routerPreparing, setRouterPreparing] = useState(false);
   const [routerPrepMessage, setRouterPrepMessage] = useState<string | null>(null);
   const [routerStatus, setRouterStatus] = useState<RouterStatusPayload>({
@@ -235,17 +222,9 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
     applyEditorTransparencyToDocument(parsedEditorTransparency, normalizedTheme);
     setWakeEngine(app.wakeEngine);
     setOwwThreshold(app.owwThreshold);
-    setSttProvider(normalizeSttProvider(app.sttProvider));
-    setRemoteSttUrl(app.remoteSttUrl ?? "");
-    setRemoteSttModel(app.remoteSttModel ?? "");
-    setRemoteSttTimeoutSecs(app.remoteSttTimeoutSecs);
-    setRemoteSttKeyStored(app.remoteSttKeyStored);
     setLocalWhisperUseGpu(app.localWhisperUseGpu);
     setLocalWhisperModel(normalizeLocalWhisperModel(app.localWhisperModel));
       setLlmRouterTier2Enabled(app.llmRouterTier2Enabled);
-    setLlmRouterWarmupOnLaunch(app.llmRouterWarmupOnLaunch);
-    setLlmRouterConfidenceThreshold(app.llmRouterConfidenceThreshold);
-    setLlmRouterModelPath(app.llmRouterModelPath ?? "");
     setRouterStatus(router);
     setDictationHotkey(
       app.dictationHotkey?.trim().length ? app.dictationHotkey.trim() : "ctrl+shift+d",
@@ -565,24 +544,6 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
     }
   };
 
-  const persistSttProvider = async (next: SttProvider) => {
-    setSttProvider(next);
-    try {
-      const s = await invoke<AppSettingsPayload>("update_settings", {
-        patch: { sttProvider: next },
-      });
-      setSttProvider(normalizeSttProvider(s.sttProvider));
-      setRemoteSttUrl(s.remoteSttUrl ?? "");
-      setRemoteSttModel(s.remoteSttModel ?? "");
-      setRemoteSttTimeoutSecs(s.remoteSttTimeoutSecs);
-      setRemoteSttKeyStored(s.remoteSttKeyStored);
-      setLocalWhisperUseGpu(s.localWhisperUseGpu);
-      setLocalWhisperModel(normalizeLocalWhisperModel(s.localWhisperModel));
-    } catch (err) {
-      showSettingsNotice(formatUserError(err, "Could not save the transcription provider."));
-    }
-  };
-
   const persistLlmRouterTier2 = async (next: boolean) => {
     const prev = llmRouterTier2Enabled;
     setLlmRouterTier2Enabled(next);
@@ -600,7 +561,7 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
       setLlmRouterTier2Enabled(s.llmRouterTier2Enabled);
       if (next && s.llmRouterTier2Enabled && !routerRuntimeReady) {
         showSettingsNotice(
-          "Tier 2 saved. Run npm run fetch-models to download the router GGUF.",
+          "Intelligence enabled. Download the language model to use it.",
         );
       }
       if (next && s.llmRouterTier2Enabled && routerRuntimeReady) {
@@ -628,49 +589,6 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
       if (next) {
         setRouterPreparing(false);
       }
-    }
-  };
-
-  const commitLlmRouterConfidence = async (next: number) => {
-    const clamped = Math.max(0, Math.min(1, next));
-    setLlmRouterConfidenceThreshold(clamped);
-    try {
-      await invoke<AppSettingsPayload>("update_settings", {
-        patch: { llmRouterConfidenceThreshold: clamped },
-      });
-    } catch (err) {
-      showSettingsNotice(formatUserError(err, "Could not save router confidence threshold."));
-    }
-  };
-
-  const persistLlmRouterWarmupOnLaunch = async (next: boolean) => {
-    const prev = llmRouterWarmupOnLaunch;
-    setLlmRouterWarmupOnLaunch(next);
-    try {
-      const s = await invoke<AppSettingsPayload>("update_settings", {
-        patch: { llmRouterWarmupOnLaunch: next },
-      });
-      setLlmRouterWarmupOnLaunch(s.llmRouterWarmupOnLaunch);
-      showSettingsNotice(
-        next ? "Router will warm on next launch" : "Router warmup on launch disabled",
-      );
-    } catch (err) {
-      setLlmRouterWarmupOnLaunch(prev);
-      showSettingsNotice(formatUserError(err, "Could not save router warmup setting."));
-    }
-  };
-
-  const saveLlmRouterModelPath = async () => {
-    try {
-      const s = await invoke<AppSettingsPayload>("update_settings", {
-        patch: { llmRouterModelPath: llmRouterModelPath.trim() || "" },
-      });
-      setLlmRouterModelPath(s.llmRouterModelPath ?? "");
-      const status = await invoke<RouterStatusPayload>("router_status");
-      setRouterStatus(status);
-      showSettingsNotice("Router model path saved");
-    } catch (err) {
-      showSettingsNotice(formatUserError(err, "Could not save router model path."));
     }
   };
 
@@ -709,63 +627,6 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
     } catch (err) {
       setLocalWhisperUseGpu(prev);
       showSettingsNotice(formatUserError(err, "Could not save Whisper GPU option."));
-    }
-  };
-
-  const saveRemoteSttEndpoint = async () => {
-    if (sttProvider !== "remote") return;
-    const timeout = parseRemoteSttTimeoutSecs(String(remoteSttTimeoutSecs));
-    if (timeout === null) {
-      showSettingsNotice("Remote STT timeout must be between 1 and 300 seconds.");
-      return;
-    }
-    setSavingRemoteStt(true);
-    try {
-      await invoke<AppSettingsPayload>("update_settings", {
-        patch: {
-          sttProvider: "remote",
-          remoteSttUrl: remoteSttUrl.trim(),
-          remoteSttModel: remoteSttModel.trim(),
-          remoteSttTimeoutSecs: timeout,
-        },
-      });
-      await refreshFromBackend();
-      showSettingsNotice("Remote STT settings saved");
-    } catch (err) {
-      showSettingsNotice(formatUserError(err, "Could not save remote speech settings."));
-    } finally {
-      setSavingRemoteStt(false);
-    }
-  };
-
-  const saveRemoteSttKey = async () => {
-    if (!remoteSttKeyInput.trim()) {
-      showSettingsNotice("Enter an API key before saving.");
-      return;
-    }
-    setSavingRemoteStt(true);
-    try {
-      await invoke("save_api_key", { service: "remote_stt", key: remoteSttKeyInput });
-      setRemoteSttKeyInput("");
-      await refreshFromBackend();
-      showSettingsNotice("Remote STT API key saved to OS keychain");
-    } catch (err) {
-      showSettingsNotice(formatUserError(err, "Could not save the remote speech API key."));
-    } finally {
-      setSavingRemoteStt(false);
-    }
-  };
-
-  const clearRemoteSttKey = async () => {
-    setSavingRemoteStt(true);
-    try {
-      await invoke("delete_api_key", { service: "remote_stt" });
-      await refreshFromBackend();
-      showSettingsNotice("Remote STT key cleared");
-    } catch (err) {
-      showSettingsNotice(formatUserError(err, "Could not clear the remote speech API key."));
-    } finally {
-      setSavingRemoteStt(false);
     }
   };
 
@@ -935,31 +796,6 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
 
                   <section className="editor-settings-section editor-settings-section--compact">
                     <p className="editor-settings-group-label">Transcription</p>
-                    <div className="editor-settings-row">
-                      <span className="editor-settings-row-label" id="editor-stt-provider-label">
-                        <SettingsLabelWithInfo
-                          tipId="tip-stt-provider"
-                          tip="Converts speech to text for command matching. Remote mode needs HTTPS and an API key stored in the OS keychain."
-                        >
-                          Provider
-                        </SettingsLabelWithInfo>
-                      </span>
-                      <span className="editor-settings-row-control">
-                        <EditorSelect
-                          id="editor-stt-provider"
-                          labelledBy="editor-stt-provider-label"
-                          value={sttProvider}
-                          onChange={(v) => void persistSttProvider(normalizeSttProvider(v))}
-                          options={[
-                            { value: "local", label: "On-device (Whisper)" },
-                            { value: "remote", label: "Remote HTTP API" },
-                          ]}
-                        />
-                      </span>
-                    </div>
-
-                    {sttProvider === "local" && (
-                      <>
                         <WhisperModelsPane
                           activeModelId={normalizeLocalWhisperModel(localWhisperModel)}
                           onSelectModel={persistLocalWhisperModel}
@@ -989,112 +825,21 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
                             </button>
                           </div>
                         </div>
-                      </>
-                    )}
-                  {sttProvider === "remote" && (
-                    <>
-                      <label htmlFor="editor-remote-stt-url">
-                        Endpoint URL
-                        <input
-                          id="editor-remote-stt-url"
-                          type="url"
-                          autoComplete="off"
-                          placeholder="https://example.com/v1/transcribe"
-                          value={remoteSttUrl}
-                          onChange={(e) => setRemoteSttUrl(e.target.value)}
-                        />
-                      </label>
-                      <label htmlFor="editor-remote-stt-model">
-                        Model (optional)
-                        <input
-                          id="editor-remote-stt-model"
-                          type="text"
-                          autoComplete="off"
-                          value={remoteSttModel}
-                          onChange={(e) => setRemoteSttModel(e.target.value)}
-                          placeholder="provider-specific model id"
-                        />
-                      </label>
-                      <label htmlFor="editor-remote-stt-timeout">
-                        Request timeout (seconds)
-                        <input
-                          id="editor-remote-stt-timeout"
-                          type="number"
-                          min={1}
-                          max={300}
-                          value={remoteSttTimeoutSecs}
-                          onChange={(e) => setRemoteSttTimeoutSecs(Number(e.target.value))}
-                        />
-                      </label>
-                      <div className="editor-settings-inline">
-                        <button
-                          type="button"
-                          className="editor-btn editor-btn--primary"
-                          onClick={() => void saveRemoteSttEndpoint()}
-                          disabled={savingRemoteStt}
-                        >
-                          {savingRemoteStt ? "Saving…" : "Save remote STT settings"}
-                        </button>
-                      </div>
-                      <h4>Remote API key</h4>
-                      <p className="editor-settings-help">
-                        Stored in the OS keychain; never sent to the React layer after save.
-                      </p>
-                      <label htmlFor="editor-remote-stt-key">
-                        API key
-                        <input
-                          id="editor-remote-stt-key"
-                          type="password"
-                          autoComplete="off"
-                          value={remoteSttKeyInput}
-                          onChange={(e) => setRemoteSttKeyInput(e.target.value)}
-                          placeholder="Paste API key"
-                          aria-describedby="remote-stt-key-help"
-                        />
-                      </label>
-                      <p id="remote-stt-key-help" className="editor-settings-help">
-                        Saved to the OS keychain; not retained in this form after save.
-                      </p>
-                      <div className="editor-settings-inline--actions">
-                        <button
-                          type="button"
-                          className="editor-btn editor-btn--primary"
-                          onClick={() => void saveRemoteSttKey()}
-                          disabled={savingRemoteStt}
-                        >
-                          {savingRemoteStt ? "Saving…" : "Save"}
-                        </button>
-                        <button
-                          type="button"
-                          className="editor-btn"
-                          onClick={() => void clearRemoteSttKey()}
-                          disabled={savingRemoteStt}
-                        >
-                          Clear
-                        </button>
-                      </div>
-                      <p className="editor-settings-help" role="status">
-                        Keychain flag: {remoteSttKeyStored ? "stored" : "not stored"}
-                      </p>
-                    </>
-                  )}
                   </section>
 
                   <section className="editor-settings-section editor-settings-section--compact">
-                    <p className="editor-settings-group-label">LLM router (Tier 2)</p>
+                    <p className="editor-settings-group-label">Intelligence</p>
                     <p className="editor-settings-help">
-                      When Tier 2 is off, only pinned trigger phrases run commands. Natural speech
-                      like &quot;put slack on the left&quot; is ignored unless Tier 2 is enabled and
-                      the router model is present.
+                      Understand requests beyond exact command phrases using an on-device model.
                     </p>
                     <div className="editor-settings-row editor-settings-row--switch">
                       <div className="editor-settings-row-label editor-settings-row-label--stack">
                         <SettingsLabelWithInfo
                           id="editor-llm-router-tier2-label"
                           tipId="tip-llm-router-tier2"
-                          tip="Routes natural speech to tools with a small on-device model. Requires the router GGUF."
+                          tip="Use an on-device model to understand natural requests."
                         >
-                          Enable Tier 2 routing
+                          Understand natural speech
                         </SettingsLabelWithInfo>
                         {routerTier2StatusMessage && (
                           <span
@@ -1121,96 +866,6 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
                           <span className="editor-switch-knob" />
                         </button>
                       </div>
-                    </div>
-                    <div className="editor-settings-row editor-settings-row--switch">
-                      <div className="editor-settings-row-label">
-                        <SettingsLabelWithInfo
-                          id="editor-llm-router-warmup-label"
-                          tipId="tip-llm-router-warmup"
-                          tip="Load the router model in the background when Jarvis starts (only when Tier 2 is enabled)."
-                        >
-                          Warm router model on launch
-                        </SettingsLabelWithInfo>
-                      </div>
-                      <div className="editor-settings-row-control editor-settings-row-control--switch">
-                        <button
-                          type="button"
-                          id="editor-llm-router-warmup"
-                          className={`editor-switch${llmRouterWarmupOnLaunch ? " is-on" : ""}`}
-                          role="switch"
-                          aria-labelledby="editor-llm-router-warmup-label"
-                          aria-checked={llmRouterWarmupOnLaunch}
-                          disabled={
-                            !llmRouterTier2Enabled || !routerRuntimeReady || routerPreparing
-                          }
-                          onClick={() =>
-                            void persistLlmRouterWarmupOnLaunch(!llmRouterWarmupOnLaunch)
-                          }
-                        >
-                          <span className="editor-switch-knob" />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="editor-settings-row">
-                      <div className="editor-settings-row-label">
-                        <SettingsLabelWithInfo
-                          tipId="tip-llm-router-confidence"
-                          tip="Reject tool calls when the model confidence is below this value."
-                        >
-                          Confidence threshold
-                        </SettingsLabelWithInfo>
-                      </div>
-                      <div className="editor-settings-row-control editor-settings-row-control--slider">
-                        <input
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          value={llmRouterConfidenceThreshold}
-                          aria-valuenow={llmRouterConfidenceThreshold}
-                          aria-valuemin={0}
-                          aria-valuemax={1}
-                          aria-valuetext={llmRouterConfidenceThreshold.toFixed(2)}
-                          aria-describedby="tip-llm-router-confidence"
-                          onChange={(e) =>
-                            setLlmRouterConfidenceThreshold(Number(e.target.value))
-                          }
-                          onPointerUp={(e) =>
-                            void commitLlmRouterConfidence(
-                              Number((e.target as HTMLInputElement).value),
-                            )
-                          }
-                          onKeyUp={(e) => {
-                            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-                            void commitLlmRouterConfidence(
-                              Number((e.target as HTMLInputElement).value),
-                            );
-                          }}
-                        />
-                        <span className="editor-settings-slider-value" aria-hidden>
-                          {llmRouterConfidenceThreshold.toFixed(2)}
-                        </span>
-                      </div>
-                    </div>
-                    <label htmlFor="editor-llm-router-model-path">
-                      Model path (optional)
-                      <input
-                        id="editor-llm-router-model-path"
-                        type="text"
-                        autoComplete="off"
-                        placeholder="Default: bundled qwen2.5 router GGUF"
-                        value={llmRouterModelPath}
-                        onChange={(e) => setLlmRouterModelPath(e.target.value)}
-                      />
-                    </label>
-                    <div className="editor-settings-inline">
-                      <button
-                        type="button"
-                        className="editor-btn editor-btn--primary"
-                        onClick={() => void saveLlmRouterModelPath()}
-                      >
-                        Save model path
-                      </button>
                     </div>
                   </section>
 

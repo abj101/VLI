@@ -504,27 +504,8 @@ fn load_stt_pipeline_choice(app: &AppHandle) -> audio::SttPipelineChoice {
     let Ok(settings) = db::get_app_settings(&conn) else {
         return audio::SttPipelineChoice::Local { use_gpu: false };
     };
-    match audio::transcription::parse_stt_provider(Some(settings.stt_provider.as_str())) {
-        audio::transcription::SttProvider::Local => audio::SttPipelineChoice::Local {
-            use_gpu: settings.local_whisper_use_gpu,
-        },
-        audio::transcription::SttProvider::Os => audio::SttPipelineChoice::Os,
-        audio::transcription::SttProvider::Remote => {
-            let key = if settings.remote_stt_key_stored {
-                keychain::get_api_key("remote_stt").ok().flatten()
-            } else {
-                None
-            };
-            let params = audio::RemoteSttParams {
-                endpoint: settings.remote_stt_url.clone(),
-                model: settings.remote_stt_model.clone(),
-                bearer_token: key,
-                timeout: audio::RemoteSttParams::sanitized_timeout(
-                    settings.remote_stt_timeout_secs,
-                ),
-            };
-            audio::SttPipelineChoice::Remote(params)
-        }
+    audio::SttPipelineChoice::Local {
+        use_gpu: settings.local_whisper_use_gpu,
     }
 }
 

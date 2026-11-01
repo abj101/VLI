@@ -37,7 +37,9 @@ export function CommandDeleteConfirm({
           aria-label={`Delete ${label}`}
           tabIndex={deletePending ? -1 : 0}
         >
-          <EditorCloseXIcon className="editor-command-delete-x" />
+          <svg className="editor-command-delete-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M4 7h16M10 4h4M6 7l1 13h10l1-13M10 11v5M14 11v5" />
+          </svg>
         </button>
       </div>
       <div

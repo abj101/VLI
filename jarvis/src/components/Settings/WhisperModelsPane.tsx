@@ -9,6 +9,7 @@ import {
   whisperModelSubtitle,
 } from "../editor/SettingsPanel.logic";
 import { formatUserError } from "../../utils/userErrors";
+import { CommandDeleteConfirm } from "../editor/CommandDeleteConfirm";
 import { EditorSpinner } from "../editor/EditorSpinner";
 
 type WhisperModelEntry = {
@@ -47,6 +48,7 @@ export function WhisperModelsPane({
 }: WhisperModelsPaneProps) {
   const [models, setModels] = useState<WhisperModelEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletePending, setDeletePending] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const refreshModels = useCallback(async () => {
@@ -132,6 +134,7 @@ export function WhisperModelsPane({
     void invoke<ListWhisperModelsPayload>("delete_whisper_model", { modelId })
       .then((payload) => {
         setModels(payload.models);
+        setDeletePending(null);
         onNotice(`${modelId} removed.`);
       })
       .catch((err: unknown) => {
@@ -230,24 +233,16 @@ export function WhisperModelsPane({
                       {model.downloading ? "Downloading…" : "Download"}
                     </button>
                   )}
-                  {model.managed && (
-                    <button
-                      type="button"
-                      className="editor-btn editor-whisper-model-action"
-                      disabled={isBusy || isActive}
-                      title={
-                        isActive
-                          ? "Select another model before deleting the active one."
-                          : undefined
-                      }
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onDelete(model.id);
-                      }}
-                    >
-                      Delete
-                    </button>
+                  {model.installed && model.managed && !isActive && !isBusy && (
+                    <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+                      <CommandDeleteConfirm
+                        deletePending={deletePending === model.id}
+                        phraseLabel={whisperModelShortTitle(id)}
+                        onRequestDelete={() => setDeletePending(model.id)}
+                        onCancel={() => setDeletePending(null)}
+                        onConfirm={() => onDelete(model.id)}
+                      />
+                    </span>
                   )}
                 </span>
               </label>

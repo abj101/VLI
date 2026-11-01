@@ -1,191 +1,94 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { formatUserError } from "../../utils/userErrors";
+import { useEffect, useState } from "react";
 import { useEditorStore } from "../../store/editorStore";
 import type { CommandNodePayload } from "../../types";
-import { CommandDraftRow, CommandFormulaRow } from "./CommandFormulaRow";
-import { EditorPlusIcon } from "./EditorPlusIcon";
+import { formatUserError } from "../../utils/userErrors";
+import { actionKindLabel, getActionKind } from "./actionCatalog";
 import { commandNodeSearchHaystack } from "./formulaRow.logic";
-import { withEnabledValue } from "./NodeList.logic";
+import { CommandDeleteConfirm } from "./CommandDeleteConfirm";
 
 export function CommandsTab() {
   const nodes = useEditorStore((s) => s.nodes);
   const setNodes = useEditorStore((s) => s.setNodes);
-  const deleteNode = useEditorStore((s) => s.deleteNode);
-  const toggleEnabled = useEditorStore((s) => s.toggleEnabled);
-
-  const [errorText, setErrorText] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [showDraft, setShowDraft] = useState(false);
-  const errorTimeoutRef = useRef<number | null>(null);
-
-  const showError = (text: string) => {
-    setErrorText(text);
-    if (errorTimeoutRef.current) window.clearTimeout(errorTimeoutRef.current);
-    errorTimeoutRef.current = window.setTimeout(() => {
-      setErrorText(null);
-      errorTimeoutRef.current = null;
-    }, 2200);
-  };
+  const [error, setError] = useState<string | null>(null);
+  const [deletePending, setDeletePending] = useState<number | null>(null);
 
   useEffect(() => {
     let mounted = true;
-    const loadNodes = async () => {
+    const load = async () => {
       try {
         const list = await invoke<CommandNodePayload[]>("list_commands");
-        if (!mounted) return;
-        setNodes(list);
-      } catch (err: unknown) {
-        if (!mounted) return;
-        showError(formatUserError(err, "Could not load commands."));
+        if (mounted) {
+          setNodes(list);
+          setError(null);
+        }
+      } catch (err) {
+        if (mounted) setError(formatUserError(err, "Could not load commands."));
       }
     };
-    void loadNodes();
-
-    let unlisten: (() => void) | null = null;
-    void listen("editor-commands-changed", () => {
-      void loadNodes();
-    }).then((off) => {
+    void load();
+    let unlisten: (() => void) | undefined;
+    void listen("editor-commands-changed", () => void load()).then((off) => {
       if (mounted) unlisten = off;
       else off();
     });
-
-    return () => {
-      mounted = false;
-      unlisten?.();
-      if (errorTimeoutRef.current) window.clearTimeout(errorTimeoutRef.current);
-    };
+    return () => { mounted = false; unlisten?.(); };
   }, [setNodes]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return nodes;
-    return nodes.filter((n) => commandNodeSearchHaystack(n).includes(q));
-  }, [nodes, query]);
+  const search = query.trim().toLowerCase();
+  const filtered = nodes.filter((node) =>
+    `${node.name.toLowerCase()} ${commandNodeSearchHaystack(node)}`.includes(search),
+  );
 
-  const onToggleEnabled = (id: number) => {
-    const current = useEditorStore.getState().nodes.find((n) => n.id === id);
-    if (!current) return;
-    const nextEnabled = !current.enabled;
-    toggleEnabled(id);
-    void invoke<CommandNodePayload>("update_command", {
-      id,
-      node: withEnabledValue(current, nextEnabled),
-    })
-      .then((saved) => {
-        const latest = useEditorStore.getState().nodes;
-        setNodes(latest.map((n) => (n.id === saved.id ? saved : n)));
-      })
-      .catch((err: unknown) => {
-        toggleEnabled(id);
-        showError(formatUserError(err, "Could not update that command."));
-      });
-  };
-
-  const onDelete = (id: number) => {
-    void invoke<boolean>("delete_command", { id })
-      .then((deleted) => {
-        if (deleted) {
-          deleteNode(id);
-          return;
-        }
-        showError("Delete failed.");
-      })
-      .catch((err: unknown) => {
-        showError(formatUserError(err, "Could not delete that command."));
-      });
+  const deleteCommand = async (id: number) => {
+    try {
+      if (await invoke<boolean>("delete_command", { id })) {
+        useEditorStore.getState().deleteNode(id);
+        setDeletePending(null);
+      } else {
+        setError("Could not delete command.");
+      }
+    } catch (err) {
+      setError(formatUserError(err, "Could not delete command."));
+    }
   };
 
   return (
     <div className="editor-commands-tab">
       <header className="editor-commands-toolbar">
-        <input
-          type="search"
-          className="editor-formula-input editor-commands-search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search"
-          aria-label="Search commands"
-        />
-        <button
-          type="button"
-          className="editor-commands-add"
-          onClick={() => setShowDraft(true)}
-          aria-label="Add command"
-        >
-          +
-        </button>
+        <input className="editor-formula-input editor-commands-search" value={query}
+          onChange={(e) => setQuery(e.target.value)} placeholder="Search" aria-label="Search commands" />
       </header>
-
-      {errorText && (
-        <div className="editor-inline-toast" role="alert">
-          {errorText}
-        </div>
-      )}
-
-      {nodes.length === 0 && !showDraft ? (
+      {error && <div className="editor-inline-toast" role="alert">{error}</div>}
+      {filtered.length === 0 ? (
         <div className="editor-commands-empty" role="status">
-          <div className="editor-commands-empty-panel">
-            <div className="editor-commands-empty-stack">
-              <div className="editor-commands-empty-copy">
-                <h2 className="editor-commands-empty-title">No commands yet</h2>
-                <p className="editor-commands-empty-lead">
-                  Link a trigger phrase to actions you can run by voice.
-                </p>
-                <button
-                  type="button"
-                  className="editor-formula-plus editor-formula-plus--labeled"
-                  onClick={() => setShowDraft(true)}
-                >
-                  <span className="editor-formula-plus-icon" aria-hidden>
-                    <EditorPlusIcon className="editor-formula-plus-icon-svg" />
-                  </span>
-                  Add Command
-                </button>
-              </div>
-              <div className="editor-commands-empty-sample" aria-hidden>
-                <p className="editor-commands-empty-sample-label">Example</p>
-                <div className="editor-commands-empty-formula">
-                  <span className="editor-commands-empty-chip editor-commands-empty-chip--phrase">
-                    open browser
-                  </span>
-                  <span className="editor-formula-eq">=</span>
-                  <span className="editor-commands-empty-chip editor-commands-empty-chip--action">
-                    Open URL
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
+          {nodes.length === 0 ? "No commands yet." : "No commands match your search."}
         </div>
       ) : (
-        <>
-          <ul className="editor-command-list">
-            {showDraft && (
-              <CommandDraftRow
-                onDiscard={() => setShowDraft(false)}
-                onCreated={async () => {
-                  try {
-                    const list = await invoke<CommandNodePayload[]>("list_commands");
-                    setNodes(list);
-                  } catch {
-                    showError("Created, but list refresh failed.");
-                  }
-                  setShowDraft(false);
-                }}
-              />
-            )}
-            {filtered.map((node) => (
-              <CommandFormulaRow
-                key={node.id}
-                node={node}
-                onToggleEnabled={() => onToggleEnabled(node.id)}
-                onDelete={() => onDelete(node.id)}
-              />
-            ))}
-          </ul>
-        </>
+        <ul className="editor-command-list">
+          {filtered.map((node) => (
+            <li className="editor-command-item editor-command-readonly" key={node.id}>
+              <div>
+                <strong>{node.trigger_phrases.join(", ") || node.name}</strong>
+                <div className="editor-command-readonly-actions">
+                  {node.actions.map((action) => actionKindLabel(getActionKind(action))).join(" → ") || "No actions"}
+                </div>
+              </div>
+              <div className="editor-command-readonly-controls">
+                {!node.enabled && <span className="editor-command-readonly-status">Disabled</span>}
+                <CommandDeleteConfirm
+                  deletePending={deletePending === node.id}
+                  phraseLabel={node.trigger_phrases[0] || node.name}
+                  onRequestDelete={() => setDeletePending(node.id)}
+                  onCancel={() => setDeletePending(null)}
+                  onConfirm={() => void deleteCommand(node.id)}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
