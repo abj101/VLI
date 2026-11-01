@@ -1950,6 +1950,76 @@ fn create_command(
 }
 
 #[tauri::command]
+fn save_learned_command(
+    app: AppHandle,
+    transcript: String,
+    tool_calls: Vec<llm::router::RouterToolCall>,
+    command_cache: State<'_, CommandCache>,
+) -> Result<db::CommandNode, String> {
+    use db::{MatchMode, NewCommandNode};
+
+    let transcript = transcript.trim();
+    let trigger = transcript.to_lowercase();
+    if trigger.is_empty() {
+        return Err("learned command transcript cannot be empty".into());
+    }
+    let conn = open_db_connection(&app)?;
+    let actions = learned_actions_from_tool_calls(&conn, &tool_calls)?;
+    let rows = db::get_all_commands(&conn).map_err(|e| e.to_string())?;
+    if let Some(existing) = rows.iter().find(|node| node.trigger_phrases.iter().any(|phrase| phrase == &trigger)) {
+        return Ok(existing.clone());
+    }
+    let row = NewCommandNode {
+        name: transcript.chars().take(60).collect(),
+        trigger_phrases: vec![trigger],
+        actions,
+        enabled: true,
+        fuzzy_threshold_pct: load_default_fuzzy_threshold_pct(&app),
+        match_mode: MatchMode::Phrase,
+    };
+    let id = db::insert_command(&conn, &row).map_err(|e| e.to_string())?;
+    let saved = db::get_command_by_id(&conn, id).map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("created learned command {id} was not found"))?;
+    refresh_command_cache(&app, &command_cache)?;
+    emit_editor_commands_changed(&app);
+    Ok(saved)
+}
+
+pub(crate) fn learned_actions_from_tool_calls(
+    conn: &rusqlite::Connection,
+    tool_calls: &[llm::router::RouterToolCall],
+) -> Result<Vec<db::Action>, String> {
+    if tool_calls.is_empty() || tool_calls.len() > llm::router::MAX_ROUTER_TOOL_CALLS {
+        return Err(format!(
+            "learned command must contain 1 to {} tool calls",
+            llm::router::MAX_ROUTER_TOOL_CALLS
+        ));
+    }
+    tool_calls
+        .iter()
+        .map(|call| {
+            let tool = db::get_tool_by_name(conn, &call.tool)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("tool `{}` was not found", call.tool))?;
+            if !tool.enabled {
+                return Err(format!("tool `{}` is disabled", call.tool));
+            }
+            let raw_args = call
+                .args
+                .iter()
+                .map(|(key, value)| (key.clone(), serde_json::Value::String(value.clone())))
+                .collect::<serde_json::Map<_, _>>();
+            let args = llm::router::validate_args_against_tool(&tool, &raw_args)
+                .map_err(|e| e.message)?;
+            Ok(db::Action::RunTool {
+                tool: tool.name,
+                args,
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
 fn update_command(
     app: AppHandle,
     id: i64,
@@ -2913,6 +2983,7 @@ pub fn run() {
             list_commands,
             get_command,
             create_command,
+save_learned_command,
             update_command,
             delete_command,
             test_command,

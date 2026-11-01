@@ -7,7 +7,8 @@ use crate::{
     cancel_active_run_in_state,
     commands::{
         executor::{ActionRuntime, TauriActionRuntime},
-        execute_command_with_context, execute_tool, match_command, matcher::MatchResult,
+        execute_tool, match_command,
+    matcher::MatchResult,
         open_target::execute_open_target_with_aliases,
         ToolCallContext,
     },
@@ -30,6 +31,7 @@ use crate::{
     await_follow_up_input,
     CommandCache, SharedHud, ACTION_RUN_CANCELLED_MSG,
 };
+use crate::commands::executor::execute_command_with_db_context;
 use log::{debug, info, warn};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -237,12 +239,14 @@ fn execute_tier1_match(
             executing_session_id,
             cancel_flag,
         );
-        execute_command_with_context(
+        let command_conn = open_db_connection(&app_h).ok();
+        execute_command_with_db_context(
             &node,
             &runtime,
             Some(app_index_snapshot.as_slice()),
             tool_context,
             Some(target_aliases_snapshot.as_slice()),
+            command_conn.as_ref(),
         );
     });
     Ok(())
@@ -316,6 +320,7 @@ fn execute_tier2_route(
     app: &AppHandle,
     rt: &SharedHud,
     audio: &SharedAudioPipeline,
+    transcript: String,
     route: RouterRouteResult,
 ) -> Result<(), String> {
     route_commit_gate(rt)?;
@@ -356,6 +361,7 @@ fn execute_tier2_route(
     let rt_h = Arc::clone(rt);
     let audio_h = audio.clone();
     let tool_calls = route.tool_calls;
+    let transcript_for_confirmation = transcript;
     spawn_action_run(&app_h.clone(), &rt_h.clone(), &audio_h.clone(), move || {
         let runtime = follow_up_runtime(
             &app_h,
@@ -395,6 +401,23 @@ fn execute_tier2_route(
                 }
                 return;
             }
+        }
+        if !runtime.is_cancelled()
+            && crate::finalize_decider_confirmation(
+                &app_h,
+                &rt_h,
+                &audio_h,
+                executing_session_id,
+            )
+            .unwrap_or(false)
+        {
+            let _ = app_h.emit(
+                "decider-confirm",
+                serde_json::json!({
+                    "transcript": transcript_for_confirmation,
+                    "tool_calls": tool_calls,
+                }),
+            );
         }
     });
     Ok(())
@@ -580,7 +603,13 @@ pub fn try_route_and_execute(
                     debug!("flow: skip tier2 execute (cancelled after infer)");
                     return;
                 }
-                if let Err(err) = execute_tier2_route(&app_bg, &rt_bg, &audio_bg, route) {
+                if let Err(err) = execute_tier2_route(
+                    &app_bg,
+                    &rt_bg,
+                    &audio_bg,
+                    transcript.clone(),
+                    route,
+                ) {
                     if err != "skip" {
                         warn!("flow: tier2 execute failed: {err}");
                     }
@@ -709,6 +738,7 @@ mod tests {
     #[derive(Default)]
     struct MockRuntimeState {
         opened_apps: Vec<String>,
+opened_urls: Vec<String>,
         statuses: Vec<String>,
         errors: Vec<String>,
     }
@@ -724,7 +754,8 @@ mod tests {
             Ok(())
         }
 
-        fn open_url(&self, _url: &str) -> Result<(), String> {
+fn open_url(&self, url: &str) -> Result<(), String> {
+    self.state.lock().unwrap().opened_urls.push(url.to_string());
             Ok(())
         }
 
@@ -833,4 +864,47 @@ mod tests {
         assert!(runtime.state.lock().unwrap().errors.is_empty());
         assert_eq!(runtime.state.lock().unwrap().opened_apps, ["GitHubDesktop.exe"]);
     }
+#[test]
+fn learned_two_tool_command_matches_and_replays_run_tool_actions() {
+    let (_dir, conn) = test_conn();
+    let calls = vec![
+        crate::llm::router::RouterToolCall {
+            tool: "web_search".into(),
+            args: HashMap::from([("query".into(), "spotify".into())]),
+        },
+        crate::llm::router::RouterToolCall {
+            tool: "web_search".into(),
+            args: HashMap::from([("query".into(), "play".into())]),
+        },
+    ];
+    let actions = crate::learned_actions_from_tool_calls(&conn, &calls)
+        .expect("validate and build replay actions");
+    let learned = db::NewCommandNode {
+        name: "open spotify and play".into(),
+        trigger_phrases: vec!["open spotify and play".into()],
+        actions: actions.clone(),
+        enabled: true,
+        fuzzy_threshold_pct: 80,
+        match_mode: MatchMode::Phrase,
+    };
+    db::insert_command(&conn, &learned).expect("insert learned command");
+    let nodes = db::get_all_commands(&conn).expect("load learned command");
+    let matched = match_command("open spotify and play", &nodes).expect("phrase match");
+    let node = nodes
+        .iter()
+        .find(|node| node.id.to_string() == matched.node_id)
+        .expect("matched node");
+    assert_eq!(node.actions, actions);
+    assert!(node.actions.iter().all(|action| matches!(action, Action::RunTool { .. })));
+
+    let runtime = MockRuntime::default();
+    execute_command_with_db_context(node, &runtime, None, None, None, Some(&conn));
+    assert_eq!(
+        runtime.state.lock().unwrap().opened_urls,
+        [
+            "https://www.google.com/search?q=spotify",
+            "https://www.google.com/search?q=play",
+        ]
+    );
+}
 }
