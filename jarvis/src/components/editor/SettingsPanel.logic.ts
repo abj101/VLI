@@ -84,15 +84,6 @@ export function parseRemoteSttTimeoutSecs(raw: string): number | null {
   return n;
 }
 
-export function parseThresholdSettingValue(raw: string | null): number | null {
-  if (!raw) return null;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed < 50 || parsed > 100) {
-    return null;
-  }
-  return parsed / 100;
-}
-
 /**
  * Normalizes persisted `theme` setting.
  * Unknown / empty → `system` (follow OS).

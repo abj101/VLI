@@ -1,0 +1,306 @@
+
+> jarvis@0.1.0 test
+> vitest run && node scripts/test-composer.mjs
+
+
+ RUN  v3.2.4 C:/Users/Abj1/Documents/GitHub/VLI/jarvis
+
+ ✓ src/components/editor/composer.logic.test.ts (13 tests) 4ms
+ ✓ src/components/editor/CommandFormulaRow.clearableInput.test.tsx (2 tests) 8ms
+ ✓ src/store/hudReducer.test.ts (15 tests) 4ms
+ ✓ src/components/hud/HudPanel.logic.test.ts (16 tests) 5ms
+ ✓ src/components/editor/SettingsPanel.logic.test.ts (25 tests) 10ms
+ ✓ src/components/editor/NodeForm.test.ts (15 tests) 6ms
+ ✓ src/components/editor/formulaRow.logic.test.ts (20 tests) 6ms
+ ✓ src/components/editor/CommandDraftRow.test.tsx (2 tests) 9ms
+ ✓ src/components/editor/CommandFormulaRow.ifElseLayout.test.tsx (1 test) 17ms
+ ✓ src/components/editor/CommandDeleteConfirm.test.tsx (3 tests) 17ms
+ ✓ src/components/editor/CommandFormulaRow.followUpLayout.test.tsx (3 tests) 17ms
+ ✓ src/components/editor/CommandFormulaRow.variables.test.ts (6 tests) 6ms
+ ✓ src/styles/glassTokens.test.ts (5 tests) 6ms
+ ✓ src/components/editor/ifElse.logic.test.ts (4 tests) 3ms
+ ✓ src/utils/userErrors.test.ts (4 tests) 3ms
+ ✓ scripts/fetch-wake-models.config.test.mjs (1 test) 3ms
+ ✓ src/components/editor/NodeList.test.ts (3 tests) 3ms
+ ✓ src/store/hudIpc.test.ts (2 tests) 7ms
+ ✓ scripts/fetch-llm-models.config.test.mjs (1 test) 2ms
+ ✓ src/components/hud/hudOverlayPhases.test.ts (1 test) 2ms
+ ✓ src/components/editor/appIndexInvoke.test.ts (1 test) 4ms
+ ✓ src/components/editor/NodeList.logic.test.ts (1 test) 2ms
+
+ Test Files  22 passed (22)
+      Tests  144 passed (144)
+   Start at  21:38:42
+   Duration  2.07s (transform 1.33s, setup 0ms, collect 4.45s, tests 147ms, environment 4ms, prepare 6.89s)
+
+   Compiling jarvis v0.1.0 (C:\Users\Abj1\Documents\GitHub\VLI\jarvis\src-tauri)
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\Abj1\Documents\GitHub\VLI\jarvis\src-tauri\target\debug\incremental\jarvis_lib-3s34k8che0mpa\s-hnqu60uoqe-0930fcy-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\Abj1\Documents\GitHub\VLI\jarvis\src-tauri\target\debug\incremental\jarvis_lib-1f4ilm4ba2sy0\s-hnqu60uop5-17r71s7-working`
+
+warning: unused import: `route_transcript_with_infer`
+  --> src\commands\router.rs:23:65
+   |
+23 |         normalize_router_tool_calls, resolve_router_model_path, route_transcript_with_infer,
+   |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variants `Os` and `Remote` are never constructed
+  --> src\audio\mod.rs:40:5
+   |
+35 | pub enum SttPipelineChoice {
+   |          ----------------- variants in this enum
+...
+40 |     Os,
+   |     ^^
+41 |     Remote(RemoteSttParams),
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `DEFAULT_TIMEOUT` is never used
+  --> src\audio\transcription\remote.rs:19:7
+   |
+19 | const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+   |       ^^^^^^^^^^^^^^^
+
+warning: associated function `sanitized_timeout` is never used
+   --> src\audio\transcription\remote.rs:258:12
+    |
+256 | impl RemoteSttParams {
+    | -------------------- associated function in this implementation
+257 |     /// Clamp user setting to a safe range; invalid values fall back to 30s.
+258 |     pub fn sanitized_timeout(secs: u32) -> Duration {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: variants `Init` and `Process` are never constructed
+  --> src\audio\wake\mod.rs:77:5
+   |
+75 | pub enum WakeError {
+   |          --------- variants in this enum
+76 |     #[error("wake engine init failed: {0}")]
+77 |     Init(String),
+   |     ^^^^
+78 |     #[error("wake engine process failed: {0}")]
+79 |     Process(String),
+   |     ^^^^^^^
+   |
+   = note: `WakeError` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: struct `LocalInfer` is never constructed
+  --> src\commands\router.rs:40:8
+   |
+40 | struct LocalInfer {
+   |        ^^^^^^^^^^
+
+warning: function `get_api_key` is never used
+  --> src\keychain.rs:47:8
+   |
+47 | pub fn get_api_key(service: &str) -> Result<Option<String>, String> {
+   |        ^^^^^^^^^^^
+
+warning: function `parameter_schema` is never used
+ --> src\llm\prompt.rs:7:8
+  |
+7 | pub fn parameter_schema(param: &ToolParameter) -> Value {
+  |        ^^^^^^^^^^^^^^^^
+
+warning: function `tool_catalog_entry` is never used
+  --> src\llm\prompt.rs:31:8
+   |
+31 | pub fn tool_catalog_entry(tool: &ToolDefinition) -> Value {
+   |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `build_tool_catalog` is never used
+  --> src\llm\prompt.rs:56:8
+   |
+56 | pub fn build_tool_catalog(tools: &[ToolDefinition]) -> Vec<Value> {
+   |        ^^^^^^^^^^^^^^^^^^
+
+warning: constant `SYSTEM_INSTRUCTIONS` is never used
+  --> src\llm\prompt.rs:62:7
+   |
+62 | const SYSTEM_INSTRUCTIONS: &str = r#"You route voice commands to available tools. Choose one or more tool calls (maximum 3).
+   |       ^^^^^^^^^^^^^^^^^^^
+
+warning: function `build_router_schema` is never used
+  --> src\llm\prompt.rs:86:8
+   |
+86 | pub fn build_router_schema(tools: &[ToolDefinition]) -> Value {
+   |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `build_router_prompt` is never used
+   --> src\llm\prompt.rs:119:8
+    |
+119 | pub fn build_router_prompt(transcript: &str, tools: &[ToolDefinition]) -> String {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: variant `InvalidJson` is never constructed
+  --> src\llm\router.rs:34:5
+   |
+30 | pub enum RouterErrorCode {
+   |          --------------- variant in this enum
+...
+34 |     InvalidJson,
+   |     ^^^^^^^^^^^
+   |
+   = note: `RouterErrorCode` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: trait `RouterInfer` is never used
+  --> src\llm\router.rs:55:11
+   |
+55 | pub trait RouterInfer {
+   |           ^^^^^^^^^^^
+
+warning: struct `RawRouterOutput` is never constructed
+  --> src\llm\router.rs:60:19
+   |
+60 | pub(crate) struct RawRouterOutput {
+   |                   ^^^^^^^^^^^^^^^
+
+warning: struct `RawRouterToolCall` is never constructed
+  --> src\llm\router.rs:71:8
+   |
+71 | struct RawRouterToolCall {
+   |        ^^^^^^^^^^^^^^^^^
+
+warning: function `parse_router_output` is never used
+   --> src\llm\router.rs:109:8
+    |
+109 | pub fn parse_router_output(raw: &str) -> Result<RawRouterOutput, RouterError> {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `validate_router_call` is never used
+   --> src\llm\router.rs:177:8
+    |
+177 | pub fn validate_router_call(
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `validate_confidence` is never used
+   --> src\llm\router.rs:208:4
+    |
+208 | fn validate_confidence(confidence: f64, threshold: f32) -> Result<f32, RouterError> {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `normalize_raw_tool_calls` is never used
+   --> src\llm\router.rs:225:4
+    |
+225 | fn normalize_raw_tool_calls(raw: &RawRouterOutput) -> Result<Vec<RawRouterToolCall>, RouterError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `validate_single_tool_call` is never used
+   --> src\llm\router.rs:239:4
+    |
+239 | fn validate_single_tool_call(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `route_transcript_with_infer` is never used
+   --> src\llm\router.rs:311:8
+    |
+311 | pub fn route_transcript_with_infer(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `LocalInfer` is never constructed
+   --> src\llm\tauri_cmds.rs:166:8
+    |
+166 | struct LocalInfer {
+    |        ^^^^^^^^^^
+
+warning: constant `MAX_GENERATED_TOKENS` is never used
+  --> src\llm\local.rs:14:7
+   |
+14 | const MAX_GENERATED_TOKENS: i32 = 256;
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `ROUTER_SYSTEM_PROMPT` is never used
+  --> src\llm\local.rs:15:7
+   |
+15 | const ROUTER_SYSTEM_PROMPT: &str = "You route voice commands to JSON tool calls.";
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `infer_router_completion` is never used
+   --> src\llm\local.rs:319:8
+    |
+319 | pub fn infer_router_completion(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variant `Init` is never constructed
+  --> src\audio\wake\mod.rs:77:5
+   |
+75 | pub enum WakeError {
+   |          --------- variant in this enum
+76 |     #[error("wake engine init failed: {0}")]
+77 |     Init(String),
+   |     ^^^^
+   |
+   = note: `WakeError` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: `jarvis` (lib test) generated 9 warnings (7 duplicates)
+warning: `jarvis` (lib) generated 28 warnings (run `cargo fix --lib -p jarvis` to apply 1 suggestion)
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\Abj1\Documents\GitHub\VLI\jarvis\src-tauri\target\debug\incremental\jarvis-11a22p91y5ba7\s-hnqu6cm4ir-1r5e39c-working`
+
+warning: `jarvis` (bin "jarvis" test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 23.66s
+     Running unittests src\lib.rs (target\debug\deps\jarvis_lib-5cca257a5933ede4.exe)
+
+running 50 tests
+test llm::composer::tests::extract_trigger_splits_on_then ... ok
+test llm::composer::tests::dedupe_removes_consecutive_duplicate_open_target ... ok
+test llm::composer::tests::align_trigger_fixes_then_in_trigger_phrase ... ok
+test llm::composer::tests::parse_extracts_json_from_prose_wrapper ... ok
+test llm::composer::tests::parse_rejects_unknown_kind ... ok
+test llm::composer::tests::parse_rejects_malformed_json ... ok
+test llm::composer::tests::parse_speak_tool_draft ... ok
+test llm::composer::tests::parse_command_with_empty_object_unit_actions ... ok
+test llm::composer::tests::finalize_both_returns_command_and_tool ... ok
+test llm::composer::tests::low_confidence_adds_warning_without_rejecting ... ok
+test llm::composer::tests::apply_description_placement_when_llm_omits_it ... ok
+test llm::composer::tests::parse_open_notepad_command_draft ... ok
+test llm::composer::tests::generate_with_mock_infer_open_notepad ... ok
+test llm::composer::tests::generate_with_mock_infer_uses_trigger_field ... ok
+test llm::composer::tests::parse_notepad_fullscreen_paste_command_draft ... ok
+test llm::composer::tests::finalize_dedupes_duplicate_open_notepad_mock ... ok
+test llm::composer::tests::repair_failure_surfaces_error ... ok
+test llm::composer::tests::repair_pass_fixes_invalid_json ... ok
+test llm::composer::tests::repair_pass_fixes_validation_error ... ok
+test llm::composer::tests::semantic_warning_when_new_note_missing_cmd_n ... ok
+test llm::composer_eval::composer_live_eval_all_fixtures ... ignored, requires the composer model and llama-server sidecar
+test llm::composer::tests::smart_split_upgrades_tool_when_user_gave_trigger ... ok
+test llm::composer::tests::smart_split_suffixes_colliding_tool_name_on_both ... ok
+test llm::composer_eval::bad_json_repair_fixture ... ok
+test llm::composer::tests::smart_split_downgrades_remainder_command_without_user_trigger ... ok
+test llm::composer_expect::tests::assert_result_matches_checks_trigger_and_actions ... ok
+test llm::composer_expect::tests::has_duplicate_actions_detects_repeated_open_target ... ok
+test llm::composer_prompt::tests::prompt_includes_catalog_and_few_shots ... ok
+test llm::composer_prompt::tests::prompt_includes_explicit_trigger_block ... ok
+test llm::composer_prompt::tests::prompt_includes_platform_rules ... ok
+test llm::composer_validate::tests::normalize_guessed_url_to_open_target ... ok
+test llm::composer_validate::tests::normalize_open_app_empty_path_to_open_target ... ok
+test llm::composer_validate::tests::resolve_trigger_dedupes_case_insensitive_aliases ... ok
+test llm::composer_prompt::tests::prompt_includes_template_rules_and_new_few_shots ... ok
+test llm::composer_validate::tests::resolve_trigger_prefers_explicit_trigger_over_phrases ... ok
+test llm::composer_validate::tests::validate_accepts_open_target_command ... ok
+test llm::composer_validate::tests::validate_accepts_speak_tool ... ok
+test llm::composer_validate::tests::validate_accepts_trigger_field_without_trigger_phrases ... ok
+test llm::composer_validate::tests::validate_normalizes_fullscreen_placement ... ok
+test llm::composer_validate::tests::validate_rejects_builtin_tool_name_collision ... ok
+test llm::composer_validate::tests::validate_rejects_empty_triggers ... ok
+test llm::composer_validate::tests::validate_rejects_chain_over_limit ... ok
+test llm::composer_validate::tests::validate_rejects_non_snake_case_tool_name ... ok
+test llm::composer_validate::tests::validate_rejects_non_http_open_url ... ok
+test llm::composer_eval::eval_all_fixtures_with_mock ... ok
+test llm::composer_validate::tests::validate_rejects_param_not_used_in_actions ... ok
+test llm::composer_validate::tests::validate_rejects_placeholder_without_param ... ok
+test llm::composer_validate::tests::validate_rejects_run_command_zero_id ... ok
+test llm::composer_validate::tests::validate_rejects_run_tool ... ok
+test llm::composer_validate::tests::validate_rejects_tool_chain_over_limit ... ok
+
+test result: ok. 49 passed; 0 failed; 1 ignored; 0 measured; 416 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\jarvis-08c2eb590ecd9b31.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

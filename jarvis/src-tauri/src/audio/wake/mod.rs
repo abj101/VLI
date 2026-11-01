@@ -69,6 +69,9 @@ pub trait WakeDetector: Send + 'static {
     fn fixed_input_frame_len(&self) -> Option<usize> {
         None
     }
+    /// Forget buffered audio so a wake phrase heard before the mic was released can't fire
+    /// again when it reopens.
+    fn reset(&mut self) {}
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]

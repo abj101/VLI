@@ -358,3 +358,8 @@ pub fn close_app_window(_exe_path: &str, _display_name: &str) -> Result<bool, St
 pub fn focus_window_on_side(_side: &str) -> Result<bool, String> {
     Err("focusing tiled windows is only supported on Windows".to_string())
 }
+
+// ponytail: macOS tile only resolves indexed apps; match running app names if needed.
+pub fn has_open_app_window(_name: &str) -> bool {
+    false
+}

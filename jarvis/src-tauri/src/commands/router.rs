@@ -469,7 +469,16 @@ pub(crate) fn tier0_tile_classification(
     parse_tile_intent(text)?
         .into_iter()
         .map(|(target, placement)| {
-            match classify_open_target(&target, placement, app_index, aliases) {
+            match classify_open_target(&target, placement.clone(), app_index, aliases) {
+                // Not installed via Start menu (e.g. Codex CLI) but already on screen.
+                OpenIntent::Unknown { target } if crate::window::has_open_app_window(&target) => {
+                    Some(OpenIntent::App {
+                        display_name: target.clone(),
+                        exe_path: target.clone(),
+                        target,
+                        placement,
+                    })
+                }
                 OpenIntent::Unknown { .. } => None,
                 intent => Some(intent),
             }

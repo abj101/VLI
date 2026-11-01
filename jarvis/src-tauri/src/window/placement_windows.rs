@@ -47,6 +47,17 @@ pub fn focused_window() -> Option<FocusedWindow> {
     })
 }
 
+/// Windows only lets the process that sent the last input take the foreground. The HUD
+/// never has focus, so send a no-op key (F15) first or `SetForegroundWindow` is ignored.
+fn bring_to_front(hwnd: HWND) {
+    let _ = crate::input::type_text::send_virtual_key(
+        windows::Win32::UI::Input::KeyboardAndMouse::VK_F15,
+    );
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+    }
+}
+
 fn is_own_pid(window_pid: u32, own_pid: u32) -> bool {
     window_pid == own_pid
 }
@@ -108,9 +119,7 @@ pub fn focus_existing_app_window(
     let Some(hwnd) = find_existing_window_for_app(exe_path, display_name) else {
         return Ok(false);
     };
-    unsafe {
-        let _ = SetForegroundWindow(hwnd);
-    }
+    bring_to_front(hwnd);
     if let Some(zone) = zone.map(str::trim).filter(|z| !z.is_empty()) {
         apply_zone(hwnd, validate_placement_zone(zone)?, monitor)?;
     }
@@ -149,9 +158,7 @@ pub fn focus_window_on_side(side: &str) -> Result<bool, String> {
     let Some(hwnd) = ctx.found else {
         return Ok(false);
     };
-    unsafe {
-        let _ = SetForegroundWindow(hwnd);
-    }
+    bring_to_front(hwnd);
     Ok(true)
 }
 
@@ -185,11 +192,41 @@ unsafe extern "system" fn enum_find_side(hwnd: HWND, lparam: LPARAM) -> BOOL {
 
 pub fn snap_foreground_window(zone: &str, monitor: &str) -> Result<(), String> {
     let zone = validate_placement_zone(zone)?;
-    let hwnd = unsafe { GetForegroundWindow() };
-    if hwnd.0.is_null() {
-        return Err("no foreground window to snap".to_string());
-    }
+    let hwnd = snap_target_window().ok_or_else(|| "no foreground window to snap".to_string())?;
     apply_zone(hwnd, zone, monitor)
+}
+
+/// The foreground window, or the topmost other app window when Jarvis's HUD has focus —
+/// snapping the HUD itself moves it off-center and its saved position sticks.
+fn snap_target_window() -> Option<HWND> {
+    let own_pid = std::process::id();
+    let fg = unsafe { GetForegroundWindow() };
+    if !fg.0.is_null() && window_pid(fg) != Some(own_pid) {
+        return Some(fg);
+    }
+    let mut ctx: (u32, Option<HWND>) = (own_pid, None);
+    unsafe {
+        let _ = EnumWindows(Some(enum_first_foreign), LPARAM(&mut ctx as *mut _ as isize));
+    }
+    ctx.1
+}
+
+unsafe extern "system" fn enum_first_foreign(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let ctx = &mut *(lparam.0 as *mut (u32, Option<HWND>));
+    if is_placeable_top_level(hwnd)
+        && !IsIconic(hwnd).as_bool()
+        && window_title(hwnd).is_some()
+        && window_pid(hwnd) != Some(ctx.0)
+    {
+        ctx.1 = Some(hwnd);
+        return BOOL(0);
+    }
+    TRUE
+}
+
+/// An open window matches `name` by exe or title, for apps the index doesn't list (CLI-launched).
+pub fn has_open_app_window(name: &str) -> bool {
+    find_existing_window_for_app(name, name).is_some_and(|h| window_pid(h) != Some(std::process::id()))
 }
 
 fn apply_zone(hwnd: HWND, zone: &str, monitor: &str) -> Result<(), String> {
@@ -283,6 +320,10 @@ unsafe extern "system" fn enum_find_existing(hwnd: HWND, lparam: LPARAM) -> BOOL
         if let Some(image) = process_image_name(pid) {
             if exe_names_match(&ctx.target_exe, &image) {
                 score = score.max(1.0);
+            } else if ctx.target_exe == ctx.display_lower
+                && image_path_names_app(&image, ctx.display_lower)
+            {
+                score = score.max(TITLE_MATCH_MIN_RATIO);
             }
         }
     }
@@ -430,6 +471,15 @@ fn exe_basename(path: &str) -> String {
         .to_ascii_lowercase()
 }
 
+/// Packaged apps can hide their spoken name in the install path only: Codex runs as
+/// `…\OpenAI.Codex_…\app\ChatGPT.exe` titled "ChatGPT".
+/// ponytail: plain substring on one word ≥4 chars; scored below exe/title hits so those win.
+fn image_path_names_app(image_path: &str, display_lower: &str) -> bool {
+    display_lower.len() >= 4
+        && !display_lower.contains(char::is_whitespace)
+        && image_path.to_lowercase().contains(display_lower)
+}
+
 fn exe_names_match(expected: &str, image_path: &str) -> bool {
     let actual = Path::new(image_path)
         .file_name()
@@ -461,6 +511,14 @@ mod tests {
             exe_basename(r"C:\Program Files\Brave\brave.exe"),
             "brave.exe"
         );
+    }
+
+    #[test]
+    fn image_path_names_packaged_app() {
+        let codex = r"C:\Program Files\WindowsApps\OpenAI.Codex_26.1027.3384.0_x64__2p2nqsd0c76g0\app\ChatGPT.exe";
+        assert!(image_path_names_app(codex, "codex"));
+        assert!(!image_path_names_app(codex, "app"));
+        assert!(!image_path_names_app(codex, "this window"));
     }
 
     #[test]

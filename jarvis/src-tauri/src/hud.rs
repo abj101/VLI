@@ -456,7 +456,7 @@ fn present_hud_window_resolved(app: &AppHandle, mode: HudOverlayMode) -> Result<
     present_hud_window(app, &window, mode)
 }
 
-/// Show/focus the HUD native window. On macOS tray/dev builds, `show()` alone can land behind other apps.
+/// Show the HUD native window (focused on macOS, where `show()` alone can land behind other apps).
 pub fn present_hud_window(
     app: &AppHandle,
     window: &WebviewWindow,
@@ -503,8 +503,9 @@ pub fn present_hud_window(
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (app, mode);
+        // Never take focus: shortcuts and typed text must land in the app the user was in.
+        window.set_focusable(false).map_err(|e| e.to_string())?;
         window.show().map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
         Ok(())
     }
 }

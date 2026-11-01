@@ -1,0 +1,921 @@
+
+> jarvis@0.1.0 tauri
+> tauri dev
+
+     Running BeforeDevCommand (`npm run dev`)
+
+> jarvis@0.1.0 predev
+> node scripts/fetch-models.mjs
+
+Sidecars already fetched (CUDA 12.4).
+
+> jarvis@0.1.0 dev
+> vite
+
+
+  VITE v7.3.2  ready in 396 ms
+
+  ➜  Local:   http://127.0.0.1:1420/
+     Running DevCommand (`cargo  run --no-default-features --features oww --color always --`)
+        Info Watching C:\Users\Abj1\Documents\GitHub\VLI\jarvis\src-tauri for changes...
+   Compiling jarvis v0.1.0 (C:\Users\Abj1\Documents\GitHub\VLI\jarvis\src-tauri)
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: unused import: `route_transcript_with_infer`
+  --> src\commands\router.rs:23:65
+   |
+23 |         normalize_router_tool_calls, resolve_router_model_path, route_transcript_with_infer,
+   |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: variants `Os` and `Remote` are never constructed
+  --> src\audio\mod.rs:40:5
+   |
+35 | pub enum SttPipelineChoice {
+   |          ----------------- variants in this enum
+...
+40 |     Os,
+   |     ^^
+41 |     Remote(RemoteSttParams),
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: constant `DEFAULT_TIMEOUT` is never used
+  --> src\audio\transcription\remote.rs:19:7
+   |
+19 | const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+   |       ^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: associated function `sanitized_timeout` is never used
+   --> src\audio\transcription\remote.rs:258:12
+    |
+256 | impl RemoteSttParams {
+    | -------------------- associated function in this implementation
+257 |     /// Clamp user setting to a safe range; invalid values fall back to 30s.
+258 |     pub fn sanitized_timeout(secs: u32) -> Duration {
+    |            ^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: struct `LocalInfer` is never constructed
+  --> src\commands\router.rs:40:8
+   |
+40 | struct LocalInfer {
+   |        ^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `get_api_key` is never used
+  --> src\keychain.rs:47:8
+   |
+47 | pub fn get_api_key(service: &str) -> Result<Option<String>, String> {
+   |        ^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `parameter_schema` is never used
+ --> src\llm\prompt.rs:7:8
+  |
+7 | pub fn parameter_schema(param: &ToolParameter) -> Value {
+  |        ^^^^^^^^^^^^^^^^
+
+warning: function `tool_catalog_entry` is never used
+  --> src\llm\prompt.rs:31:8
+   |
+31 | pub fn tool_catalog_entry(tool: &ToolDefinition) -> Value {
+   |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `build_tool_catalog` is never used
+  --> src\llm\prompt.rs:56:8
+   |
+56 | pub fn build_tool_catalog(tools: &[ToolDefinition]) -> Vec<Value> {
+   |        ^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: constant `SYSTEM_INSTRUCTIONS` is never used
+  --> src\llm\prompt.rs:62:7
+   |
+62 | const SYSTEM_INSTRUCTIONS: &str = r#"You route voice commands to available tools. Choose one or more tool calls (maximum 3).
+   |       ^^^^^^^^^^^^^^^^^^^
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `build_router_schema` is never used
+  --> src\llm\prompt.rs:86:8
+   |
+86 | pub fn build_router_schema(tools: &[ToolDefinition]) -> Value {
+   |        ^^^^^^^^^^^^^^^^^^^
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `build_router_prompt` is never used
+   --> src\llm\prompt.rs:119:8
+    |
+119 | pub fn build_router_prompt(transcript: &str, tools: &[ToolDefinition]) -> String {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: variant `InvalidJson` is never constructed
+  --> src\llm\router.rs:34:5
+   |
+30 | pub enum RouterErrorCode {
+   |          --------------- variant in this enum
+...
+34 |     InvalidJson,
+   |     ^^^^^^^^^^^
+   |
+   = note: `RouterErrorCode` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: trait `RouterInfer` is never used
+  --> src\llm\router.rs:55:11
+   |
+55 | pub trait RouterInfer {
+   |           ^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: struct `RawRouterOutput` is never constructed
+  --> src\llm\router.rs:60:19
+   |
+60 | pub(crate) struct RawRouterOutput {
+   |                   ^^^^^^^^^^^^^^^
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: struct `RawRouterToolCall` is never constructed
+  --> src\llm\router.rs:71:8
+   |
+71 | struct RawRouterToolCall {
+   |        ^^^^^^^^^^^^^^^^^
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `parse_router_output` is never used
+   --> src\llm\router.rs:109:8
+    |
+109 | pub fn parse_router_output(raw: &str) -> Result<RawRouterOutput, RouterError> {
+    |        ^^^^^^^^^^^^^^^^^^^
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `validate_router_call` is never used
+   --> src\llm\router.rs:177:8
+    |
+177 | pub fn validate_router_call(
+    |        ^^^^^^^^^^^^^^^^^^^^
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `validate_confidence` is never used
+   --> src\llm\router.rs:208:4
+    |
+208 | fn validate_confidence(confidence: f64, threshold: f32) -> Result<f32, RouterError> {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `normalize_raw_tool_calls` is never used
+   --> src\llm\router.rs:225:4
+    |
+225 | fn normalize_raw_tool_calls(raw: &RawRouterOutput) -> Result<Vec<RawRouterToolCall>, RouterError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `validate_single_tool_call` is never used
+   --> src\llm\router.rs:239:4
+    |
+239 | fn validate_single_tool_call(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `route_transcript_with_infer` is never used
+   --> src\llm\router.rs:311:8
+    |
+311 | pub fn route_transcript_with_infer(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: struct `LocalInfer` is never constructed
+   --> src\llm\tauri_cmds.rs:166:8
+    |
+166 | struct LocalInfer {
+    |        ^^^^^^^^^^
+warning: constant `MAX_GENERATED_TOKENS` is never used
+  --> src\llm\local.rs:14:7
+   |
+14 | const MAX_GENERATED_TOKENS: i32 = 256;
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `ROUTER_SYSTEM_PROMPT` is never used
+  --> src\llm\local.rs:15:7
+   |
+15 | const ROUTER_SYSTEM_PROMPT: &str = "You route voice commands to JSON tool calls.";
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `infer_router_completion` is never used
+   --> src\llm\local.rs:319:8
+    |
+319 | pub fn infer_router_completion(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: `jarvis` (lib) generated 26 warnings (run `cargo fix --lib -p jarvis` to apply 1 suggestion)
+    Building [=======================> ] 544/545: jarvis(…
+                                                            
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 38.62s
+     Running `target\debug\jarvis.exe`
+        Info File src-tauri\src\llm\router_eval.rs changed. Rebuilding application...
+     Running DevCommand (`cargo  run --no-default-features --features oww --color always --`)
+   Compiling jarvis v0.1.0 (C:\Users\Abj1\Documents\GitHub\VLI\jarvis\src-tauri)
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+error[E0425]: cannot find function `focus_context` in module `crate::llm::focus_context`
+   --> src\commands\router.rs:600:40
+    |
+600 |             crate::llm::focus_context::focus_context(
+    |                                        ^^^^^^^^^^^^^ not found in `crate::llm::focus_context`
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: unused import: `route_transcript_with_infer`
+  --> src\commands\router.rs:23:65
+   |
+23 |         normalize_router_tool_calls, resolve_router_model_path, route_transcript_with_infer,
+   |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+error[E0308]: mismatched types
+   --> src\commands\router.rs:602:52
+    |
+602 |                 apps.as_deref().map_or(&[], |apps| apps.as_slice()),
+    |                                                    ^^^^^^^^^^^^^^^ expected `&[_; 0]`, found `&[AppEntry]`
+    |
+    = note: expected reference `&[_; 0]`
+               found reference `&[AppEntry]`
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+Some errors have detailed explanations: E0308, E0425.
+For more information about an error, try `rustc --explain E0308`.
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: `jarvis` (lib) generated 1 warning
+error: could not compile `jarvis` (lib) due to 2 previous errors; 1 warning emitted
+        Info File src-tauri\src\llm\focus_context.rs changed. Rebuilding application...
+     Running DevCommand (`cargo  run --no-default-features --features oww --color always --`)
+   Compiling jarvis v0.1.0 (C:\Users\Abj1\Documents\GitHub\VLI\jarvis\src-tauri)
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: unused import: `route_transcript_with_infer`
+  --> src\commands\router.rs:23:65
+   |
+23 |         normalize_router_tool_calls, resolve_router_model_path, route_transcript_with_infer,
+   |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: variants `Os` and `Remote` are never constructed
+  --> src\audio\mod.rs:40:5
+   |
+35 | pub enum SttPipelineChoice {
+   |          ----------------- variants in this enum
+...
+40 |     Os,
+   |     ^^
+41 |     Remote(RemoteSttParams),
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `DEFAULT_TIMEOUT` is never used
+  --> src\audio\transcription\remote.rs:19:7
+   |
+19 | const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+   |       ^^^^^^^^^^^^^^^
+
+warning: associated function `sanitized_timeout` is never used
+   --> src\audio\transcription\remote.rs:258:12
+    |
+256 | impl RemoteSttParams {
+    | -------------------- associated function in this implementation
+257 |     /// Clamp user setting to a safe range; invalid values fall back to 30s.
+258 |     pub fn sanitized_timeout(secs: u32) -> Duration {
+    |            ^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: struct `LocalInfer` is never constructed
+  --> src\commands\router.rs:40:8
+   |
+40 | struct LocalInfer {
+   |        ^^^^^^^^^^
+
+warning: function `get_api_key` is never used
+  --> src\keychain.rs:47:8
+   |
+47 | pub fn get_api_key(service: &str) -> Result<Option<String>, String> {
+   |        ^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `parameter_schema` is never used
+ --> src\llm\prompt.rs:7:8
+  |
+7 | pub fn parameter_schema(param: &ToolParameter) -> Value {
+  |        ^^^^^^^^^^^^^^^^
+
+warning: function `tool_catalog_entry` is never used
+  --> src\llm\prompt.rs:31:8
+   |
+31 | pub fn tool_catalog_entry(tool: &ToolDefinition) -> Value {
+   |        ^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `build_tool_catalog` is never used
+  --> src\llm\prompt.rs:56:8
+   |
+56 | pub fn build_tool_catalog(tools: &[ToolDefinition]) -> Vec<Value> {
+   |        ^^^^^^^^^^^^^^^^^^
+
+warning: constant `SYSTEM_INSTRUCTIONS` is never used
+  --> src\llm\prompt.rs:62:7
+   |
+62 | const SYSTEM_INSTRUCTIONS: &str = r#"You route voice commands to available tools. Choose one or more tool calls (maximum 3).
+   |       ^^^^^^^^^^^^^^^^^^^
+
+warning: function `build_router_schema` is never used
+  --> src\llm\prompt.rs:86:8
+   |
+86 | pub fn build_router_schema(tools: &[ToolDefinition]) -> Value {
+   |        ^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `build_router_prompt` is never used
+   --> src\llm\prompt.rs:119:8
+    |
+119 | pub fn build_router_prompt(transcript: &str, tools: &[ToolDefinition]) -> String {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: variant `InvalidJson` is never constructed
+  --> src\llm\router.rs:34:5
+   |
+30 | pub enum RouterErrorCode {
+   |          --------------- variant in this enum
+...
+34 |     InvalidJson,
+   |     ^^^^^^^^^^^
+   |
+   = note: `RouterErrorCode` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: trait `RouterInfer` is never used
+  --> src\llm\router.rs:55:11
+   |
+55 | pub trait RouterInfer {
+   |           ^^^^^^^^^^^
+
+warning: struct `RawRouterOutput` is never constructed
+  --> src\llm\router.rs:60:19
+   |
+60 | pub(crate) struct RawRouterOutput {
+   |                   ^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: struct `RawRouterToolCall` is never constructed
+  --> src\llm\router.rs:71:8
+   |
+71 | struct RawRouterToolCall {
+   |        ^^^^^^^^^^^^^^^^^
+
+warning: function `parse_router_output` is never used
+   --> src\llm\router.rs:109:8
+    |
+109 | pub fn parse_router_output(raw: &str) -> Result<RawRouterOutput, RouterError> {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `validate_router_call` is never used
+   --> src\llm\router.rs:177:8
+    |
+177 | pub fn validate_router_call(
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `validate_confidence` is never used
+   --> src\llm\router.rs:208:4
+    |
+208 | fn validate_confidence(confidence: f64, threshold: f32) -> Result<f32, RouterError> {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `normalize_raw_tool_calls` is never used
+   --> src\llm\router.rs:225:4
+    |
+225 | fn normalize_raw_tool_calls(raw: &RawRouterOutput) -> Result<Vec<RawRouterToolCall>, RouterError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `validate_single_tool_call` is never used
+   --> src\llm\router.rs:239:4
+    |
+239 | fn validate_single_tool_call(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `route_transcript_with_infer` is never used
+   --> src\llm\router.rs:311:8
+    |
+311 | pub fn route_transcript_with_infer(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `LocalInfer` is never constructed
+   --> src\llm\tauri_cmds.rs:166:8
+    |
+166 | struct LocalInfer {
+    |        ^^^^^^^^^^
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: constant `MAX_GENERATED_TOKENS` is never used
+  --> src\llm\local.rs:14:7
+   |
+14 | const MAX_GENERATED_TOKENS: i32 = 256;
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: constant `ROUTER_SYSTEM_PROMPT` is never used
+  --> src\llm\local.rs:15:7
+   |
+15 | const ROUTER_SYSTEM_PROMPT: &str = "You route voice commands to JSON tool calls.";
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `infer_router_completion` is never used
+   --> src\llm\local.rs:319:8
+    |
+319 | pub fn infer_router_completion(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: `jarvis` (lib) generated 26 warnings (run `cargo fix --lib -p jarvis` to apply 1 suggestion)
+    Building [=======================> ] 544/545: jarvis(…
+                                                            
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.94s
+     Running `target\debug\jarvis.exe`
+        Info File src-tauri\src\llm\decider.rs changed. Rebuilding application...
+     Running DevCommand (`cargo  run --no-default-features --features oww --color always --`)
+        Info File src-tauri\src\window\mod.rs changed. Rebuilding application...
+     Running DevCommand (`cargo  run --no-default-features --features oww --color always --`)
+   Compiling jarvis v0.1.0 (C:\Users\Abj1\Documents\GitHub\VLI\jarvis\src-tauri)
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+error: unknown start of token: \
+   --> src\llm\decider.rs:654:51
+    |
+654 |         assert!(states[0].contains("\\"pause music\\""));
+    |                                                   ^^
+    |
+    = note: character appears once more
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+error: unknown start of token: \
+   --> src\llm\decider.rs:655:49
+    |
+655 |         assert!(states[2].contains("\\"skip song\\""));
+    |                                                 ^^
+    |
+    = note: character appears once more
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+error: unknown start of token: \
+   --> src\llm\decider.rs:665:92
+    |
+665 |             assert_eq!(body["state"], "Voice command to a desktop assistant: \\"pause music\\"");
+    |                                                                                            ^^
+    |
+    = note: character appears once more
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: unused import: `route_transcript_with_infer`
+  --> src\commands\router.rs:23:65
+   |
+23 |         normalize_router_tool_calls, resolve_router_model_path, route_transcript_with_infer,
+   |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: `jarvis` (lib) generated 1 warning
+error: could not compile `jarvis` (lib) due to 3 previous errors; 1 warning emitted
+        Info File src-tauri\src\llm\decider.rs changed. Rebuilding application...
+     Running DevCommand (`cargo  run --no-default-features --features oww --color always --`)
+   Compiling jarvis v0.1.0 (C:\Users\Abj1\Documents\GitHub\VLI\jarvis\src-tauri)
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: unused import: `route_transcript_with_infer`
+  --> src\commands\router.rs:23:65
+   |
+23 |         normalize_router_tool_calls, resolve_router_model_path, route_transcript_with_infer,
+   |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: variants `Os` and `Remote` are never constructed
+  --> src\audio\mod.rs:40:5
+   |
+35 | pub enum SttPipelineChoice {
+   |          ----------------- variants in this enum
+...
+40 |     Os,
+   |     ^^
+41 |     Remote(RemoteSttParams),
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `DEFAULT_TIMEOUT` is never used
+  --> src\audio\transcription\remote.rs:19:7
+   |
+19 | const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+   |       ^^^^^^^^^^^^^^^
+
+warning: associated function `sanitized_timeout` is never used
+   --> src\audio\transcription\remote.rs:258:12
+    |
+256 | impl RemoteSttParams {
+    | -------------------- associated function in this implementation
+257 |     /// Clamp user setting to a safe range; invalid values fall back to 30s.
+258 |     pub fn sanitized_timeout(secs: u32) -> Duration {
+    |            ^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: struct `LocalInfer` is never constructed
+  --> src\commands\router.rs:40:8
+   |
+40 | struct LocalInfer {
+   |        ^^^^^^^^^^
+warning: function `get_api_key` is never used
+  --> src\keychain.rs:47:8
+   |
+47 | pub fn get_api_key(service: &str) -> Result<Option<String>, String> {
+   |        ^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `parameter_schema` is never used
+ --> src\llm\prompt.rs:7:8
+  |
+7 | pub fn parameter_schema(param: &ToolParameter) -> Value {
+  |        ^^^^^^^^^^^^^^^^
+warning: function `tool_catalog_entry` is never used
+  --> src\llm\prompt.rs:31:8
+   |
+31 | pub fn tool_catalog_entry(tool: &ToolDefinition) -> Value {
+   |        ^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `build_tool_catalog` is never used
+  --> src\llm\prompt.rs:56:8
+   |
+56 | pub fn build_tool_catalog(tools: &[ToolDefinition]) -> Vec<Value> {
+   |        ^^^^^^^^^^^^^^^^^^
+
+warning: constant `SYSTEM_INSTRUCTIONS` is never used
+  --> src\llm\prompt.rs:62:7
+   |
+62 | const SYSTEM_INSTRUCTIONS: &str = r#"You route voice commands to available tools. Choose one or more tool calls (maximum 3).
+   |       ^^^^^^^^^^^^^^^^^^^
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `build_router_schema` is never used
+  --> src\llm\prompt.rs:86:8
+   |
+86 | pub fn build_router_schema(tools: &[ToolDefinition]) -> Value {
+   |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `build_router_prompt` is never used
+   --> src\llm\prompt.rs:119:8
+    |
+119 | pub fn build_router_prompt(transcript: &str, tools: &[ToolDefinition]) -> String {
+    |        ^^^^^^^^^^^^^^^^^^^
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: variant `InvalidJson` is never constructed
+  --> src\llm\router.rs:34:5
+   |
+30 | pub enum RouterErrorCode {
+   |          --------------- variant in this enum
+...
+34 |     InvalidJson,
+   |     ^^^^^^^^^^^
+   |
+   = note: `RouterErrorCode` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+warning: trait `RouterInfer` is never used
+  --> src\llm\router.rs:55:11
+   |
+55 | pub trait RouterInfer {
+   |           ^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: struct `RawRouterOutput` is never constructed
+  --> src\llm\router.rs:60:19
+   |
+60 | pub(crate) struct RawRouterOutput {
+   |                   ^^^^^^^^^^^^^^^
+
+warning: struct `RawRouterToolCall` is never constructed
+  --> src\llm\router.rs:71:8
+   |
+71 | struct RawRouterToolCall {
+   |        ^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `parse_router_output` is never used
+   --> src\llm\router.rs:109:8
+    |
+109 | pub fn parse_router_output(raw: &str) -> Result<RawRouterOutput, RouterError> {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `validate_router_call` is never used
+   --> src\llm\router.rs:177:8
+    |
+177 | pub fn validate_router_call(
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `validate_confidence` is never used
+   --> src\llm\router.rs:208:4
+    |
+208 | fn validate_confidence(confidence: f64, threshold: f32) -> Result<f32, RouterError> {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `normalize_raw_tool_calls` is never used
+   --> src\llm\router.rs:225:4
+    |
+225 | fn normalize_raw_tool_calls(raw: &RawRouterOutput) -> Result<Vec<RawRouterToolCall>, RouterError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `validate_single_tool_call` is never used
+   --> src\llm\router.rs:239:4
+    |
+239 | fn validate_single_tool_call(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `route_transcript_with_infer` is never used
+   --> src\llm\router.rs:311:8
+    |
+311 | pub fn route_transcript_with_infer(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `LocalInfer` is never constructed
+   --> src\llm\tauri_cmds.rs:166:8
+    |
+166 | struct LocalInfer {
+    |        ^^^^^^^^^^
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: constant `MAX_GENERATED_TOKENS` is never used
+  --> src\llm\local.rs:14:7
+   |
+14 | const MAX_GENERATED_TOKENS: i32 = 256;
+   |       ^^^^^^^^^^^^^^^^^^^^
+warning: constant `ROUTER_SYSTEM_PROMPT` is never used
+  --> src\llm\local.rs:15:7
+   |
+15 | const ROUTER_SYSTEM_PROMPT: &str = "You route voice commands to JSON tool calls.";
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `infer_router_completion` is never used
+   --> src\llm\local.rs:319:8
+    |
+319 | pub fn infer_router_completion(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: `jarvis` (lib) generated 26 warnings (run `cargo fix --lib -p jarvis` to apply 1 suggestion)
+    Building [=======================> ] 544/545: jarvis(…
+                                                            
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 15.22s
+     Running `target\debug\jarvis.exe`
+        Info File src-tauri\src\llm\router_eval.rs changed. Rebuilding application...
+     Running DevCommand (`cargo  run --no-default-features --features oww --color always --`)
+   Compiling jarvis v0.1.0 (C:\Users\Abj1\Documents\GitHub\VLI\jarvis\src-tauri)
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: unused import: `route_transcript_with_infer`
+  --> src\commands\router.rs:23:65
+   |
+23 |         normalize_router_tool_calls, resolve_router_model_path, route_transcript_with_infer,
+   |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: variants `Os` and `Remote` are never constructed
+  --> src\audio\mod.rs:40:5
+   |
+35 | pub enum SttPipelineChoice {
+   |          ----------------- variants in this enum
+...
+40 |     Os,
+   |     ^^
+41 |     Remote(RemoteSttParams),
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `DEFAULT_TIMEOUT` is never used
+  --> src\audio\transcription\remote.rs:19:7
+   |
+19 | const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+   |       ^^^^^^^^^^^^^^^
+warning: associated function `sanitized_timeout` is never used
+   --> src\audio\transcription\remote.rs:258:12
+    |
+256 | impl RemoteSttParams {
+    | -------------------- associated function in this implementation
+257 |     /// Clamp user setting to a safe range; invalid values fall back to 30s.
+258 |     pub fn sanitized_timeout(secs: u32) -> Duration {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: struct `LocalInfer` is never constructed
+  --> src\commands\router.rs:40:8
+   |
+40 | struct LocalInfer {
+   |        ^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `get_api_key` is never used
+  --> src\keychain.rs:47:8
+   |
+47 | pub fn get_api_key(service: &str) -> Result<Option<String>, String> {
+   |        ^^^^^^^^^^^
+warning: function `parameter_schema` is never used
+ --> src\llm\prompt.rs:7:8
+  |
+7 | pub fn parameter_schema(param: &ToolParameter) -> Value {
+  |        ^^^^^^^^^^^^^^^^
+
+warning: function `tool_catalog_entry` is never used
+  --> src\llm\prompt.rs:31:8
+   |
+31 | pub fn tool_catalog_entry(tool: &ToolDefinition) -> Value {
+   |        ^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `build_tool_catalog` is never used
+  --> src\llm\prompt.rs:56:8
+   |
+56 | pub fn build_tool_catalog(tools: &[ToolDefinition]) -> Vec<Value> {
+   |        ^^^^^^^^^^^^^^^^^^
+
+warning: constant `SYSTEM_INSTRUCTIONS` is never used
+  --> src\llm\prompt.rs:62:7
+   |
+62 | const SYSTEM_INSTRUCTIONS: &str = r#"You route voice commands to available tools. Choose one or more tool calls (maximum 3).
+   |       ^^^^^^^^^^^^^^^^^^^
+warning: function `build_router_schema` is never used
+  --> src\llm\prompt.rs:86:8
+   |
+86 | pub fn build_router_schema(tools: &[ToolDefinition]) -> Value {
+   |        ^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `build_router_prompt` is never used
+   --> src\llm\prompt.rs:119:8
+    |
+119 | pub fn build_router_prompt(transcript: &str, tools: &[ToolDefinition]) -> String {
+    |        ^^^^^^^^^^^^^^^^^^^
+warning: variant `InvalidJson` is never constructed
+  --> src\llm\router.rs:34:5
+   |
+30 | pub enum RouterErrorCode {
+   |          --------------- variant in this enum
+...
+34 |     InvalidJson,
+   |     ^^^^^^^^^^^
+   |
+   = note: `RouterErrorCode` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: trait `RouterInfer` is never used
+  --> src\llm\router.rs:55:11
+   |
+55 | pub trait RouterInfer {
+   |           ^^^^^^^^^^^
+warning: struct `RawRouterOutput` is never constructed
+  --> src\llm\router.rs:60:19
+   |
+60 | pub(crate) struct RawRouterOutput {
+   |                   ^^^^^^^^^^^^^^^
+
+warning: struct `RawRouterToolCall` is never constructed
+  --> src\llm\router.rs:71:8
+   |
+71 | struct RawRouterToolCall {
+   |        ^^^^^^^^^^^^^^^^^
+
+warning: function `parse_router_output` is never used
+   --> src\llm\router.rs:109:8
+    |
+109 | pub fn parse_router_output(raw: &str) -> Result<RawRouterOutput, RouterError> {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `validate_router_call` is never used
+   --> src\llm\router.rs:177:8
+    |
+177 | pub fn validate_router_call(
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `validate_confidence` is never used
+   --> src\llm\router.rs:208:4
+    |
+208 | fn validate_confidence(confidence: f64, threshold: f32) -> Result<f32, RouterError> {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `normalize_raw_tool_calls` is never used
+   --> src\llm\router.rs:225:4
+    |
+225 | fn normalize_raw_tool_calls(raw: &RawRouterOutput) -> Result<Vec<RawRouterToolCall>, RouterError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^
+warning: function `validate_single_tool_call` is never used
+   --> src\llm\router.rs:239:4
+    |
+239 | fn validate_single_tool_call(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: function `route_transcript_with_infer` is never used
+   --> src\llm\router.rs:311:8
+    |
+311 | pub fn route_transcript_with_infer(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+warning: struct `LocalInfer` is never constructed
+   --> src\llm\tauri_cmds.rs:166:8
+    |
+166 | struct LocalInfer {
+    |        ^^^^^^^^^^
+
+warning: constant `MAX_GENERATED_TOKENS` is never used
+  --> src\llm\local.rs:14:7
+   |
+14 | const MAX_GENERATED_TOKENS: i32 = 256;
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+                                                            
+warning: constant `ROUTER_SYSTEM_PROMPT` is never used
+  --> src\llm\local.rs:15:7
+   |
+15 | const ROUTER_SYSTEM_PROMPT: &str = "You route voice commands to JSON tool calls.";
+   |       ^^^^^^^^^^^^^^^^^^^^
+warning: function `infer_router_completion` is never used
+   --> src\llm\local.rs:319:8
+    |
+319 | pub fn infer_router_completion(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+    Building [=======================> ] 543/545: jarvis  
+ResourceUnavailable: The Win32 internal error "No process is on the other end of the pipe." 0xE9 occurred while setting the console window title. Contact Microsoft Customer Support Services.

@@ -68,7 +68,6 @@ const MATCH_QUIET_MAX_WAIT: Duration = Duration::from_secs(4);
 /// Amplitude above this (0..1) counts as speech for activity / silence detection.
 const SPEECH_AMPLITUDE_THRESHOLD: f64 = 0.02;
 /// Block wake reopens briefly after dismiss so mic handoff / tail audio does not immediately re-show the HUD.
-const WAKE_COOLDOWN_AFTER_DISMISS: Duration = Duration::from_secs(2);
 const FOLLOW_UP_TIMEOUT: Duration = Duration::from_secs(8);
 const FOLLOW_UP_TIMEOUT_MSG: &str = "Follow-up input timed out";
 pub(crate) const ACTION_RUN_CANCELLED_MSG: &str = "Action run cancelled";
@@ -354,8 +353,6 @@ struct HudRuntime {
     pending_follow_up_candidate: Option<String>,
     /// Last update timestamp for candidate debounce.
     pending_follow_up_candidate_at: Option<Instant>,
-    /// Set on dismiss/close; suppresses wake reopens until [`WAKE_COOLDOWN_AFTER_DISMISS`].
-    dismissed_at: Option<Instant>,
     /// Cancels the latest [`spawn_deferred_partial_match`] sleep when HUD dismisses or session bumps.
     deferred_match_cancel: Option<Arc<AtomicBool>>,
     /// Cancels in-flight tier-2 router infer when the user keeps speaking.
@@ -384,7 +381,6 @@ impl Default for HudRuntime {
             pending_follow_up_response: None,
             pending_follow_up_candidate: None,
             pending_follow_up_candidate_at: None,
-            dismissed_at: None,
             deferred_match_cancel: None,
             routing_cancel: None,
         }
@@ -652,15 +648,7 @@ fn abort_tier2_routing_for_new_speech(
 }
 
 fn mark_hud_dismissed(s: &mut HudRuntime) {
-    s.dismissed_at = Some(Instant::now());
     s.focus = None;
-}
-
-fn wake_reopen_suppressed(s: &HudRuntime) -> bool {
-    matches!(
-        s.dismissed_at,
-        Some(t) if t.elapsed() < WAKE_COOLDOWN_AFTER_DISMISS
-    )
 }
 
 fn phase_transition_allowed(current: HudPhase, next: HudPhase) -> bool {
@@ -864,7 +852,6 @@ fn prepare_hud_listening_session(s: &mut HudRuntime) -> u64 {
     s.wake_activated = false;
     s.focus = window::focused_window();
     let now = Instant::now();
-    s.dismissed_at = None;
     s.visible = true;
     s.phase = HudPhase::Listening;
     s.overlay_mode = HudOverlayMode::Command;
@@ -1577,9 +1564,6 @@ fn wake_request_hud(
     is_paused: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
-    if wake_reopen_suppressed(&s) {
-        return Ok(());
-    }
     if s.visible && !reopen_listening_when_visible(s.phase) {
         return Ok(());
     }
@@ -1728,7 +1712,6 @@ fn settings_patch_triggers_wake_reload(
 fn prepare_dictation_overlay(s: &mut HudRuntime, session_id: u64) {
     s.focus = None;
     let now = Instant::now();
-    s.dismissed_at = None;
     s.visible = true;
     s.phase = HudPhase::Listening;
     s.overlay_mode = HudOverlayMode::Dictation;
@@ -1870,7 +1853,6 @@ fn hud_set_phase(
             HudPhase::Listening => {
                 let now = Instant::now();
                 s.focus = window::focused_window();
-                s.dismissed_at = None;
                 s.visible = true;
                 s.overlay_mode = HudOverlayMode::Command;
                 s.session_id = s.session_id.wrapping_add(1);
@@ -3230,7 +3212,7 @@ mod tests {
     }
 
     #[test]
-    fn wake_reopen_suppressed_immediately_after_dismiss_mark() {
+    fn dismiss_mark_clears_focus() {
         let mut rt = HudRuntime {
             focus: Some(FocusedWindow {
                 exe_path: "spotify.exe".into(),
@@ -3239,10 +3221,6 @@ mod tests {
         };
         mark_hud_dismissed(&mut rt);
         assert!(rt.focus.is_none());
-        assert!(wake_reopen_suppressed(&rt));
-        rt.dismissed_at =
-            Some(Instant::now() - WAKE_COOLDOWN_AFTER_DISMISS - Duration::from_millis(1));
-        assert!(!wake_reopen_suppressed(&rt));
     }
 
     #[test]

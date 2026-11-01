@@ -1,0 +1,670 @@
+   Compiling jarvis v0.1.0 (C:\Users\Abj1\Documents\GitHub\VLI\jarvis\src-tauri)
+warning: unused import: `route_transcript_with_infer`
+  --> src\commands\router.rs:23:65
+   |
+23 |         normalize_router_tool_calls, resolve_router_model_path, route_transcript_with_infer,
+   |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variants `Os` and `Remote` are never constructed
+  --> src\audio\mod.rs:40:5
+   |
+35 | pub enum SttPipelineChoice {
+   |          ----------------- variants in this enum
+...
+40 |     Os,
+   |     ^^
+41 |     Remote(RemoteSttParams),
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `DEFAULT_TIMEOUT` is never used
+  --> src\audio\transcription\remote.rs:19:7
+   |
+19 | const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+   |       ^^^^^^^^^^^^^^^
+
+warning: associated function `sanitized_timeout` is never used
+   --> src\audio\transcription\remote.rs:258:12
+    |
+256 | impl RemoteSttParams {
+    | -------------------- associated function in this implementation
+257 |     /// Clamp user setting to a safe range; invalid values fall back to 30s.
+258 |     pub fn sanitized_timeout(secs: u32) -> Duration {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: struct `LocalInfer` is never constructed
+  --> src\commands\router.rs:40:8
+   |
+40 | struct LocalInfer {
+   |        ^^^^^^^^^^
+
+warning: function `get_api_key` is never used
+  --> src\keychain.rs:47:8
+   |
+47 | pub fn get_api_key(service: &str) -> Result<Option<String>, String> {
+   |        ^^^^^^^^^^^
+
+warning: function `parameter_schema` is never used
+ --> src\llm\prompt.rs:7:8
+  |
+7 | pub fn parameter_schema(param: &ToolParameter) -> Value {
+  |        ^^^^^^^^^^^^^^^^
+
+warning: function `tool_catalog_entry` is never used
+  --> src\llm\prompt.rs:31:8
+   |
+31 | pub fn tool_catalog_entry(tool: &ToolDefinition) -> Value {
+   |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `build_tool_catalog` is never used
+  --> src\llm\prompt.rs:56:8
+   |
+56 | pub fn build_tool_catalog(tools: &[ToolDefinition]) -> Vec<Value> {
+   |        ^^^^^^^^^^^^^^^^^^
+
+warning: constant `SYSTEM_INSTRUCTIONS` is never used
+  --> src\llm\prompt.rs:62:7
+   |
+62 | const SYSTEM_INSTRUCTIONS: &str = r#"You route voice commands to available tools. Choose one or more tool calls (maximum 3).
+   |       ^^^^^^^^^^^^^^^^^^^
+
+warning: function `build_router_schema` is never used
+  --> src\llm\prompt.rs:86:8
+   |
+86 | pub fn build_router_schema(tools: &[ToolDefinition]) -> Value {
+   |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `build_router_prompt` is never used
+   --> src\llm\prompt.rs:119:8
+    |
+119 | pub fn build_router_prompt(transcript: &str, tools: &[ToolDefinition]) -> String {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: variant `InvalidJson` is never constructed
+  --> src\llm\router.rs:34:5
+   |
+30 | pub enum RouterErrorCode {
+   |          --------------- variant in this enum
+...
+34 |     InvalidJson,
+   |     ^^^^^^^^^^^
+   |
+   = note: `RouterErrorCode` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: trait `RouterInfer` is never used
+  --> src\llm\router.rs:55:11
+   |
+55 | pub trait RouterInfer {
+   |           ^^^^^^^^^^^
+
+warning: struct `RawRouterOutput` is never constructed
+  --> src\llm\router.rs:60:19
+   |
+60 | pub(crate) struct RawRouterOutput {
+   |                   ^^^^^^^^^^^^^^^
+
+warning: struct `RawRouterToolCall` is never constructed
+  --> src\llm\router.rs:71:8
+   |
+71 | struct RawRouterToolCall {
+   |        ^^^^^^^^^^^^^^^^^
+
+warning: function `parse_router_output` is never used
+   --> src\llm\router.rs:109:8
+    |
+109 | pub fn parse_router_output(raw: &str) -> Result<RawRouterOutput, RouterError> {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `validate_router_call` is never used
+   --> src\llm\router.rs:177:8
+    |
+177 | pub fn validate_router_call(
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `validate_confidence` is never used
+   --> src\llm\router.rs:208:4
+    |
+208 | fn validate_confidence(confidence: f64, threshold: f32) -> Result<f32, RouterError> {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `normalize_raw_tool_calls` is never used
+   --> src\llm\router.rs:225:4
+    |
+225 | fn normalize_raw_tool_calls(raw: &RawRouterOutput) -> Result<Vec<RawRouterToolCall>, RouterError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `validate_single_tool_call` is never used
+   --> src\llm\router.rs:239:4
+    |
+239 | fn validate_single_tool_call(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `route_transcript_with_infer` is never used
+   --> src\llm\router.rs:311:8
+    |
+311 | pub fn route_transcript_with_infer(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `LocalInfer` is never constructed
+   --> src\llm\tauri_cmds.rs:166:8
+    |
+166 | struct LocalInfer {
+    |        ^^^^^^^^^^
+
+warning: constant `MAX_GENERATED_TOKENS` is never used
+  --> src\llm\local.rs:14:7
+   |
+14 | const MAX_GENERATED_TOKENS: i32 = 256;
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `ROUTER_SYSTEM_PROMPT` is never used
+  --> src\llm\local.rs:15:7
+   |
+15 | const ROUTER_SYSTEM_PROMPT: &str = "You route voice commands to JSON tool calls.";
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `infer_router_completion` is never used
+   --> src\llm\local.rs:319:8
+    |
+319 | pub fn infer_router_completion(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `jarvis` (lib) generated 26 warnings (run `cargo fix --lib -p jarvis` to apply 1 suggestion)
+warning: `jarvis` (lib test) generated 7 warnings (7 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.35s
+     Running unittests src\lib.rs (target\debug\deps\jarvis_lib-22989af64d5a5831.exe)
+
+running 475 tests
+test apps::resolve_target::tests::interpret_clarify_choice_browser_keywords ... ok
+test apps::intent::tests::is_explicit_url_rejects_bare_app_names ... ok
+test apps::intent::tests::parse_open_intent_rejects_opening_without_boundary ... ok
+test apps::resolve_target::tests::normalize_placement_zone_maps_fullscreen ... ok
+test apps::intent::tests::parse_open_intent_accepts_leading_please ... ok
+test apps::intent::tests::parse_open_intent_extracts_target_and_placement ... ok
+test apps::intent::tests::is_explicit_url_accepts_domains_and_schemes ... ok
+test apps::intent::tests::classify_open_target_respects_url_alias ... ok
+test apps::intent::tests::classify_open_target_unknown_when_not_in_index ... ok
+test apps::intent::tests::classify_open_target_url_for_explicit_domain ... ok
+test apps::intent::tests::classify_open_target_prefers_app_over_url_guess ... ok
+test apps::intent::tests::classify_open_target_github_app_beats_bare_name ... ok
+test apps::resolve_target::tests::resolve_target_alias_github_url_overrides_app ... ok
+test apps::resolve_target::tests::resolve_target_brave_prefers_app ... ok
+test apps::resolve_target::tests::resolve_target_foobar_unknown_without_com_guess ... ok
+test apps::resolve_target::tests::resolve_target_github_prefers_app_without_alias ... ok
+test apps::resolve_target::tests::resolve_target_google_dot_com_is_url ... ok
+test apps::resolve_target::tests::resolve_target_learned_alias_used_on_second_resolve ... ok
+test apps::resolve_target::tests::resolve_target_notepad_on_the_left_prefers_app ... ok
+test apps::resolve_target::tests::resolve_target_strips_placement_before_scoring ... ok
+test apps::resolve_target::tests::strip_placement_suffix_collapses_extra_whitespace ... ok
+test apps::resolve_target::tests::strip_placement_suffix_ignores_trailing_stt_punctuation ... ok
+test apps::resolve_target::tests::strip_placement_suffix_leaves_bare_target ... ok
+test apps::resolve_target::tests::strip_placement_suffix_removes_trailing_left_phrase ... ok
+test apps::scanner_windows::tests::app_paths_stem_filter_blocks_helpers ... ok
+test apps::resolve_target::tests::top_app_candidates_orders_by_score ... ok
+test apps::scanner_windows::tests::display_name_from_app_paths_key_title_cases_stem ... ok
+test apps::scanner_windows::tests::dedupe_by_display_name_keeps_best_source ... ok
+test apps::scanner_windows::tests::expand_env_replaces_system_root ... ok
+test apps::scanner_windows::tests::heroic_first_nonempty_field_picks_first_present ... ok
+test apps::scanner_windows::tests::heroic_split_records_handles_nested_and_strings ... ok
+test apps::scanner_windows::tests::insert_backfills_icon_without_overwriting_name ... ok
+test apps::scanner_windows::tests::insert_prefers_lower_priority_source ... ok
+test apps::scanner_windows::tests::install_dir_skipped_stem_allows_real_apps ... ok
+test apps::scanner_windows::tests::install_dir_skipped_stem_blocks_updaters_and_helpers ... ok
+test apps::scanner_windows::tests::is_non_filesystem_lnk_target_detects_protocols_and_shell_verbs ... ok
+test apps::scanner_windows::tests::is_skippable_subdir_matches_common_resource_folders ... ok
+test apps::scanner_windows::tests::json_str_field_extracts_values ... ok
+test apps::scanner_windows::tests::known_folder_maps_program_files_guid ... ok
+test apps::scanner_windows::tests::kv_value_parses_acf_line ... ok
+test apps::scanner_windows::tests::find_game_exe_in_tree_returns_none_for_empty_tree ... ok
+test apps::scanner_windows::tests::normalize_display_name_for_dedupe_strips_version_suffix ... ok
+test apps::scanner_windows::tests::parse_start_apps_line_splits_on_first_tab ... ok
+test apps::scanner_windows::tests::pretty_name_from_identifier_splits_pascal_case ... ok
+test apps::scanner_windows::tests::resolve_start_app_guid_system32_notepad ... ok
+test apps::scanner_windows::tests::exe_scan_gap_fill_only_skips_already_indexed_dir ... ok
+test apps::scanner_windows::tests::resolve_start_app_squirrel_aumid_to_shell_apps_folder ... ok
+test apps::scanner_windows::tests::resolve_start_app_rejects_https_url_app_id ... ok
+test apps::scanner_windows::tests::exe_stem_indexable_blocks_helpers_allows_apps ... ok
+test apps::scanner_windows::tests::scan_full_smoke_notepad_and_broad_cardinality ... ignored
+test apps::scanner_windows::tests::install_dir_primary_exe_fallback_when_no_name_match ... ok
+test apps::scanner_windows::tests::resolve_start_app_uwmid_to_shell_apps_folder ... ok
+test apps::scanner_windows::tests::resolve_start_app_steam_protocol_passthrough ... ok
+test apps::scanner_windows::tests::scan_includes_local_appdata_programs_when_populated ... ignored
+test apps::scanner_windows::tests::scan_includes_many_shell_aumid_entries ... ignored
+test apps::scanner_windows::tests::install_dir_primary_exe_prefers_name_match ... ok
+test apps::scanner_windows::tests::scan_localappdata_apps_skips_microsoft_and_packages ... ok
+test apps::scanner_windows::tests::find_game_exe_in_tree_penalises_crash_reporters ... ok
+test apps::scanner_windows::tests::uninstall_display_name_denied_blocks_redists_and_patches ... ok
+test apps::scanner_windows::tests::read_heroic_gog_library_builds_name_lookup ... ok
+test apps::scanner_windows::tests::uninstall_release_type_denied_blocks_updates ... ok
+test apps::scanner_windows::tests::find_game_exe_in_tree_finds_bg3_at_depth_two ... ok
+test apps::tests::filter_finds_notepad_discord_and_cs2_fixtures ... ok
+test apps::tests::app_entry_serializes_icon_data_url_when_present ... ok
+test apps::tests::icon_cache_empty_path_is_not_cached ... ok
+test apps::tests::icon_cache_missing_path_returns_none_and_memoizes ... ok
+test apps::tests::icon_cache_clear_wipes_entries ... ok
+test apps::tests::resolve_app_matches_exe_stem ... ok
+test apps::tests::resolve_app_none_below_threshold ... ok
+test apps::tests::resolve_app_picks_over_threshold ... ok
+test apps::tests::resolve_app_prefers_win32_exe_over_shell_uri_at_equal_score ... ok
+test apps::tests::sorted_app_name_slice_is_alphabetical_capped ... ok
+test audio::capture::tests::amplitude_empty_is_zero ... ok
+test audio::capture::tests::amplitude_scales_peak_and_clamps ... ok
+test audio::preroll::tests::take_snapshot_clears_buffer ... ok
+test audio::preroll::tests::preroll_ring_caps_at_max_samples ... ok
+test audio::stt::tests::multipart_contains_json_temperature_and_audio_file ... ok
+test audio::stt::tests::normalize_peak_boosts_quiet_speech ... ok
+test audio::stt::tests::normalize_peak_does_not_boost_sub_speech_floor ... ok
+test audio::stt::tests::parse_local_whisper_model_id_normalizes ... ok
+test audio::stt::tests::pcm_wav_header_and_samples_are_mono_16khz_pcm16 ... ok
+test audio::stt::tests::resample_48k_to_16k_length ... ok
+test audio::stt::tests::resample_identity_16k ... ok
+test audio::stt::tests::silence_tracker_resets_after_long_silence ... ok
+test audio::stt::tests::transcript_update_json_shape ... ok
+test audio::stt::tests::transcript_update_kind_defaults_when_omitted ... ok
+test audio::stt::tests::whisper_model_filename_maps_ids ... ok
+test audio::transcript_event::tests::audio_has_speech_requires_peak_above_threshold ... ok
+test audio::transcript_event::tests::classify_case_insensitive_growth ... ok
+test audio::tests::pcm_drain_joins_after_sender_dropped ... ok
+test audio::transcript_event::tests::classify_duplicate_is_suppressed ... ok
+test audio::transcript_event::tests::classify_empty_both_suppressed ... ok
+test audio::transcript_event::tests::classify_fresh_text_is_growth ... ok
+test audio::transcript_event::tests::classify_non_prefix_change_is_revision ... ok
+test audio::transcript_event::tests::classify_prefix_extension_is_growth ... ok
+test audio::transcript_event::tests::classify_prefix_shrink_is_growth ... ok
+test audio::transcript_event::tests::classify_silence_reset_clears_segment ... ok
+test audio::transcript_event::tests::transcript_candidate_accepts_word_like_text ... ok
+test audio::transcript_event::tests::transcript_candidate_rejects_noise_only_text ... ok
+test audio::transcription::remote::tests::parse_response_accepts_transcript ... ok
+test audio::transcription::remote::tests::parse_response_errors_when_missing ... ok
+test audio::transcription::remote::tests::parse_response_nested_result ... ok
+test audio::transcription::remote::tests::parse_response_prefers_text ... ok
+test audio::transcription::tests::parse_accepts_variants ... ok
+test audio::transcription::tests::parse_defaults_to_local ... ok
+test audio::transcription::tests::parse_unknown_falls_back_to_local ... ok
+test audio::tts::tests::cache_key_changes_for_different_text ... ok
+test audio::tts::tests::cache_key_is_stable ... ok
+test audio::tts::tests::single_quote_is_escaped_for_powershell ... ok
+test audio::wake::oww::tests::embedding_activations_rank1_becomes_single_row ... ok
+test audio::wake::oww::tests::embedding_activations_rank3_batch_one_becomes_rows ... ok
+test audio::wake::oww::tests::embedding_activations_rejects_non_singleton_leading_axis ... ok
+test audio::wake::oww::tests::embedding_activations_squeezes_rank4_leading_ones_to_matrix ... ok
+test audio::wake::oww::tests::oww_backend_name_when_models_present ... ok
+test audio::wake::oww::tests::oww_silence_does_not_fire_when_models_present ... ok
+test audio::wake::oww::tests::oww_try_open_wake_word_oww_uses_app_settings_threshold ... ok
+test audio::wake::tests::mock_wake_detector_rejects_wrong_length ... ok
+test audio::wake::tests::mock_wake_detector_returns_true_after_n_frames ... ok
+test apps::scanner_windows::tests::find_squirrel_app_exe_picks_newest_app_version ... ok
+test apps::scanner_windows::tests::find_game_exe_in_tree_finds_cs2_at_depth_four ... ok
+test audio::wake::tests::build_wake_detector_rejects_unknown_engine ... ok
+test apps::scanner_windows::tests::scan_heroic_sideload_inserts_absolute_exe ... ok
+test audio::wake::thread::tests::extend_i16_clamps_to_i16_range ... ok
+test audio::wake::oww::tests::oww_try_new_without_models_errors ... ok
+test audio::whisper_models::tests::catalog_covers_local_model_ids ... ok
+test audio::whisper_models::tests::whisper_model_filename_uses_ggml_prefix ... ok
+test commands::execution_context::tests::record_step_output_updates_last_result_and_history ... ok
+test apps::scanner_windows::tests::is_acceptable_lnk_filesystem_target_accepts_exe_only ... ok
+test commands::execution_context::tests::shortcut_input_populated_from_remainder ... ok
+test audio::wake::tests::wake_resource_root_falls_back_to_manifest_when_tauri_dir_empty ... ok
+test commands::executor::tests::cancelled_run_stops_before_next_action ... ok
+test commands::executor::tests::continues_remaining_actions_after_error ... ok
+test commands::executor::tests::emits_action_status_for_successful_actions ... ok
+test commands::executor::tests::executes_phase2_non_interactive_actions_in_declared_order ... ok
+test commands::executor::tests::executor_start_dictation_action ... ok
+test audio::wake::tests::wake_resource_root_ignores_tauri_dir_when_oww_bundle_incomplete ... ok
+test apps::scanner_windows::tests::should_skip_shortcut_filesystem_exe_target_drops_updaters_squirrel_and_helpers ... ok
+test commands::executor::tests::get_clipboard_returns_text ... ok
+test apps::scanner_windows::tests::uninstall_style_install_dir_picks_primary_exe ... ok
+test commands::executor::tests::file_metadata_map_reports_file_size ... ok
+test apps::scanner_windows::tests::scan_install_dirs_shallow_recurses_into_publisher_app_layouts ... ok
+test commands::executor::tests::if_else_runs_else_branch_when_text_is_empty ... ok
+test commands::executor::tests::if_else_runs_then_branch_when_text_contains ... ok
+test audio::wake::tests::wake_resource_root_prefers_tauri_dir_when_oww_bundle_complete ... ok
+test commands::executor::tests::implicit_passthrough_fills_empty_open_url_from_last_result ... ok
+test commands::executor::tests::get_file_metadata_includes_size_bytes ... ok
+test commands::executor::tests::numbered_variable_out_of_range_stays_literal ... ok
+test commands::executor::tests::open_app_empty_path_falls_back_to_name_when_unresolved ... ok
+test commands::executor::tests::list_folder_returns_sorted_entry_names ... ok
+test commands::executor::tests::numbered_variables_map_to_follow_up_order ... ok
+test commands::executor::tests::open_app_empty_path_resolves_from_index ... ok
+test commands::executor::tests::rejects_unsafe_run_script_payloads ... ok
+test commands::executor::tests::rejects_non_http_urls ... ok
+test commands::executor::tests::rejects_shell_metacharacters_in_open_app_path ... ok
+test commands::executor::tests::rejects_empty_speak_payload ... ok
+test commands::executor::tests::open_app_remainder_resolves_from_index ... ok
+test commands::executor::tests::rejects_unsafe_send_keys_payloads ... ok
+test commands::executor::tests::remainder_template_substitutes_in_open_app_name ... ok
+test commands::executor::tests::speak_last_result_chains_into_open_url ... ok
+test commands::executor::tests::show_notification_uses_runtime_and_emits_nothing_value ... ok
+test commands::executor::tests::speak_action_emits_success_and_chain_continues ... ok
+test commands::executor::tests::set_clipboard_writes_text_from_prior_step ... ok
+test commands::executor::tests::step_template_resolves_prior_output ... ok
+test commands::executor::tests::sub_prompt_captures_follow_up_and_templates_next_action ... ok
+test commands::executor::tests::sub_prompt_emits_plain_follow_up_status_text ... ok
+test commands::executor::tests::sub_prompt_timeout_stops_remaining_actions ... ok
+test commands::executor::tests::test_command_returns_per_step_outputs ... ok
+test commands::executor::tests::text_trim_strips_whitespace_and_chains_to_speak ... ok
+test apps::scanner_windows::tests::scan_install_dirs_shallow_picks_one_exe_per_app_dir ... ok
+test commands::executor::tests::text_split_and_combine_pipeline ... ok
+test commands::executor::tests::tool_arg_templates_substitute_param_placeholders ... ok
+test commands::executor::tests::read_file_outputs_text_and_chains_to_speak ... ok
+test commands::executor::tests::validate_open_app_path_allows_shell_apps_folder_with_bang ... ok
+test commands::executor::tests::validate_send_keys_allows_shortcut_modifiers_and_rejects_quotes ... ok
+test commands::executor::tests::wait_action_reports_status_and_allows_chain_to_continue ... ok
+test commands::matcher::tests::case_insensitive_ascii ... ok
+test commands::matcher::tests::first_matching_phrase_in_list_wins ... ok
+test commands::matcher::tests::disabled_nodes_skipped ... ok
+test commands::matcher::tests::first_node_in_slice_wins ... ok
+test commands::matcher::tests::fuzzy_matches_typo_when_score_above_threshold ... ok
+test commands::matcher::tests::fuzzy_threshold_blocks_weak_match ... ok
+test commands::matcher::tests::fuzzy_respects_phrase_order_for_same_node_tie ... ok
+test commands::matcher::tests::fuzzy_tie_break_prefers_first_node_order ... ok
+test commands::matcher::tests::matches_simple_phrase_and_span ... ok
+test commands::matcher::tests::longest_phrase_wins_over_shorter_substring ... ok
+test commands::matcher::tests::no_match_returns_none ... ok
+test commands::matcher::tests::phrase_mode_does_not_populate_remainder ... ok
+test commands::matcher::tests::prefix_mode_empty_remainder_when_trigger_only ... ok
+test commands::matcher::tests::prefix_mode_extracts_remainder_after_trigger ... ok
+test commands::matcher::tests::prefix_mode_finds_trigger_after_leading_words ... ok
+test commands::executor::tests::write_file_persists_text_for_read_file ... ok
+test commands::matcher::tests::prefix_mode_rejects_word_prefix_without_boundary ... ok
+test commands::matcher::tests::span_indices_utf8_bytes ... ok
+test commands::matcher::tests::uses_open_app_node_shape_from_db ... ok
+test commands::open_target::tests::clarify_learns_url_alias ... ok
+test commands::open_target::tests::execute_open_target_alias_skips_clarify ... ok
+test commands::open_target::tests::execute_open_target_ambiguous_uses_follow_up ... ok
+test commands::open_target::tests::execute_open_target_unknown_fails_fast ... ok
+test commands::executor::tests::text_match_extracts_capture_group_and_chains ... ok
+test commands::router::tests::tier0_open_brave_resolves_to_app_intent ... ok
+test commands::router::tests::tier0_open_safari_classifies_on_mac_without_index ... ok
+test commands::router::tests::tier0_open_unknown_fails_fast ... ok
+test commands::router::tests::tier0_skips_non_open_phrasing ... ok
+test commands::open_target::tests::execute_open_target_launches_resolved_app ... ok
+test commands::router::tests::tier1_prefix_match_extracts_remainder ... ok
+test commands::router::tests::tier1_miss_without_prefix_trigger ... ok
+test commands::open_target::tests::execute_open_target_prefers_win32_notepad_over_shell_uri ... ok
+test commands::router::tests::tier2_post_validate_rewrites_open_url_app_name ... ok
+test commands::executor::tests::http_get_returns_response_body ... ok
+test commands::executor::tests::device_info_dict_serializes_for_chaining ... ok
+test commands::executor::tests::device_info_map_includes_memory_fields ... ok
+test commands::executor::tests::device_info_chains_to_speak ... ok
+test apps::scanner_windows::tests::get_start_apps_powershell_emits_tab_separated_rows ... ok
+test commands::executor::tests::screenshot_writes_png_to_path ... ok
+test commands::tools::tests::execute_tool_open_target_resolves_app ... ok
+test commands::tools::tests::execute_tool_rejects_missing_required_arg ... ok
+test commands::tools::tests::substitute_tool_args_replaces_url_placeholder ... ok
+test commands::values::tests::bool_coerces_to_text ... ok
+test commands::values::tests::dict_coerces_to_json_with_numbers ... ok
+test commands::values::tests::file_path_coerces_to_text ... ok
+test commands::values::tests::number_coerces_to_text_without_decimal_for_whole_values ... ok
+test db::app_index::tests::ensure_app_index_schema_adds_icon_column_for_legacy_db ... ok
+test commands::tools::tests::execute_tool_open_url_runs_builtin ... ok
+test db::models::tests::action_open_app_round_trip ... ok
+test db::models::tests::action_open_url_round_trip ... ok
+test db::models::tests::action_variants_round_trip ... ok
+test db::models::tests::if_else_action_round_trip ... ok
+test db::models::tests::unit_action_accepts_empty_object_json ... ok
+test db::registered_scripts::tests::hash_file_matches_content ... ok
+test commands::router::tests::learned_two_tool_command_matches_and_replays_run_tool_actions ... ok
+test commands::tools::tests::execute_tool_shortcut_sends_copy_and_rejects_unknown_enum ... ok
+test commands::router::tests::execute_tool_open_target_from_router_args ... ok
+test commands::tools::tests::execute_tool_rejects_run_script_in_user_tool ... ok
+test commands::router::tests::tier2_route_open_target_left ... ok
+test commands::tools::tests::execute_tool_say_propagates_speak_failure ... ok
+test commands::tools::tests::execute_tool_say_succeeds_when_speak_succeeds ... ok
+test commands::tools::tests::execute_tool_web_search_encodes_query ... ok
+test commands::tools::tests::run_registered_script_rejects_unknown_id ... ok
+test db::app_index::tests::roundtrip_app_index ... ok
+test commands::tools::tests::run_registered_script_uses_allowlisted_path_only ... ok
+test db::settings::tests::apply_settings_patch_persists_local_whisper_model ... ok
+test db::settings::tests::dictation_settings_default_to_ctrl_shift_d_toggle ... ok
+test db::settings::tests::parse_dictation_hotkey_mode_normalizes_ptt ... ok
+test db::reorder::sort_order_migration_adds_missing_column ... ok
+test db::settings::tests::apply_settings_patch_persists_local_whisper_use_gpu ... ok
+test db::reorder::migration_runs_on_copied_pre_phase_three_db_file ... ok
+test db::settings::tests::apply_settings_patch_persists_wake_and_oww ... ok
+test db::reorder::reorder_commands_updates_display_order ... ok
+test db::settings::tests::apply_settings_patch_persists_llm_router_settings ... ok
+test db::settings::tests::get_app_settings_defaults_when_empty ... ok
+test db::settings::tests::apply_settings_patch_stt_provider_and_remote_url ... ok
+test db::settings::tests::invalid_local_whisper_model_rejected ... ok
+test db::tools::tests::builtin_description_migration_preserves_user_edits ... ok
+test db::settings::tests::invalid_remote_stt_url_rejected ... ok
+test db::target_aliases::tests::rejects_invalid_url_alias ... ok
+test db::settings::tests::invalid_wake_engine_rejected ... ok
+test db::settings::tests::round_trip_insert_update_get_setting ... ok
+test db::tests::can_read_pre_phase_two_actions_json_payload ... ok
+test db::target_aliases::tests::target_alias_crud_round_trip ... ok
+test dictation::injector::tests::case_insensitive_partial_growth_extends ... ok
+test dictation::injector::tests::growing_partial_sends_suffix_only ... ok
+test dictation::injector::tests::mock_injector_receives_delta_ops ... ok
+test dictation::injector::tests::new_utterance_appends_without_backspacing ... ok
+test dictation::injector::tests::newline_maps_to_enter ... ok
+test dictation::injector::tests::pause_resume_does_not_retype_existing_prefix ... ok
+test dictation::injector::tests::pause_resume_rebuild_is_noop_when_already_typed ... ok
+test db::settings::tests::prune_legacy_settings_clears_porcupine_and_migrates_wake_engine ... ok
+test dictation::injector::tests::silence_reset_then_new_utterance_leads_with_space ... ok
+test dictation::injector::tests::slow_speech_whisper_revision_does_not_duplicate_phrases ... ok
+test dictation::injector::tests::revision_kind_backspaces_segment_before_retype ... ok
+test dictation::reconcile::tests::case_insensitive_continuation ... ok
+test dictation::reconcile::tests::case_insensitive_delta_extends ... ok
+test dictation::reconcile::tests::clamp_backspaces_never_exceeds_screen_length ... ok
+test dictation::reconcile::tests::continues_injected_segment_after_silence_reset ... ok
+test dictation::reconcile::tests::correction_shrinks_then_retypes ... ok
+test dictation::reconcile::tests::empty_stt_is_noop ... ok
+test dictation::reconcile::tests::fresh_segment_types_full_string ... ok
+test dictation::reconcile::tests::growing_partial_extends_suffix ... ok
+test dictation::reconcile::tests::overlap_merge_types_remainder_when_already_on_screen ... ok
+test dictation::reconcile::tests::reconciler_growing_partial ... ok
+test dictation::reconcile::tests::revision_kind_replaces_injected_segment ... ok
+test dictation::reconcile::tests::same_segment_detects_partial_growth_and_correction ... ok
+test dictation::reconcile::tests::segment_revision_replace_backspaces_segment ... ok
+test dictation::reconcile::tests::silence_reset_clears_stt_context_only ... ok
+test dictation::reconcile::tests::trailing_offset_overlap_finds_prefix_revision ... ok
+test dictation::reconcile::tests::whisper_revision_overlap_is_noop_when_fully_typed ... ok
+test dictation::reconcile::tests::word_overlap_finds_lets_check ... ok
+test dictation::session::tests::flush_applies_pending_transcript ... ok
+test dictation::session::tests::flush_is_noop_when_already_synced ... ok
+test dictation::session::tests::hud_active_rejects_start ... ok
+test dictation::session::tests::hud_snapshot_blocks_active_listen_phases_only ... ok
+test dictation::session::tests::on_transcript_applies_delta_to_injector ... ok
+test dictation::session::tests::start_sets_active_session ... ok
+test dictation::session::tests::stop_clears_session ... ok
+test dictation::session::tests::toggle_starts_then_stops ... ok
+test dictation::tests::apply_stt_delta_matches_reconcile_module ... ok
+test dictation::tests::handle_transcript_applies_delta_to_injector ... ok
+test dictation::tests::silence_reset_kind_clears_segment_without_typing ... ok
+test hud::tests::click_through_when_passive_phases ... ok
+test hud::tests::dictation_overlay_is_compact ... ok
+test hud::tests::hud_position_json_round_trip ... ok
+test hud::tests::hud_position_rejects_non_finite ... ok
+test hud::tests::interactive_when_listening_or_awaiting_follow_up ... ok
+test db::tests::init_db_seeds_builtin_open_prefix_command_once ... ok
+test hud::tests::overlay_mode_round_trip_strings ... ok
+test hud::tests::phase_round_trip_strings ... ok
+test hud::tests::work_area_bottom_center_respects_margin ... ok
+test hud::tests::work_area_center_offsets_below_menu_bar ... ok
+test input::type_text::tests::backspace_batch_size_respects_sendinput_cap ... ok
+test keychain::tests::empty_key_rejected_without_echoing_value ... ok
+test keychain::tests::unknown_service_rejected_without_echoing_key_material ... ok
+test llm::composer::tests::align_trigger_fixes_then_in_trigger_phrase ... ok
+test llm::composer::tests::apply_description_placement_when_llm_omits_it ... ok
+test llm::composer::tests::dedupe_removes_consecutive_duplicate_open_target ... ok
+test llm::composer::tests::extract_trigger_splits_on_then ... ok
+test llm::composer::tests::finalize_both_returns_command_and_tool ... ok
+test llm::composer::tests::finalize_dedupes_duplicate_open_notepad_mock ... ok
+test llm::composer::tests::generate_with_mock_infer_open_notepad ... ok
+test llm::composer::tests::generate_with_mock_infer_uses_trigger_field ... ok
+test llm::composer::tests::low_confidence_adds_warning_without_rejecting ... ok
+test llm::composer::tests::parse_command_with_empty_object_unit_actions ... ok
+test llm::composer::tests::parse_extracts_json_from_prose_wrapper ... ok
+test llm::composer::tests::parse_open_notepad_command_draft ... ok
+test llm::composer::tests::parse_notepad_fullscreen_paste_command_draft ... ok
+test llm::composer::tests::parse_rejects_malformed_json ... ok
+test llm::composer::tests::parse_rejects_unknown_kind ... ok
+test llm::composer::tests::parse_speak_tool_draft ... ok
+test llm::composer::tests::repair_failure_surfaces_error ... ok
+test llm::composer::tests::repair_pass_fixes_invalid_json ... ok
+test llm::composer::tests::repair_pass_fixes_validation_error ... ok
+test llm::composer::tests::smart_split_downgrades_remainder_command_without_user_trigger ... ok
+test llm::composer::tests::semantic_warning_when_new_note_missing_cmd_n ... ok
+test llm::composer::tests::smart_split_upgrades_tool_when_user_gave_trigger ... ok
+test llm::composer::tests::smart_split_suffixes_colliding_tool_name_on_both ... ok
+test llm::composer_eval::composer_live_eval_all_fixtures ... ignored, requires the composer model and llama-server sidecar
+test llm::composer_eval::bad_json_repair_fixture ... ok
+test llm::composer_expect::tests::assert_result_matches_checks_trigger_and_actions ... ok
+test llm::composer_expect::tests::has_duplicate_actions_detects_repeated_open_target ... ok
+test llm::composer_prompt::tests::prompt_includes_catalog_and_few_shots ... ok
+test llm::composer_prompt::tests::prompt_includes_explicit_trigger_block ... ok
+test llm::composer_prompt::tests::prompt_includes_platform_rules ... ok
+test llm::composer_eval::eval_all_fixtures_with_mock ... ok
+test llm::composer_prompt::tests::prompt_includes_template_rules_and_new_few_shots ... ok
+test llm::composer_validate::tests::normalize_guessed_url_to_open_target ... ok
+test llm::composer_validate::tests::normalize_open_app_empty_path_to_open_target ... ok
+test llm::composer_validate::tests::resolve_trigger_dedupes_case_insensitive_aliases ... ok
+test llm::composer_validate::tests::resolve_trigger_prefers_explicit_trigger_over_phrases ... ok
+test llm::composer_validate::tests::validate_accepts_open_target_command ... ok
+test llm::composer_validate::tests::validate_accepts_speak_tool ... ok
+test llm::composer_validate::tests::validate_accepts_trigger_field_without_trigger_phrases ... ok
+test llm::composer_validate::tests::validate_normalizes_fullscreen_placement ... ok
+test llm::composer_validate::tests::validate_rejects_builtin_tool_name_collision ... ok
+test llm::composer_validate::tests::validate_rejects_chain_over_limit ... ok
+test llm::composer_validate::tests::validate_rejects_empty_triggers ... ok
+test llm::composer_validate::tests::validate_rejects_non_http_open_url ... ok
+test llm::composer_validate::tests::validate_rejects_non_snake_case_tool_name ... ok
+test llm::composer_validate::tests::validate_rejects_param_not_used_in_actions ... ok
+test llm::composer_validate::tests::validate_rejects_placeholder_without_param ... ok
+test llm::composer_validate::tests::validate_rejects_run_command_zero_id ... ok
+test llm::composer_validate::tests::validate_rejects_run_tool ... ok
+test llm::composer_validate::tests::validate_rejects_tool_chain_over_limit ... ok
+test dictation::injector::tests::whisper_prefix_revision_replaces_segment_without_duplicate ... ok
+test db::tests::init_db_removes_legacy_shipped_sample_by_exact_trigger_json ... ok
+test db::tests::update_command_replaces_existing_values ... ok
+test db::tests::insert_list_get_delete ... ok
+test db::tools::tests::init_db_seeds_open_target_builtin ... ok
+test db::tools::tests::init_db_seeds_decider_builtins_and_shortcut_enums ... ok
+test db::tools::tests::init_db_seeds_snap_window_builtin ... ok
+test db::tools::tests::init_db_seeds_open_url_builtin ... ok
+test db::tools::tests::tool_crud_round_trip ... ok
+test llm::decider::tests::parses_canned_systemone_choice_and_rejects_bad_confidence ... ok
+test llm::decider::tests::bare_open_url_fallback_rejects_disabled_open_target ... ok
+test llm::decider::tests::bare_open_url_falls_back_to_open_target_with_placement ... ok
+test db::update::round_trip_update_command ... ok
+test llm::decider::tests::splits_only_up_to_three_clauses ... ok
+test llm::decider::tests::builds_tool_and_enum_questions_with_none ... ok
+test llm::decider_args::tests::extracts_eval_free_text_args ... ok
+test llm::decider_args::tests::open_url_without_url_falls_back_in_normalizer_compatible_shape ... ok
+test llm::decider_args::tests::rejects_empty_required_arguments_and_unknown_tools ... ok
+test llm::focus_context::tests::index_hit_matches_executable_basename_case_insensitively ... ok
+test llm::focus_context::tests::index_miss_uses_executable_stem ... ok
+test llm::focus_context::tests::title_equal_to_app_name_is_dropped ... ok
+test llm::focus_context::tests::title_is_trimmed_to_sixty_characters ... ok
+test llm::focus_context::tests::title_quotes_and_newlines_are_removed ... ok
+test llm::intent_validate::tests::keeps_open_url_for_explicit_domain ... ok
+test llm::intent_validate::tests::open_target_passes_known_app ... ok
+test llm::intent_validate::tests::open_url_app_in_index_rewrites_even_if_link_like_substring ... ok
+test llm::intent_validate::tests::rejects_open_target_unknown_name ... ok
+test llm::intent_validate::tests::respects_url_alias_on_open_target ... ok
+test llm::intent_validate::tests::rewrites_open_url_bare_app_name_to_open_target ... ok
+test llm::local::router_args_tests::batching_args_are_router_only ... ok
+test llm::prompt::tests::catalog_skips_disabled_tools ... ok
+test llm::prompt::tests::prompt_includes_transcript_and_tool_name ... ok
+test llm::prompt::tests::router_schema_limits_and_enumerates_enabled_tools ... ok
+test llm::decider::tests::decide_checks_enum_ids_and_retries_unsplit_after_a_split_failure ... ok
+test llm::decider::tests::decide_accepts_thresholded_free_text_and_rejects_none_or_low_confidence ... ok
+test llm::decider::tests::context_reaches_both_calls_for_every_clause ... ok
+test llm::router::tests::extract_json_object_handles_wrapping_text ... ok
+test llm::decider::tests::duplicate_enum_singleton_is_direct_and_skips_second_call ... ok
+test llm::decider::tests::enum_question_boundaries_count_distinct_values ... ok
+test llm::decider::tests::falls_back_to_runner_up_when_top_pick_has_no_args ... ok
+test llm::decider::tests::no_context_preserves_state_text_in_both_calls ... ok
+test llm::decider::tests::two_call_variant_asks_enum_only_after_tool_choice ... ok
+test llm::decider::tests::rejects_out_of_range_threshold_before_inference ... ok
+test llm::router_eval::router_decision_eval ... ignored, requires GGUF models and the llama-server sidecar
+test llm::router_eval::router_live_eval ... ignored, requires GGUF models and the llama-server sidecar
+test llm::router_eval::router_systemone_eval ... ignored, requires decision-model GGUFs and the llama-server sidecar
+test llm::router_eval::scoring_requires_order_and_arg_substring ... ok
+test tests::cancel_active_run_sets_flag_and_clears_tracking ... ok
+test tests::command_match_quiet_ignores_amplitude_after_transcript_idle ... ok
+test tests::command_match_requires_listening_visible ... ok
+test tests::command_payload_conversion_trims_and_round_trips ... ok
+test tests::command_payload_validation_rejects_empty_name ... ok
+test tests::command_payload_validation_rejects_empty_trigger_list ... ok
+test tests::command_payload_validation_rejects_out_of_range_threshold ... ok
+test tests::default_threshold_applies_when_node_threshold_is_zero ... ok
+test tests::deferred_partial_match_routes_on_stable_revision ... ok
+test tests::deferred_partial_match_routes_when_transcript_idle_despite_mic_noise ... ok
+test tests::deferred_partial_match_skips_when_revision_advanced ... ok
+test tests::detects_hotkey_conflict_error_text ... ok
+test tests::final_transcript_bypasses_match_debounce ... ok
+test tests::finalize_execution_requires_matching_active_session ... ok
+test tests::follow_up_candidate_promotes_after_stable_silence ... ok
+test tests::follow_up_happy_path_consumes_response_once ... ok
+test tests::follow_up_wait_cancels_on_escape_or_session_change ... ok
+test tests::follow_up_wait_times_out_after_deadline ... ok
+test tests::mic_amplitude_noise_does_not_block_match_after_transcript_idle ... ok
+test tests::mic_amplitude_still_blocks_match_before_first_nonempty_transcript ... ok
+test tests::no_match_idle_after_words_uses_last_transcript_deadline ... ok
+test tests::no_match_idle_dismisses_at_max_listen_duration ... ok
+test tests::no_match_idle_dismisses_when_revision_stable ... ok
+test tests::no_match_idle_no_words_uses_listen_start_deadline ... ok
+test tests::no_match_idle_waits_while_mic_active ... ok
+test tests::no_match_timeout_requires_same_session_and_listening ... ok
+test tests::open_editor_focuses_existing_window_instead_of_duplicate ... ok
+test tests::oww_threshold_patch_triggers_reload_only_when_engine_is_oww ... ok
+test tests::partial_transcript_match_allowed_after_silence_gap ... ok
+test tests::partial_transcript_match_is_debounced_while_speaking ... ok
+test tests::partial_transcript_never_matches_before_first_nonempty_stt_even_if_hud_idle ... ok
+test tests::phase_transition_blocks_done_after_stopped ... ok
+test llm::router::tests::enum_placement_validated ... ok
+test tests::reopen_listening_when_visible_only_for_passive_overlay_phases ... ok
+test tests::set_dictation_hotkey_rejects_hud_collision ... ok
+test tests::settings_patch_wake_engine_triggers_wake_reload ... ok
+test tests::shortcut_matches_stored_accepts_ctrl_alias ... ok
+test tests::shortcut_matches_stored_rejects_different_keys ... ok
+test tests::toggle_mode_pressed_starts_then_stops ... ok
+test llm::decider::tests::singleton_registered_script_is_direct_and_validated ... ok
+test tests::transcript_update_skips_command_match_when_dictating ... ok
+test tests::wake_engine_uses_dedicated_thread_only_for_oww ... ok
+test tests::wake_phrase_stays_visible_longer_than_hotkey_phrase ... ok
+test tests::wake_reopen_suppressed_immediately_after_dismiss_mark ... ok
+test tray::tests::mic_allowed_when_listening_and_not_paused ... ok
+test tray::tests::mic_blocked_when_paused_even_if_listening ... ok
+test tray::tests::mic_not_started_for_non_listening_phases ... ok
+test tray::tests::tray_menu_puts_settings_pause_quit ... ok
+test window::placement_windows::tests::exe_basename_extracts_file_name ... ok
+test window::placement_windows::tests::exe_names_match_is_case_insensitive ... ok
+test window::placement_windows::tests::own_process_pid_is_rejected ... ok
+test window::placement_windows::tests::placement_status_label_maps_zones ... ok
+test window::placement_windows::tests::validate_placement_zone_accepts_known_zones ... ok
+test window::placement_windows::tests::validate_placement_zone_rejects_unknown ... ok
+test window::placement_windows::tests::window_title_score_fuzzy_matches_brave ... ok
+test window::tests::debug_redacts_window_title ... ok
+test llm::router::tests::low_confidence_rejected ... ok
+test llm::router::tests::invalid_json_rejected ... ok
+test llm::router::tests::multi_step_tool_calls_up_to_three ... ok
+test llm::router::tests::rejects_more_than_max_tool_calls ... ok
+test llm::router::tests::route_brave_left_placement ... ok
+test llm::router::tests::route_shortcut_copy_validates ... ok
+test llm::router::tests::unknown_arg_rejected ... ok
+test llm::decider::tests::script_choice_supports_twenty_and_excludes_more_than_twenty ... ok
+test llm::router_eval::fixtures_match_seeded_tool_catalog ... ok
+test tests::refresh_command_cache_replaces_previous_snapshot ... ok
+test tests::tool_payload_round_trips_through_db_crud ... ok
+
+test result: ok. 468 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 18.68s
+
+     Running unittests src\main.rs (target\debug\deps\jarvis-e60f96f4b792613f.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests jarvis_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

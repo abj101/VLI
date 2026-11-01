@@ -142,9 +142,14 @@ fn wake_thread_main(
             break;
         }
 
-        if mic_suppressed.load(Ordering::Relaxed) || is_paused.load(Ordering::Relaxed) {
+        // Windows shares the mic, so keep the wake stream (and the detector's audio window)
+        // running while Jarvis listens and just ignore hits. Releasing it meant ~1.5 s of
+        // reopen + warm-up after every command, so back-to-back "hey jarvis" was missed.
+        let suppressed = mic_suppressed.load(Ordering::Relaxed);
+        if is_paused.load(Ordering::Relaxed) || (suppressed && !cfg!(windows)) {
             if mic.take().is_some() {
                 pending_i16.clear();
+                detector.reset();
             }
             mic_open_failures = 0;
             std::thread::sleep(WAKE_RECV_TICK);
@@ -218,7 +223,8 @@ fn wake_thread_main(
                         }
                     };
                     pending_i16.drain(..len);
-                    if hit && rearm_wake(&mut last_wake) {
+                    if hit && should_fire(suppressed, &mut last_wake) {
+                        info!("wake: detected ({backend_label})");
                         let _ = app.emit("wake-detected", json!({ "backend": &backend_label }));
                         on_wake();
                     }
@@ -236,7 +242,8 @@ fn wake_thread_main(
                         continue;
                     }
                 };
-                if hit && rearm_wake(&mut last_wake) {
+                if hit && should_fire(suppressed, &mut last_wake) {
+                    info!("wake: detected ({backend_label})");
                     let _ = app.emit("wake-detected", json!({ "backend": &backend_label }));
                     on_wake();
                 }
@@ -250,6 +257,16 @@ fn wake_thread_main(
     info!("wake: thread exiting ({backend_label})");
 }
 
+/// Hits while Jarvis is already listening are ignored but still start the cooldown, so the
+/// tail of a phrase heard mid-session can't fire the moment listening ends.
+fn should_fire(suppressed: bool, last: &mut Option<Instant>) -> bool {
+    if suppressed {
+        *last = Some(Instant::now());
+        return false;
+    }
+    rearm_wake(last)
+}
+
 fn rearm_wake(last: &mut Option<Instant>) -> bool {
     if last.is_some_and(|t| t.elapsed() < WAKE_REFIRE_COOLDOWN) {
         return false;
@@ -260,7 +277,16 @@ fn rearm_wake(last: &mut Option<Instant>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{extend_i16_from_f32, rearm_wake};
+    use super::{extend_i16_from_f32, rearm_wake, should_fire};
+
+    #[test]
+    fn hits_while_listening_are_ignored_and_start_cooldown() {
+        let mut last = None;
+        assert!(!should_fire(true, &mut last));
+        assert!(!should_fire(false, &mut last));
+        let mut fresh = None;
+        assert!(should_fire(false, &mut fresh));
+    }
 
     #[test]
     fn wake_refire_is_ignored_inside_cooldown() {

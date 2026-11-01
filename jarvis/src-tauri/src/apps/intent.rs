@@ -50,20 +50,29 @@ pub fn parse_open_intent(transcript: &str) -> Option<(String, Option<String>)> {
     None
 }
 
-const TILE_VERBS: &[&str] = &["tile", "put", "move", "snap", "place"];
+const TILE_VERBS: &[&str] = &[
+    "split screen", "splitscreen", "split", "tile", "put", "move", "snap", "place",
+];
 
 /// Retile one or two windows: "put discord on the left and chrome on the right",
-/// "tile discord and chrome" (first left, second right), "move spotify right".
-/// A lone target needs a side; `None` for anything else.
+/// "tile discord and chrome" / "split screen claude with codex" (first left, second right),
+/// "move spotify right". A lone target needs a side; `None` for anything else.
 pub fn parse_tile_intent(transcript: &str) -> Option<Vec<(String, Option<String>)>> {
-    let lower = transcript.trim().to_lowercase();
+    // Whisper sprinkles commas: "Tile, Claude to the left."
+    let lower = transcript
+        .to_lowercase()
+        .replace(',', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     let lower = lower.strip_prefix("please ").unwrap_or(&lower);
     let rest = TILE_VERBS
         .iter()
         .find_map(|verb| lower.strip_prefix(verb)?.strip_prefix(' '))?;
     let rest = rest
         .trim_end_matches(|c: char| c.is_ascii_punctuation())
-        .trim_end_matches(" side by side");
+        .trim_end_matches(" side by side")
+        .replace(" with ", " and ");
     let parts: Vec<&str> = rest.split(" and ").collect();
     let defaults: &[&str] = match parts.len() {
         1 => &[""],
@@ -267,6 +276,14 @@ mod tests {
         assert_eq!(
             parse_tile_intent("move spotify right"),
             Some(vec![("spotify".into(), r())])
+        );
+        assert_eq!(
+            parse_tile_intent("Tile, Claude to the left."),
+            Some(vec![("claude".into(), l())])
+        );
+        assert_eq!(
+            parse_tile_intent("split screen, Claude with Codex."),
+            Some(vec![("claude".into(), l()), ("codex".into(), r())])
         );
         assert_eq!(parse_tile_intent("put discord"), None);
         assert_eq!(parse_tile_intent("open discord on the left"), None);

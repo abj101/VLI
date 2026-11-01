@@ -1,0 +1,83 @@
+warning: variants `Os` and `Remote` are never constructed
+  --> src\audio\mod.rs:40:5
+   |
+35 | pub enum SttPipelineChoice {
+   |          ----------------- variants in this enum
+...
+40 |     Os,
+   |     ^^
+41 |     Remote(RemoteSttParams),
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `DEFAULT_TIMEOUT` is never used
+  --> src\audio\transcription\remote.rs:19:7
+   |
+19 | const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+   |       ^^^^^^^^^^^^^^^
+
+warning: associated function `sanitized_timeout` is never used
+   --> src\audio\transcription\remote.rs:258:12
+    |
+256 | impl RemoteSttParams {
+    | -------------------- associated function in this implementation
+257 |     /// Clamp user setting to a safe range; invalid values fall back to 30s.
+258 |     pub fn sanitized_timeout(secs: u32) -> Duration {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: struct `LocalInfer` is never constructed
+  --> src\commands\router.rs:40:8
+   |
+40 | struct LocalInfer {
+   |        ^^^^^^^^^^
+
+warning: function `get_api_key` is never used
+  --> src\keychain.rs:47:8
+   |
+47 | pub fn get_api_key(service: &str) -> Result<Option<String>, String> {
+   |        ^^^^^^^^^^^
+
+warning: struct `LocalInfer` is never constructed
+   --> src\llm\tauri_cmds.rs:166:8
+    |
+166 | struct LocalInfer {
+    |        ^^^^^^^^^^
+
+warning: function `infer_router_completion` is never used
+   --> src\llm\local.rs:319:8
+    |
+319 | pub fn infer_router_completion(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `jarvis` (lib test) generated 7 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.57s
+     Running unittests src\lib.rs (target\debug\deps\jarvis_lib-22989af64d5a5831.exe)
+
+running 1 test
+
+full decider eval: 242 cases, gpu=false, threshold=0.5, variant=two_call
+model                                 cmd%   tool%   full% NONE rej/total   infraErrors   p50ms   p95ms
+set=unfocused, cases=201, focus=app
+d1-2B-Q4_K_M.gguf                    96.4%   96.0%   95.5%    33/35                0     203     326
+put that on the clipboard -> wrong args [RouterToolCall { tool: "shortcut", args: {"name": "paste"} }]
+put that change back -> LOW_CONFIDENCE (d1 confidence below threshold)
+move to the tab on the right -> LOW_CONFIDENCE (d1 confidence below threshold)
+go back to the tab on the left -> LOW_CONFIDENCE (d1 confidence below threshold)
+go back one trakc -> LOW_CONFIDENCE (d1 confidence below threshold)
+minimize this and open the desktop folder -> wrong tool [RouterToolCall { tool: "shortcut", args: {"name": "minimize"} }, RouterToolCall { tool: "shortcut", args: {"name": "show_desktop"} }]
+minimize this and open the desktop folder -> wrong args [RouterToolCall { tool: "shortcut", args: {"name": "minimize"} }, RouterToolCall { tool: "shortcut", args: {"name": "show_desktop"} }]
+that song reminds me of summer -> unexpected [RouterToolCall { tool: "media", args: {"control": "previous"} }]
+can you close -> unexpected [RouterToolCall { tool: "shortcut", args: {"name": "close_window"} }]
+enter call the dentist -> LOW_CONFIDENCE (d1 confidence below threshold)
+set=focused, cases=41, focus=app
+d1-2B-Q4_K_M.gguf                    89.7%   87.8%   87.8%    10/12                0     228     249
+move to the tab on the right -> LOW_CONFIDENCE (d1 confidence below threshold)
+skip to the next song -> unexpected [RouterToolCall { tool: "media", args: {"control": "next"} }]
+make it louder -> unexpected [RouterToolCall { tool: "media", args: {"control": "volume_up"} }]
+get rid of this -> LOW_CONFIDENCE (d1 confidence below threshold for `shortcut__name`)
+say I will be there soon -> LOW_CONFIDENCE (d1 selected NONE)
+test llm::router_eval::router_systemone_eval ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 473 filtered out; finished in 45.03s
+

@@ -14,7 +14,7 @@ mod placement_windows;
 pub use placement_windows::{
     focus_existing_app_window, focused_window, place_window_after_app_launch, placement_status_label,
     snap_foreground_window, snapshot_top_level_windows, WindowSnapshot, DEFAULT_MONITOR,
-    close_app_window, focus_window_on_side,
+    close_app_window, focus_window_on_side, has_open_app_window,
 };
 
 #[cfg(target_os = "macos")]
@@ -24,7 +24,7 @@ mod placement_macos;
 pub use placement_macos::{
     focus_existing_app_window, place_window_after_app_launch, placement_status_label,
     snap_foreground_window, snapshot_top_level_windows, WindowSnapshot, DEFAULT_MONITOR,
-    close_app_window, focus_window_on_side,
+    close_app_window, focus_window_on_side, has_open_app_window,
     focused_window,
 };
 
@@ -35,6 +35,6 @@ mod placement_stub;
 pub use placement_stub::{
     focus_existing_app_window, place_window_after_app_launch, placement_status_label,
     snap_foreground_window, snapshot_top_level_windows, WindowSnapshot, DEFAULT_MONITOR,
-    close_app_window, focus_window_on_side,
+    close_app_window, focus_window_on_side, has_open_app_window,
     focused_window,
 };

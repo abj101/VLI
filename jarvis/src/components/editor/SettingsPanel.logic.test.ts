@@ -15,7 +15,6 @@ import {
   parseEditorTransparencySettingValue,
   parseHudTransparencySettingValue,
   parseRemoteSttTimeoutSecs,
-  parseThresholdSettingValue,
   resolveEditorMaterialAlphaPct,
   resolveEditorSidebarMaterialAlphaPct,
   resolveHudMaterialAlphaPct,
@@ -82,14 +81,6 @@ describe("SettingsPanel logic", () => {
     expect(parseRemoteSttTimeoutSecs("301")).toBeNull();
     expect(parseRemoteSttTimeoutSecs("")).toBeNull();
     expect(parseRemoteSttTimeoutSecs("abc")).toBeNull();
-  });
-
-  it("parses threshold setting only inside supported range", () => {
-    expect(parseThresholdSettingValue("80")).toBe(0.8);
-    expect(parseThresholdSettingValue("50")).toBe(0.5);
-    expect(parseThresholdSettingValue("100")).toBe(1);
-    expect(parseThresholdSettingValue("49")).toBeNull();
-    expect(parseThresholdSettingValue("abc")).toBeNull();
   });
 
   it("normalizes theme preference including system default for unknown", () => {

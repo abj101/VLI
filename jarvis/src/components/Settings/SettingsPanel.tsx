@@ -14,7 +14,6 @@ import {
   parseHudTransparencySettingValue,
   EDITOR_TRANSPARENCY_DEFAULT,
   HUD_TRANSPARENCY_DEFAULT,
-  parseThresholdSettingValue,
   validateHotkeyInput,
   scheduleSettingsNoticeAutoDismiss,
   scheduleSettingsNoticeFadeOut,
@@ -41,7 +40,6 @@ const HOTKEY_KEY = "hotkey";
 const THEME_KEY = "theme";
 const HUD_TRANSPARENCY_KEY = "hud_transparency";
 const EDITOR_TRANSPARENCY_KEY = "editor_transparency";
-const DEFAULT_THRESHOLD_KEY = "default_fuzzy_threshold_pct";
 
 type AppSettingsPayload = {
   wakeEngine: string;
@@ -90,7 +88,6 @@ type SettingsPanelProps = {
 export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProps) {
   const [loading, setLoading] = useState(true);
   const [hotkey, setHotkey] = useState("ctrl+shift+j");
-  const [threshold, setThreshold] = useState(0.8);
   const [theme, setTheme] = useState<EditorThemePreference>("system");
   const [hudTransparency, setHudTransparency] = useState(HUD_TRANSPARENCY_DEFAULT);
   const [editorTransparency, setEditorTransparency] = useState(EDITOR_TRANSPARENCY_DEFAULT);
@@ -189,7 +186,6 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
   const refreshFromBackend = async () => {
     const [
       savedHotkey,
-      savedThreshold,
       savedTheme,
       savedHudTransparency,
       savedEditorTransparency,
@@ -197,7 +193,6 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
           router,
     ] = await Promise.all([
         invoke<string | null>("get_setting", { key: HOTKEY_KEY }),
-        invoke<string | null>("get_setting", { key: DEFAULT_THRESHOLD_KEY }),
         invoke<string | null>("get_setting", { key: THEME_KEY }),
         invoke<string | null>("get_setting", { key: HUD_TRANSPARENCY_KEY }),
         invoke<string | null>("get_setting", { key: EDITOR_TRANSPARENCY_KEY }),
@@ -206,10 +201,6 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
       ]);
     if (savedHotkey && savedHotkey.trim().length > 0) {
       setHotkey(savedHotkey.trim());
-    }
-    const parsedThreshold = parseThresholdSettingValue(savedThreshold);
-    if (parsedThreshold !== null) {
-      setThreshold(parsedThreshold);
     }
     const normalizedTheme = normalizeThemePreference(savedTheme);
     setTheme(normalizedTheme);
@@ -378,22 +369,6 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
       window.removeEventListener("keyup", onKeyUp, true);
     };
   }, [dictationHotkeyRecording, cancelDictationHotkeyRecording]);
-
-  const saveThreshold = async (nextThreshold: number) => {
-    const clamped = Math.max(0.5, Math.min(1, nextThreshold));
-    if (clamped !== threshold) {
-      setThreshold(clamped);
-    }
-    const pct = Math.round(clamped * 100);
-    try {
-      await invoke("set_setting", {
-        key: DEFAULT_THRESHOLD_KEY,
-        value: String(pct),
-      });
-    } catch (err) {
-      showSettingsNotice(formatUserError(err, "Could not save the default match threshold."));
-    }
-  };
 
   const saveTheme = async (nextTheme: EditorThemePreference) => {
     applyEditorThemeToDocument(nextTheme);
@@ -755,45 +730,6 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
                 aria-labelledby={`editor-settings-nav-${pane}`}
               >
                 <div className="editor-settings-recognition-form">
-                  <section className="editor-settings-section editor-settings-section--compact">
-                    <p className="editor-settings-group-label">Command matching</p>
-                    <div className="editor-settings-row">
-                      <div className="editor-settings-row-label">
-                        <SettingsLabelWithInfo
-                          tipId="tip-default-threshold"
-                          tip="How closely speech must match command triggers. Higher is stricter. Used as the default for new commands."
-                        >
-                          Match Threshold
-                        </SettingsLabelWithInfo>
-                      </div>
-                      <div className="editor-settings-row-control editor-settings-row-control--slider">
-                        <input
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          value={threshold}
-                          aria-valuenow={threshold}
-                          aria-valuemin={0}
-                          aria-valuemax={1}
-                          aria-valuetext={threshold.toFixed(2)}
-                          aria-describedby="tip-default-threshold"
-                          onChange={(e) => setThreshold(Number(e.target.value))}
-                          onPointerUp={(e) =>
-                            void saveThreshold(Number((e.target as HTMLInputElement).value))
-                          }
-                          onKeyUp={(e) => {
-                            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-                            void saveThreshold(Number((e.target as HTMLInputElement).value));
-                          }}
-                        />
-                        <span className="editor-settings-slider-value" aria-hidden>
-                          {threshold.toFixed(2)}
-                        </span>
-                      </div>
-                    </div>
-                  </section>
-
                   <section className="editor-settings-section editor-settings-section--compact">
                     <p className="editor-settings-group-label">Transcription</p>
                         <WhisperModelsPane

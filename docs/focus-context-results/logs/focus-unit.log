@@ -1,0 +1,176 @@
+   Compiling jarvis v0.1.0 (C:\Users\Abj1\Documents\GitHub\VLI\jarvis\src-tauri)
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\Abj1\Documents\GitHub\VLI\jarvis\src-tauri\target\debug\incremental\jarvis_lib-0sigu7wm5az3v\s-hnqu2biig5-02gaxc9-working`
+
+warning: variants `Os` and `Remote` are never constructed
+  --> src\audio\mod.rs:40:5
+   |
+35 | pub enum SttPipelineChoice {
+   |          ----------------- variants in this enum
+...
+40 |     Os,
+   |     ^^
+41 |     Remote(RemoteSttParams),
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `DEFAULT_TIMEOUT` is never used
+  --> src\audio\transcription\remote.rs:19:7
+   |
+19 | const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+   |       ^^^^^^^^^^^^^^^
+
+warning: associated function `sanitized_timeout` is never used
+   --> src\audio\transcription\remote.rs:258:12
+    |
+256 | impl RemoteSttParams {
+    | -------------------- associated function in this implementation
+257 |     /// Clamp user setting to a safe range; invalid values fall back to 30s.
+258 |     pub fn sanitized_timeout(secs: u32) -> Duration {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: struct `LocalInfer` is never constructed
+  --> src\commands\router.rs:40:8
+   |
+40 | struct LocalInfer {
+   |        ^^^^^^^^^^
+
+warning: function `get_api_key` is never used
+  --> src\keychain.rs:47:8
+   |
+47 | pub fn get_api_key(service: &str) -> Result<Option<String>, String> {
+   |        ^^^^^^^^^^^
+
+warning: struct `LocalInfer` is never constructed
+   --> src\llm\tauri_cmds.rs:166:8
+    |
+166 | struct LocalInfer {
+    |        ^^^^^^^^^^
+
+warning: function `infer_router_completion` is never used
+   --> src\llm\local.rs:319:8
+    |
+319 | pub fn infer_router_completion(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `jarvis` (lib test) generated 8 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.67s
+     Running unittests src\lib.rs (target\debug\deps\jarvis_lib-22989af64d5a5831.exe)
+
+running 98 tests
+test llm::composer::tests::extract_trigger_splits_on_then ... ok
+test llm::composer::tests::align_trigger_fixes_then_in_trigger_phrase ... ok
+test llm::composer::tests::dedupe_removes_consecutive_duplicate_open_target ... ok
+test llm::composer::tests::parse_extracts_json_from_prose_wrapper ... ok
+test llm::composer::tests::parse_rejects_unknown_kind ... ok
+test llm::composer::tests::parse_rejects_malformed_json ... ok
+test llm::composer::tests::parse_command_with_empty_object_unit_actions ... ok
+test llm::composer::tests::finalize_both_returns_command_and_tool ... ok
+test llm::composer::tests::apply_description_placement_when_llm_omits_it ... ok
+test llm::composer::tests::generate_with_mock_infer_uses_trigger_field ... ok
+test llm::composer::tests::parse_notepad_fullscreen_paste_command_draft ... ok
+test llm::composer::tests::generate_with_mock_infer_open_notepad ... ok
+test llm::composer::tests::low_confidence_adds_warning_without_rejecting ... ok
+test llm::composer::tests::finalize_dedupes_duplicate_open_notepad_mock ... ok
+test llm::composer::tests::parse_open_notepad_command_draft ... ok
+test llm::composer::tests::parse_speak_tool_draft ... ok
+test llm::composer::tests::repair_failure_surfaces_error ... ok
+test llm::composer::tests::repair_pass_fixes_invalid_json ... ok
+test llm::composer::tests::repair_pass_fixes_validation_error ... ok
+test llm::composer::tests::semantic_warning_when_new_note_missing_cmd_n ... ok
+test llm::composer_eval::composer_live_eval_all_fixtures ... ignored, requires the composer model and llama-server sidecar
+test llm::composer::tests::smart_split_downgrades_remainder_command_without_user_trigger ... ok
+test llm::composer::tests::smart_split_upgrades_tool_when_user_gave_trigger ... ok
+test llm::composer::tests::smart_split_suffixes_colliding_tool_name_on_both ... ok
+test llm::composer_eval::bad_json_repair_fixture ... ok
+test llm::composer_expect::tests::assert_result_matches_checks_trigger_and_actions ... ok
+test llm::composer_expect::tests::has_duplicate_actions_detects_repeated_open_target ... ok
+test llm::composer_prompt::tests::prompt_includes_explicit_trigger_block ... ok
+test llm::composer_prompt::tests::prompt_includes_platform_rules ... ok
+test llm::composer_prompt::tests::prompt_includes_catalog_and_few_shots ... ok
+test llm::composer_validate::tests::normalize_open_app_empty_path_to_open_target ... ok
+test llm::composer_validate::tests::normalize_guessed_url_to_open_target ... ok
+test llm::composer_validate::tests::resolve_trigger_dedupes_case_insensitive_aliases ... ok
+test llm::composer_validate::tests::resolve_trigger_prefers_explicit_trigger_over_phrases ... ok
+test llm::composer_validate::tests::validate_accepts_open_target_command ... ok
+test llm::composer_prompt::tests::prompt_includes_template_rules_and_new_few_shots ... ok
+test llm::composer_validate::tests::validate_accepts_speak_tool ... ok
+test llm::composer_validate::tests::validate_accepts_trigger_field_without_trigger_phrases ... ok
+test llm::composer_validate::tests::validate_normalizes_fullscreen_placement ... ok
+test llm::composer_validate::tests::validate_rejects_builtin_tool_name_collision ... ok
+test llm::composer_validate::tests::validate_rejects_chain_over_limit ... ok
+test llm::composer_validate::tests::validate_rejects_empty_triggers ... ok
+test llm::composer_validate::tests::validate_rejects_non_http_open_url ... ok
+test llm::composer_validate::tests::validate_rejects_non_snake_case_tool_name ... ok
+test llm::composer_validate::tests::validate_rejects_param_not_used_in_actions ... ok
+test llm::composer_eval::eval_all_fixtures_with_mock ... ok
+test llm::composer_validate::tests::validate_rejects_placeholder_without_param ... ok
+test llm::composer_validate::tests::validate_rejects_run_command_zero_id ... ok
+test llm::composer_validate::tests::validate_rejects_run_tool ... ok
+test llm::composer_validate::tests::validate_rejects_tool_chain_over_limit ... ok
+test llm::decider::tests::parses_canned_systemone_choice_and_rejects_bad_confidence ... ok
+test llm::decider::tests::rejects_out_of_range_threshold_before_inference ... ok
+test llm::decider::tests::falls_back_to_runner_up_when_top_pick_has_no_args ... ok
+test llm::decider::tests::splits_only_up_to_three_clauses ... ok
+test llm::decider::tests::bare_open_url_fallback_rejects_disabled_open_target ... ok
+test llm::decider_args::tests::extracts_eval_free_text_args ... ok
+test llm::decider_args::tests::open_url_without_url_falls_back_in_normalizer_compatible_shape ... ok
+test llm::decider_args::tests::rejects_empty_required_arguments_and_unknown_tools ... ok
+test llm::focus_context::tests::index_hit_matches_executable_basename_case_insensitively ... ok
+test llm::focus_context::tests::index_miss_uses_executable_stem ... ok
+test llm::focus_context::tests::title_equal_to_app_name_is_dropped ... ok
+test llm::focus_context::tests::title_is_trimmed_to_sixty_characters ... ok
+test llm::focus_context::tests::title_quotes_and_newlines_are_removed ... FAILED
+test llm::intent_validate::tests::keeps_open_url_for_explicit_domain ... ok
+test llm::intent_validate::tests::open_target_passes_known_app ... ok
+test llm::intent_validate::tests::open_url_app_in_index_rewrites_even_if_link_like_substring ... ok
+test llm::intent_validate::tests::rejects_open_target_unknown_name ... ok
+test llm::decider::tests::context_reaches_both_calls_for_every_clause ... ok
+test llm::intent_validate::tests::respects_url_alias_on_open_target ... ok
+test llm::intent_validate::tests::rewrites_open_url_bare_app_name_to_open_target ... ok
+test llm::prompt::tests::catalog_skips_disabled_tools ... ok
+test llm::local::router_args_tests::batching_args_are_router_only ... ok
+test llm::prompt::tests::prompt_includes_transcript_and_tool_name ... ok
+test llm::prompt::tests::router_schema_limits_and_enumerates_enabled_tools ... ok
+test llm::router::tests::extract_json_object_handles_wrapping_text ... ok
+test llm::decider::tests::builds_tool_and_enum_questions_with_none ... ok
+test llm::decider::tests::enum_question_boundaries_count_distinct_values ... ok
+test llm::decider::tests::no_context_preserves_state_text_in_both_calls ... ok
+test llm::decider::tests::duplicate_enum_singleton_is_direct_and_skips_second_call ... ok
+test llm::decider::tests::bare_open_url_falls_back_to_open_target_with_placement ... ok
+test llm::decider::tests::decide_checks_enum_ids_and_retries_unsplit_after_a_split_failure ... ok
+test llm::decider::tests::decide_accepts_thresholded_free_text_and_rejects_none_or_low_confidence ... ok
+test llm::decider::tests::two_call_variant_asks_enum_only_after_tool_choice ... ok
+test llm::router_eval::router_decision_eval ... ignored, requires GGUF models and the llama-server sidecar
+test llm::router_eval::router_live_eval ... ignored, requires GGUF models and the llama-server sidecar
+test llm::router_eval::router_systemone_eval ... ignored, requires decision-model GGUFs and the llama-server sidecar
+test llm::router_eval::scoring_requires_order_and_arg_substring ... ok
+test llm::decider::tests::singleton_registered_script_is_direct_and_validated ... ok
+test llm::decider::tests::script_choice_supports_twenty_and_excludes_more_than_twenty ... ok
+test llm::router::tests::invalid_json_rejected ... ok
+test llm::router::tests::low_confidence_rejected ... ok
+test llm::router::tests::enum_placement_validated ... ok
+test llm::router::tests::multi_step_tool_calls_up_to_three ... ok
+test llm::router::tests::rejects_more_than_max_tool_calls ... ok
+test llm::router::tests::route_brave_left_placement ... ok
+test llm::router::tests::unknown_arg_rejected ... ok
+test llm::router::tests::route_shortcut_copy_validates ... ok
+test llm::router_eval::fixtures_match_seeded_tool_catalog ... ok
+
+failures:
+
+---- llm::focus_context::tests::title_quotes_and_newlines_are_removed stdout ----
+
+thread 'llm::focus_context::tests::title_quotes_and_newlines_are_removed' (99816) panicked at src\llm\focus_context.rs:104:9:
+assertion `left == right` failed
+  left: "the user is in app (window: \"Hello world\")"
+ right: "the user is in app (window: \"Hello  world\")"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    llm::focus_context::tests::title_quotes_and_newlines_are_removed
+
+test result: FAILED. 93 passed; 1 failed; 4 ignored; 0 measured; 376 filtered out; finished in 1.75s
+
+error: test failed, to rerun pass `--lib`

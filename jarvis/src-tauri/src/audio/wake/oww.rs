@@ -339,6 +339,11 @@ fn session_from_file(path: &Path) -> Result<Session, WakeError> {
 }
 
 impl WakeDetector for OpenWakeWordBackend {
+    fn reset(&mut self) {
+        self.pre = OwwPreprocessor::new();
+        self.pcm_pending.clear();
+    }
+
     fn process_frame(&mut self, pcm: &[i16]) -> Result<bool, WakeError> {
         self.pcm_pending.extend_from_slice(pcm);
         let mut fired = false;

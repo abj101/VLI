@@ -1,0 +1,20 @@
+
+running 1 test
+
+full decider eval: 201 cases, gpu=false, threshold=0.5, variant=two_call
+model                                 cmd%   tool%   full% NONE rej/total   infraErrors   p50ms   p95ms
+d1-2B-Q4_K_M.gguf                    96.4%   96.0%   95.5%    33/35                0     203     421
+put that on the clipboard -> wrong args [RouterToolCall { tool: "shortcut", args: {"name": "paste"} }]
+put that change back -> LOW_CONFIDENCE (d1 confidence below threshold)
+move to the tab on the right -> LOW_CONFIDENCE (d1 confidence below threshold)
+go back to the tab on the left -> LOW_CONFIDENCE (d1 confidence below threshold)
+go back one trakc -> LOW_CONFIDENCE (d1 confidence below threshold)
+minimize this and open the desktop folder -> wrong tool [RouterToolCall { tool: "shortcut", args: {"name": "minimize"} }, RouterToolCall { tool: "shortcut", args: {"name": "show_desktop"} }]
+minimize this and open the desktop folder -> wrong args [RouterToolCall { tool: "shortcut", args: {"name": "minimize"} }, RouterToolCall { tool: "shortcut", args: {"name": "show_desktop"} }]
+that song reminds me of summer -> unexpected [RouterToolCall { tool: "media", args: {"control": "previous"} }]
+can you close -> unexpected [RouterToolCall { tool: "shortcut", args: {"name": "close_window"} }]
+enter call the dentist -> LOW_CONFIDENCE (d1 confidence below threshold)
+test llm::router_eval::router_systemone_eval ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 465 filtered out; finished in 39.64s
+
