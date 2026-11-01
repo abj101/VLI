@@ -968,12 +968,18 @@ function RunToolArgsField({
   onChange: (args: Record<string, string>) => void;
 }) {
   const serializedArgs = JSON.stringify(args, null, 2);
-  const errorId = `${label.toLowerCase().replace(/\s+/g, "-")}-error`;
-  const [value, setValue] = useState(() => serializedArgs);
-  const [hasError, setHasError] = useState(false);
+  const errorId = useId();
+  const [draftState, setDraftState] = useState<{ base: string; value: string | null }>(
+    () => ({ base: serializedArgs, value: null }),
+  );
+  if (draftState.base !== serializedArgs) {
+    setDraftState({ base: serializedArgs, value: null });
+  }
+  const value = draftState.value ?? serializedArgs;
+  const hasError = draftState.value !== null;
 
   const updateArgs = (nextValue: string) => {
-    setValue(nextValue);
+    setDraftState({ base: serializedArgs, value: nextValue });
     try {
       const parsed: unknown = JSON.parse(nextValue);
       if (
@@ -982,14 +988,13 @@ function RunToolArgsField({
         typeof parsed !== "object" ||
         !Object.values(parsed).every((item) => typeof item === "string")
       ) {
-        setHasError(true);
         return;
       }
       const nextArgs = parsed as Record<string, string>;
-      setHasError(false);
+      setDraftState({ base: serializedArgs, value: null });
       onChange(nextArgs);
     } catch {
-      setHasError(true);
+      // Keep the invalid draft visible until it is corrected or args change externally.
     }
   };
 
