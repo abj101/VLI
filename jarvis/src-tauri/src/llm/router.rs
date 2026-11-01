@@ -387,27 +387,32 @@ mod tests {
     #[test]
     fn route_shortcut_copy_validates() {
         let (_dir, conn) = test_conn();
-        insert_tool(
-            &conn,
-            &NewToolDefinition {
-                name: "shortcut".into(),
-                display_name: "Keyboard shortcut".into(),
-                description: "Perform a supported keyboard shortcut.".into(),
-                parameters: vec![ToolParameter {
-                    name: "name".into(),
-                    param_type: "enum".into(),
-                    description: None,
-                    required: true,
-                    enum_values: vec!["copy".into(), "paste".into()],
-                }],
-                actions: vec![Action::SendKeys {
-                    keys: "{{name}}".into(),
-                }],
-                enabled: true,
-                builtin: true,
-            },
-        )
-        .unwrap();
+        if crate::db::get_tool_by_name(&conn, "shortcut")
+            .unwrap()
+            .is_none()
+        {
+            insert_tool(
+                &conn,
+                &NewToolDefinition {
+                    name: "shortcut".into(),
+                    display_name: "Keyboard shortcut".into(),
+                    description: "Perform a supported keyboard shortcut.".into(),
+                    parameters: vec![ToolParameter {
+                        name: "name".into(),
+                        param_type: "enum".into(),
+                        description: None,
+                        required: true,
+                        enum_values: vec!["copy".into(), "paste".into()],
+                    }],
+                    actions: vec![Action::SendKeys {
+                        keys: "{{name}}".into(),
+                    }],
+                    enabled: true,
+                    builtin: true,
+                },
+            )
+            .unwrap();
+        }
         let tools = crate::db::get_all_tools(&conn).unwrap();
         let mock = MockInfer(
             r#"{"tool_calls":[{"tool":"shortcut","args":{"name":"copy"}}],"confidence":0.9}"#,
