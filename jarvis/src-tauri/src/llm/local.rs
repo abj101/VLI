@@ -12,6 +12,7 @@ pub const COMPOSER_MODEL_FILE: &str = "qwen2.5-3b-instruct-q4_k_m.gguf";
 const ROUTER_N_CTX: u32 = 2048;
 const COMPOSER_N_CTX: u32 = 4096;
 const MAX_GENERATED_TOKENS: i32 = 256;
+const ROUTER_SYSTEM_PROMPT: &str = "You route voice commands to JSON tool calls.";
 pub const COMPOSER_DEFAULT_MAX_TOKENS: i32 = 512;
 pub const COMPOSER_MAX_MAX_TOKENS: i32 = 768;
 pub const COMPOSER_INFER_TIMEOUT: Duration = Duration::from_secs(90);
@@ -336,7 +337,7 @@ pub fn infer_router_completion(
         .ok_or_else(|| "router llama-server is not running".to_string())?;
     complete(
         server.sidecar.port,
-        "You route voice commands to JSON tool calls.",
+        ROUTER_SYSTEM_PROMPT,
         prompt,
         MAX_GENERATED_TOKENS,
         None,
@@ -444,6 +445,97 @@ impl ComposerInferWorker {
                 }
             })?
     }
+}
+
+/// Router eval: start a standalone router sidecar for `model_path` (no AppHandle).
+#[cfg(test)]
+pub(crate) fn spawn_router_sidecar_at(
+    resource_root: &std::path::Path,
+    model_path: &str,
+    use_gpu: bool,
+) -> Result<Sidecar, String> {
+    sidecar::spawn_at(
+        resource_root,
+        LLAMA_SERVER_EXE,
+        &router_sidecar_args(model_path, use_gpu),
+        "/health",
+        SIDECAR_START_TIMEOUT,
+    )
+}
+
+/// Router eval: same request the live router sends, against an eval sidecar.
+#[cfg(test)]
+pub(crate) fn complete_router_at(
+    port: u16,
+    prompt: &str,
+    json_schema: &serde_json::Value,
+) -> Result<String, String> {
+    complete(
+        port,
+        ROUTER_SYSTEM_PROMPT,
+        prompt,
+        MAX_GENERATED_TOKENS,
+        None,
+        Some(json_schema),
+        COMPOSER_INFER_TIMEOUT,
+    )
+}
+
+/// Router eval, decision mode: one forced token from `A..` (n options); returns the model's
+/// probability per option, renormalized over the valid letters.
+#[cfg(test)]
+pub(crate) fn choose_option_probs_at(
+    port: u16,
+    system: &str,
+    prompt: &str,
+    n_options: usize,
+) -> Result<Vec<f64>, String> {
+    let letters: Vec<char> = ('A'..='Z').take(n_options).collect();
+    let prompt = render_prompt(port, system, prompt, COMPOSER_INFER_TIMEOUT)?;
+    let grammar = format!(
+        "root ::= [{}]",
+        letters.iter().collect::<String>()
+    );
+    let body = serde_json::json!({
+        "prompt": prompt, "n_predict": 1, "temperature": 0.0, "top_k": 1,
+        "cache_prompt": true, "grammar": grammar, "n_probs": 40
+    });
+    let result = response_json(
+        post_json(port, "/completion", &body, COMPOSER_INFER_TIMEOUT),
+        "/completion",
+    )?;
+    let first = result
+        .get("completion_probabilities")
+        .and_then(|p| p.get(0))
+        .ok_or("no completion_probabilities (n_probs unsupported?)")?;
+    // Newer llama-server: top_logprobs[{token, logprob}]; older: probs[{tok_str, prob}].
+    let entries: Vec<(String, f64)> = if let Some(top) = first.get("top_logprobs").and_then(|v| v.as_array()) {
+        top.iter()
+            .filter_map(|e| Some((e.get("token")?.as_str()?.to_string(), e.get("logprob")?.as_f64()?.exp())))
+            .collect()
+    } else {
+        first
+            .get("probs")
+            .and_then(|v| v.as_array())
+            .ok_or("unrecognized completion_probabilities shape")?
+            .iter()
+            .filter_map(|e| Some((e.get("tok_str")?.as_str()?.to_string(), e.get("prob")?.as_f64()?)))
+            .collect()
+    };
+    let mut probs = vec![0.0; n_options];
+    for (token, p) in entries {
+        let t = token.trim();
+        if t.len() == 1 {
+            if let Some(i) = letters.iter().position(|c| t.starts_with(*c)) {
+                probs[i] += p;
+            }
+        }
+    }
+    let total: f64 = probs.iter().sum();
+    if total <= 0.0 {
+        return Err("no option letters among top tokens".into());
+    }
+    Ok(probs.iter().map(|p| p / total).collect())
 }
 
 pub fn infer_composer_completion(

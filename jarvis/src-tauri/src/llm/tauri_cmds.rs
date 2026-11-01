@@ -6,7 +6,7 @@ use crate::db::{
 use crate::llm::{
     ensure_router_server, generate_automation_with_infer, infer_composer_completion,
     infer_router_completion, llm_gpu_runtime_available, resolve_composer_model_path,
-    resolve_router_model_path, route_transcript_with_infer, ComposerError, ComposerErrorCode,
+    resolve_router_model_path, ComposerError, ComposerErrorCode,
     ComposerInfer, ComposerInferWorker, GenerateAutomationResult, RouterError, RouterErrorCode,
     RouterInfer, RouterRouteResult, COMPOSER_DEFAULT_MAX_TOKENS, COMPOSER_INFER_TIMEOUT,
 };
@@ -340,18 +340,16 @@ pub fn route_transcript(app: AppHandle, transcript: String) -> Result<RouterRout
 
     let tools = get_all_tools(&conn).map_err(|e| e.to_string())?;
     let use_gpu = llm_gpu_runtime_available(&app);
-    let infer = LocalInfer {
-        model_path: model_path.display().to_string(),
-        use_gpu,
-    };
-    route_transcript_with_infer(
-        &conn,
-        &tools,
-        transcript.trim(),
-        settings.llm_router_confidence_threshold,
-        &infer,
-    )
-    .map_err(|e| e.into_string())
+    ensure_router_server(&app, &model_path.display().to_string(), use_gpu).map_err(|message| RouterError {
+        code: RouterErrorCode::InferFailed,
+        message,
+    }.into_string())?;
+    let port = super::local::router_server_port().map_err(|message| RouterError {
+        code: RouterErrorCode::InferFailed,
+        message,
+    }.into_string())?;
+    super::decider::decide(&conn, &tools, transcript.trim(), None, settings.llm_router_confidence_threshold, port)
+        .map_err(|e| e.into_string())
 }
 
 // --- Command composer (editor NL → draft) ---

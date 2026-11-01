@@ -110,6 +110,7 @@ const PLACEMENT_SUFFIXES: &[(&str, &str)] = &[
     ("full screen", "maximize"),
     ("fullscreen", "maximize"),
     ("maximize", "maximize"),
+    ("maximized", "maximize"),
 ];
 
 /// Map composer / spoken placement labels to executor zone ids.

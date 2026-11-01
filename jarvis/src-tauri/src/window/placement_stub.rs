@@ -1,8 +1,14 @@
 //! Non-Windows stubs for window placement APIs.
 
+use super::FocusedWindow;
+
 pub const DEFAULT_MONITOR: &str = "monitor_primary";
 
 pub type WindowSnapshot = ();
+
+pub fn focused_window() -> Option<FocusedWindow> {
+    None
+}
 
 pub fn validate_placement_zone(zone: &str) -> Result<&'static str, String> {
     match zone.trim() {

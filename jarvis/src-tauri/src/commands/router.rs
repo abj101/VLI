@@ -267,6 +267,7 @@ fn tier2_prerequisites(app: &AppHandle) -> Option<(db::AppSettings, String)> {
 pub(crate) fn route_transcript_tier2(
     app: &AppHandle,
     transcript: &str,
+    context: Option<&str>,
 ) -> Result<RouterRouteResult, RouterError> {
     let conn = open_db_connection(app).map_err(|message| RouterError {
         code: RouterErrorCode::SchemaInvalid,
@@ -303,16 +304,21 @@ pub(crate) fn route_transcript_tier2(
         .filter(|t| t.enabled)
         .collect();
     let use_gpu = llm_gpu_runtime_available(app);
-    let infer = LocalInfer {
-        model_path: model_path.display().to_string(),
-        use_gpu,
-    };
-    route_transcript_with_infer(
+    crate::llm::ensure_router_server(app, &model_path.display().to_string(), use_gpu).map_err(|message| RouterError {
+        code: RouterErrorCode::InferFailed,
+        message,
+    })?;
+    let port = crate::llm::local::router_server_port().map_err(|message| RouterError {
+        code: RouterErrorCode::InferFailed,
+        message,
+    })?;
+    crate::llm::decider::decide(
         &conn,
         &tools,
         transcript.trim(),
+        context,
         settings.llm_router_confidence_threshold,
-        &infer,
+        port,
     )
 }
 
@@ -586,6 +592,17 @@ pub fn try_route_and_execute(
     let app_bg = app.clone();
     let rt_bg = Arc::clone(rt);
     let audio_bg = audio.clone();
+    let context = {
+        let state = rt.lock().map_err(|_| "HUD runtime lock poisoned".to_string())?;
+        state.focus.as_ref().map(|focus| {
+            let index = app.state::<AppIndexStore>();
+            let apps = index.read().ok();
+            crate::llm::focus_context::focus_context(
+                focus,
+                apps.as_deref().map_or(&[], |apps| apps.as_slice()),
+            )
+        })
+    };
     let transcript = text.to_string();
     std::thread::spawn(move || {
         let still_routing = rt_bg
@@ -597,7 +614,7 @@ pub fn try_route_and_execute(
             return;
         }
 
-        match route_transcript_tier2(&app_bg, &transcript) {
+        match route_transcript_tier2(&app_bg, &transcript, context.as_deref()) {
             Ok(route) => {
                 if routing_cancel.load(Ordering::Relaxed) {
                     debug!("flow: skip tier2 execute (cancelled after infer)");

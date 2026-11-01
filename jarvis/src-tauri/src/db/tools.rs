@@ -30,6 +30,44 @@ pub fn ensure_tools_schema(conn: &Connection) -> Result<(), DbError> {
     seed_builtin_type_text(conn)?;
     seed_builtin_say(conn)?;
     migrate_builtin_descriptions(conn)?;
+    migrate_builtin_shortcut_enum(conn)?;
+    Ok(())
+}
+
+/// Older installs seeded `shortcut` before browser back/forward existed.
+fn migrate_builtin_shortcut_enum(conn: &Connection) -> Result<(), DbError> {
+    let Some(tool) = get_tool_by_name(conn, "shortcut")? else {
+        return Ok(());
+    };
+    if !tool.builtin {
+        return Ok(());
+    }
+    let mut parameters = tool.parameters.clone();
+    let Some(param) = parameters.iter_mut().find(|p| p.name == "name") else {
+        return Ok(());
+    };
+    let mut changed = false;
+    for value in ["browser_back", "browser_forward"] {
+        if !param.enum_values.iter().any(|v| v == value) {
+            param.enum_values.push(value.into());
+            changed = true;
+        }
+    }
+    if changed {
+        update_tool(
+            conn,
+            tool.id,
+            &NewToolDefinition {
+                name: tool.name,
+                display_name: tool.display_name,
+                description: tool.description,
+                parameters,
+                actions: tool.actions,
+                enabled: tool.enabled,
+                builtin: tool.builtin,
+            },
+        )?;
+    }
     Ok(())
 }
 
@@ -58,28 +96,54 @@ fn migrate_builtin_descriptions(conn: &Connection) -> Result<(), DbError> {
         (
             "say",
             "Speaks the requested text aloud",
+            "Jarvis should say, speak or read some words aloud",
+        ),
+        (
+            "say",
             "Jarvis should speak some words aloud",
+            "Jarvis should say, speak or read some words aloud",
         ),
         (
             "shortcut",
             "Runs a common keyboard shortcut",
+            "copy, cut, paste, undo, redo, select all, save, find on this page, browser back/forward, new/close/reopen/next/previous tab, refresh, close window, switch app, minimize or hide window, show desktop",
+        ),
+        (
+            "shortcut",
             "copy, paste, undo, save, find, new/close/reopen/next tab, refresh, close window, switch app, minimize, show desktop",
+            "copy, cut, paste, undo, redo, select all, save, find on this page, browser back/forward, new/close/reopen/next/previous tab, refresh, close window, switch app, minimize or hide window, show desktop",
         ),
         (
             "snap_window",
             "Moves the focused window to a screen zone",
+            "snap the current window to the left half or right half of the screen, or maximize it (not minimize or hide)",
+        ),
+        (
+            "snap_window",
             "move/snap/maximize the current window",
+            "snap the current window to the left half or right half of the screen, or maximize it (not minimize or hide)",
         ),
         (
             "type_text",
             "Types the requested text into the focused app",
+            "type, write or enter dictated words into the current app",
+        ),
+        (
+            "type_text",
             "type or write dictated words into the current app",
+            "type, write or enter dictated words into the current app",
         ),
         (
             "web_search",
             "Searches Google for the requested query",
-            "search, google or look something up on the web",
+            "search the internet, google or look something up online (not finding text on this page)",
         ),
+        (
+            "web_search",
+            "search, google or look something up on the web",
+            "search the internet, google or look something up online (not finding text on this page)",
+        ),
+        ("shortcut", "copy, cut, paste, undo, redo, select all, save, find on this page, new/close/reopen/next/previous tab, refresh, close window, switch app, minimize or hide window, show desktop", "copy, cut, paste, undo, redo, select all, save, find on this page, browser back/forward, new/close/reopen/next/previous tab, refresh, close window, switch app, minimize or hide window, show desktop"),
     ] {
         conn.execute(
             "UPDATE tools SET description = ?1 WHERE name = ?2 AND builtin = 1 AND description = ?3",
@@ -95,7 +159,7 @@ fn seed_builtin_web_search(conn: &Connection) -> Result<(), DbError> {
         NewToolDefinition {
             name: "web_search".into(),
             display_name: "Web search".into(),
-            description: "search, google or look something up on the web".into(),
+            description: "search the internet, google or look something up online (not finding text on this page)".into(),
             parameters: vec![ToolParameter {
                 name: "query".into(),
                 param_type: "string".into(),
@@ -118,7 +182,7 @@ fn seed_builtin_shortcut(conn: &Connection) -> Result<(), DbError> {
         NewToolDefinition {
             name: "shortcut".into(),
             display_name: "Keyboard shortcut".into(),
-            description: "copy, paste, undo, save, find, new/close/reopen/next tab, refresh, close window, switch app, minimize, show desktop".into(),
+            description: "copy, cut, paste, undo, redo, select all, save, find on this page, browser back/forward, new/close/reopen/next/previous tab, refresh, close window, switch app, minimize or hide window, show desktop".into(),
             parameters: vec![ToolParameter {
                 name: "name".into(),
                 param_type: "enum".into(),
@@ -133,6 +197,8 @@ fn seed_builtin_shortcut(conn: &Connection) -> Result<(), DbError> {
                     "select_all",
                     "save",
                     "find",
+                    "browser_back",
+                    "browser_forward",
                     "new_tab",
                     "close_tab",
                     "reopen_tab",
@@ -196,7 +262,7 @@ fn seed_builtin_type_text(conn: &Connection) -> Result<(), DbError> {
         NewToolDefinition {
             name: "type_text".into(),
             display_name: "Type text".into(),
-            description: "type or write dictated words into the current app".into(),
+            description: "type, write or enter dictated words into the current app".into(),
             parameters: vec![ToolParameter {
                 name: "text".into(),
                 param_type: "string".into(),
@@ -219,7 +285,7 @@ fn seed_builtin_say(conn: &Connection) -> Result<(), DbError> {
         NewToolDefinition {
             name: "say".into(),
             display_name: "Speak text".into(),
-            description: "Jarvis should speak some words aloud".into(),
+            description: "Jarvis should say, speak or read some words aloud".into(),
             parameters: vec![ToolParameter {
                 name: "text".into(),
                 param_type: "string".into(),
@@ -356,7 +422,7 @@ fn seed_builtin_snap_window(conn: &Connection) -> Result<(), DbError> {
     let row = NewToolDefinition {
         name: "snap_window".into(),
         display_name: "Snap window".into(),
-        description: "move/snap/maximize the current window".into(),
+        description: "snap the current window to the left half or right half of the screen, or maximize it (not minimize or hide)".into(),
         parameters,
         actions,
         enabled: true,
@@ -650,13 +716,16 @@ mod tests {
                 "run_registered_script",
                 "run one of the user's saved scripts by id",
             ),
-            ("say", "Jarvis should speak some words aloud"),
+            ("say", "Jarvis should say, speak or read some words aloud"),
             (
                 "shortcut",
-                "copy, paste, undo, save, find, new/close/reopen/next tab, refresh, close window, switch app, minimize, show desktop",
+                "copy, cut, paste, undo, redo, select all, save, find on this page, browser back/forward, new/close/reopen/next/previous tab, refresh, close window, switch app, minimize or hide window, show desktop",
             ),
-            ("snap_window", "move/snap/maximize the current window"),
-            ("type_text", "type or write dictated words into the current app"),
+            (
+                "snap_window",
+                "snap the current window to the left half or right half of the screen, or maximize it (not minimize or hide)",
+            ),
+            ("type_text", "type, write or enter dictated words into the current app"),
         ];
         for (name, description) in expected {
             assert_eq!(

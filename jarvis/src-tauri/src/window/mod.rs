@@ -1,11 +1,18 @@
 //! Win32 / macOS window placement (zones, snap).
 
+/// App that had focus when listening began. Only the exe: window titles are private
+/// and the router only needs the app type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusedWindow {
+    pub exe_path: String,
+}
+
 #[cfg(windows)]
 mod placement_windows;
 
 #[cfg(windows)]
 pub use placement_windows::{
-    focus_existing_app_window, place_window_after_app_launch, placement_status_label,
+    focus_existing_app_window, focused_window, place_window_after_app_launch, placement_status_label,
     snap_foreground_window, snapshot_top_level_windows, WindowSnapshot, DEFAULT_MONITOR,
 };
 
@@ -16,6 +23,7 @@ mod placement_macos;
 pub use placement_macos::{
     focus_existing_app_window, place_window_after_app_launch, placement_status_label,
     snap_foreground_window, snapshot_top_level_windows, WindowSnapshot, DEFAULT_MONITOR,
+    focused_window,
 };
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -25,4 +33,5 @@ mod placement_stub;
 pub use placement_stub::{
     focus_existing_app_window, place_window_after_app_launch, placement_status_label,
     snap_foreground_window, snapshot_top_level_windows, WindowSnapshot, DEFAULT_MONITOR,
+    focused_window,
 };

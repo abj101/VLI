@@ -1,5 +1,6 @@
 //! Win32 window zone placement: half-screen snap, maximize, foreground snap.
 
+use super::FocusedWindow;
 use rapidfuzz::fuzz;
 use std::collections::HashSet;
 use std::path::Path;
@@ -29,6 +30,25 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const LAUNCH_PLACE_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub type WindowSnapshot = HashSet<isize>;
+
+/// Foreground window's owning executable and title, unless Jarvis itself has focus.
+pub fn focused_window() -> Option<FocusedWindow> {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.0.is_null() {
+        return None;
+    }
+    let pid = window_pid(hwnd)?;
+    if is_own_pid(pid, std::process::id()) {
+        return None;
+    }
+    Some(FocusedWindow {
+        exe_path: process_image_name(pid)?,
+    })
+}
+
+fn is_own_pid(window_pid: u32, own_pid: u32) -> bool {
+    window_pid == own_pid
+}
 
 pub fn validate_placement_zone(zone: &str) -> Result<&'static str, String> {
     match zone.trim() {
@@ -394,5 +414,11 @@ mod tests {
     fn window_title_score_fuzzy_matches_brave() {
         let score = title_matches_display("brave", "brave - github");
         assert!(score >= TITLE_MATCH_MIN_RATIO);
+    }
+
+    #[test]
+    fn own_process_pid_is_rejected() {
+        assert!(is_own_pid(42, 42));
+        assert!(!is_own_pid(43, 42));
     }
 }

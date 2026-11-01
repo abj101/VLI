@@ -34,6 +34,7 @@ use tauri::{
 use tauri_plugin_global_shortcut::{
     Builder as ShortcutBuilder, GlobalShortcutExt, Shortcut, ShortcutState,
 };
+use window::FocusedWindow;
 
 /// Listening session: dismiss if STT never emitted a non-empty transcript.
 const NO_WORDS_DISMISS_AFTER: Duration = Duration::from_secs(3);
@@ -317,6 +318,8 @@ pub(crate) fn load_default_fuzzy_threshold_pct(app: &AppHandle) -> u16 {
 
 #[derive(Debug)]
 struct HudRuntime {
+    /// App that had focus when this command listening session began; never persisted or logged.
+    focus: Option<FocusedWindow>,
     /// Selects the longer quiet window only for a wake-word listening session.
     wake_activated: bool,
     phase: HudPhase,
@@ -362,6 +365,7 @@ struct HudRuntime {
 impl Default for HudRuntime {
     fn default() -> Self {
         Self {
+            focus: None,
             phase: HudPhase::default(),
             wake_activated: false,
             visible: false,
@@ -672,6 +676,7 @@ fn abort_tier2_routing_for_new_speech(
 
 fn mark_hud_dismissed(s: &mut HudRuntime) {
     s.dismissed_at = Some(Instant::now());
+    s.focus = None;
 }
 
 fn wake_reopen_suppressed(s: &HudRuntime) -> bool {
@@ -858,6 +863,7 @@ pub(crate) fn cancel_active_run_in_state(s: &mut HudRuntime) {
 
 fn prepare_hud_listening_session(s: &mut HudRuntime) -> u64 {
     s.wake_activated = false;
+    s.focus = window::focused_window();
     let now = Instant::now();
     s.dismissed_at = None;
     s.visible = true;
@@ -1721,6 +1727,7 @@ fn settings_patch_triggers_wake_reload(
 }
 
 fn prepare_dictation_overlay(s: &mut HudRuntime, session_id: u64) {
+    s.focus = None;
     let now = Instant::now();
     s.dismissed_at = None;
     s.visible = true;
@@ -1863,6 +1870,7 @@ fn hud_set_phase(
         match phase {
             HudPhase::Listening => {
                 let now = Instant::now();
+                s.focus = window::focused_window();
                 s.dismissed_at = None;
                 s.visible = true;
                 s.overlay_mode = HudOverlayMode::Command;
@@ -3210,8 +3218,14 @@ mod tests {
 
     #[test]
     fn wake_reopen_suppressed_immediately_after_dismiss_mark() {
-        let mut rt = HudRuntime::default();
+        let mut rt = HudRuntime {
+            focus: Some(FocusedWindow {
+                exe_path: "spotify.exe".into(),
+            }),
+            ..HudRuntime::default()
+        };
         mark_hud_dismissed(&mut rt);
+        assert!(rt.focus.is_none());
         assert!(wake_reopen_suppressed(&rt));
         rt.dismissed_at =
             Some(Instant::now() - WAKE_COOLDOWN_AFTER_DISMISS - Duration::from_millis(1));

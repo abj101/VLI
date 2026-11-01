@@ -229,6 +229,8 @@ fn execute_shortcut_tool(
         "select_all" => "^a",
         "save" => "^s",
         "find" => "^f",
+        "browser_back" => "%{LEFT}",
+        "browser_forward" => "%{RIGHT}",
         "new_tab" => "^t",
         "close_tab" => "^w",
         "reopen_tab" => "^+t",

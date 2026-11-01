@@ -1,6 +1,23 @@
 use crate::apps::resolve_target::{is_explicit_url, normalize_spoken_url, strip_placement_suffix};
 use serde_json::{Map, Value};
 
+const OPEN_VERBS: &[&str] = &[
+    "switch over to",
+    "head over to",
+    "navigate to",
+    "take me to",
+    "pull up",
+    "bring up",
+    "switch to",
+    "go to",
+    "open",
+    "launch",
+    "start",
+    "visit",
+    "run",
+    "put",
+];
+
 /// Extract the free-text arguments for a d1-selected tool call.
 pub fn extract_args(tool_name: &str, clause: &str) -> Option<Map<String, Value>> {
     let clause = strip_politeness(clause);
@@ -8,21 +25,14 @@ pub fn extract_args(tool_name: &str, clause: &str) -> Option<Map<String, Value>>
 
     match tool_name {
         "open_target" => {
-            let target = strip_prefix(
-                &clause,
-                &[
-                    "pull up",
-                    "bring up",
-                    "switch to",
-                    "go to",
-                    "open",
-                    "launch",
-                    "start",
-                    "run",
-                    "put",
-                ],
-            );
+            // Require an open verb so chit-chat never becomes an app name.
+            let target = strip_required_prefix(&clause, OPEN_VERBS)?;
             let (target, placement) = strip_placement_suffix(&target);
+            // "open a search for x" is a web search, not an app named "search".
+            let lower = target.to_lowercase();
+            if lower.starts_with("search ") || lower.starts_with("a search ") {
+                return None;
+            }
             insert_required(&mut args, "target", target)?;
             if let Some(placement) = placement {
                 args.insert("placement".into(), Value::String(placement));
@@ -32,20 +42,7 @@ pub fn extract_args(tool_name: &str, clause: &str) -> Option<Map<String, Value>>
             if let Some(url) = first_explicit_url(&clause) {
                 insert_required(&mut args, "url", url)?;
             } else {
-                let target = strip_prefix(
-                    &clause,
-                    &[
-                        "pull up",
-                        "bring up",
-                        "switch to",
-                        "go to",
-                        "open",
-                        "launch",
-                        "start",
-                        "run",
-                        "put",
-                    ],
-                );
+                let target = strip_prefix(&clause, OPEN_VERBS);
                 let (target, placement) = strip_placement_suffix(&target);
                 // Keep `url`: normalize_router_tool_calls requires it before it
                 // can rewrite a non-URL open_url into open_target.
@@ -56,27 +53,45 @@ pub fn extract_args(tool_name: &str, clause: &str) -> Option<Map<String, Value>>
             }
         }
         "web_search" => {
-            let query = strip_prefix(
+            // Require a search verb: d1 alone lets chit-chat through as a query.
+            let query = strip_required_prefix(
                 &clause,
                 &[
                     "search the web for",
                     "search the web",
+                    "open a search for",
+                    "do a search for",
+                    "searching for",
                     "search for",
                     "look up",
+                    "look for",
                     "find me",
                     "search",
                     "google",
                     "find",
                 ],
-            );
+            )?;
+            let lower = query.to_lowercase();
+            // "find the word x on this page" is find-in-page, not a web search.
+            if matches!(lower.as_str(), "it" | "that" | "this")
+                || (clause.to_lowercase().starts_with("find the word "))
+                || lower.contains("on this page")
+                || lower.contains("in this paragraph")
+            {
+                return None;
+            }
             insert_required(&mut args, "query", query)?;
         }
         "type_text" => {
-            let text = strip_prefix(&clause, &["type", "write", "dictate", "enter"]);
+            // Require a typing verb so commands like "paste it" are never typed literally.
+            let text = strip_required_prefix(&clause, &["type", "write", "dictate", "enter"])?;
             insert_required(&mut args, "text", text)?;
         }
         "say" => {
-            let text = strip_prefix(&clause, &["tell me", "speak", "say"]);
+            let text = strip_required_prefix(
+                &clause,
+                &["read aloud", "read out", "tell me", "speak", "say"],
+            )?;
             insert_required(&mut args, "text", text)?;
         }
         _ => return None,
@@ -97,15 +112,16 @@ fn insert_required(args: &mut Map<String, Value>, key: &str, value: String) -> O
 fn strip_politeness(input: &str) -> String {
     let mut text = clean_text(input);
     loop {
-        let stripped = strip_prefix(&text, &["can you", "could you", "please"]);
+        let stripped = strip_prefix(&text, &["can you", "could you", "would you mind", "would you", "please"]);
         if stripped == text {
             break;
         }
         text = stripped;
     }
-    let lower = text.to_lowercase();
-    if lower.ends_with(" for me") {
-        text.truncate(text.len() - " for me".len());
+    for suffix in [" for me", " please"] {
+        if text.to_lowercase().ends_with(suffix) {
+            text.truncate(text.len() - suffix.len());
+        }
     }
     clean_text(&text)
 }
@@ -126,6 +142,14 @@ fn strip_prefix(input: &str, prefixes: &[&str]) -> String {
     clean_text(input)
 }
 
+fn strip_required_prefix(input: &str, prefixes: &[&str]) -> Option<String> {
+    let lower = clean_text(input).to_lowercase();
+    prefixes
+        .iter()
+        .any(|p| lower == *p || lower.starts_with(&format!("{p} ")))
+        .then(|| strip_prefix(input, prefixes))
+}
+
 fn clean_text(input: &str) -> String {
     input
         .trim()
@@ -135,7 +159,7 @@ fn clean_text(input: &str) -> String {
         .join(" ")
 }
 
-fn first_explicit_url(input: &str) -> Option<String> {
+pub(crate) fn first_explicit_url(input: &str) -> Option<String> {
     let words: Vec<_> = input.split_whitespace().collect();
     for start in 0..words.len() {
         for end in start + 1..=words.len() {
@@ -226,6 +250,14 @@ mod tests {
             ("open_target", "please open"),
             ("open_url", "open"),
             ("web_search", "search for"),
+            ("web_search", "the dog is barking outside"),
+            ("web_search", "search it"),
+            ("type_text", "paste it"),
+            ("say", "refresh the page"),
+            ("open_target", "search for spotify"),
+            ("open_target", "i wonder what time it is"),
+            ("web_search", "find the word invoice"),
+            ("web_search", "find something on this page"),
             ("type_text", "type"),
             ("say", "say"),
             ("unknown", "anything"),

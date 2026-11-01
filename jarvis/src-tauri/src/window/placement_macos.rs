@@ -1,5 +1,6 @@
 //! macOS window zone placement via System Events (Accessibility).
 
+use super::FocusedWindow;
 use crate::process::hidden_command;
 use objc2::MainThreadMarker;
 use objc2_app_kit::NSScreen;
@@ -13,6 +14,10 @@ const LAUNCH_PLACE_TIMEOUT: Duration = Duration::from_secs(3);
 pub const DEFAULT_MONITOR: &str = "monitor_primary";
 
 pub type WindowSnapshot = HashSet<String>;
+
+pub fn focused_window() -> Option<FocusedWindow> {
+    None
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ZoneRect {

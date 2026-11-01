@@ -5,14 +5,17 @@ pub mod composer;
 pub mod composer_expect;
 pub mod composer_prompt;
 pub mod composer_validate;
-#[cfg(test)]
+pub mod decider;
 pub mod decider_args;
+pub mod focus_context;
 
 #[cfg(test)]
 mod composer_eval;
 pub mod intent_validate;
 pub mod prompt;
 pub mod router;
+#[cfg(test)]
+mod router_eval;
 pub mod tauri_cmds;
 
 pub mod local;
