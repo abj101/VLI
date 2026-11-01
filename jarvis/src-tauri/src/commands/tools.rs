@@ -55,6 +55,22 @@ pub fn execute_tool(
     if tool_id == "run_registered_script" {
         return execute_run_registered_script_tool(conn, args, runtime);
     }
+    if tool_id == "web_search" {
+        let query = args.get("query").expect("required arg validated");
+        let query = url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
+        return runtime.open_url(&format!("https://www.google.com/search?q={query}"));
+    }
+    if tool_id == "shortcut" {
+        return execute_shortcut_tool(args, runtime);
+    }
+    if tool_id == "media" {
+        return execute_media_tool(args);
+    }
+    if tool_id == "type_text" {
+        return crate::input::type_text::type_unicode(
+            args.get("text").expect("required arg validated"),
+        );
+    }
     let resolved = substitute_tool_args(&tool.actions, args);
     reject_unsandboxed_run_script(&resolved)?;
     execute_resolved_actions(&resolved, runtime, app_index, Some(conn));
@@ -173,6 +189,15 @@ fn execute_snap_window_tool(
 
 fn validate_tool_args(tool: &ToolDefinition, args: &HashMap<String, String>) -> Result<(), String> {
     for param in &tool.parameters {
+        if let Some(value) = args.get(&param.name) {
+            if !param.enum_values.is_empty() && !param.enum_values.iter().any(|v| v == value.trim())
+            {
+                return Err(format!(
+                    "invalid value `{}` for tool argument `{}`",
+                    value, param.name
+                ));
+            }
+        }
         if !param.required {
             continue;
         }
@@ -185,6 +210,76 @@ fn validate_tool_args(tool: &ToolDefinition, args: &HashMap<String, String>) -> 
         }
     }
     Ok(())
+}
+
+fn execute_shortcut_tool(
+    args: &HashMap<String, String>,
+    runtime: &impl crate::commands::executor::ActionRuntime,
+) -> Result<(), String> {
+    let name = args
+        .get("name")
+        .expect("required arg validated")
+        .trim();
+    let keys = match name {
+        "copy" => "^c",
+        "paste" => "^v",
+        "cut" => "^x",
+        "undo" => "^z",
+        "redo" => "^y",
+        "select_all" => "^a",
+        "save" => "^s",
+        "find" => "^f",
+        "new_tab" => "^t",
+        "close_tab" => "^w",
+        "reopen_tab" => "^+t",
+        "next_tab" => "^{TAB}",
+        "previous_tab" => "^+{TAB}",
+        "refresh" => "{F5}",
+        "close_window" => "%{F4}",
+        "switch_app" => "%{TAB}",
+        "minimize" | "show_desktop" => {
+            #[cfg(windows)]
+            {
+                use windows::Win32::UI::Input::KeyboardAndMouse::{VK_D, VK_DOWN, VK_LWIN};
+                let key = if name == "minimize" {
+                    VK_DOWN.0
+                } else {
+                    VK_D.0
+                };
+                return crate::input::type_text::send_virtual_key_chord(&[VK_LWIN.0, key]);
+            }
+            #[cfg(not(windows))]
+            return Err("not supported on platform".into());
+        }
+        _ => return Err(format!("unsupported shortcut `{name}`")),
+    };
+    runtime.send_keys(keys)
+}
+
+fn execute_media_tool(args: &HashMap<String, String>) -> Result<(), String> {
+    let control = args.get("control").expect("required arg validated").trim();
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            VK_MEDIA_NEXT_TRACK, VK_MEDIA_PLAY_PAUSE, VK_MEDIA_PREV_TRACK, VK_VOLUME_DOWN,
+            VK_VOLUME_MUTE, VK_VOLUME_UP,
+        };
+        let vk = match control {
+            "play_pause" => VK_MEDIA_PLAY_PAUSE,
+            "next" => VK_MEDIA_NEXT_TRACK,
+            "previous" => VK_MEDIA_PREV_TRACK,
+            "volume_up" => VK_VOLUME_UP,
+            "volume_down" => VK_VOLUME_DOWN,
+            "mute" => VK_VOLUME_MUTE,
+            _ => return Err(format!("unsupported media control `{control}`")),
+        };
+        crate::input::type_text::send_virtual_key(vk)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = control;
+        Err("not supported on platform".into())
+    }
 }
 
 #[cfg(test)]
@@ -200,6 +295,7 @@ mod tests {
     #[derive(Default, Clone)]
     struct MockState {
         url_calls: Vec<String>,
+        key_calls: Vec<String>,
         script_calls: Vec<(String, Vec<String>)>,
         statuses: Vec<String>,
         errors: Vec<String>,
@@ -229,7 +325,8 @@ mod tests {
             Ok(())
         }
 
-        fn send_keys(&self, _keys: &str) -> Result<(), String> {
+        fn send_keys(&self, keys: &str) -> Result<(), String> {
+            self.state.lock().unwrap().key_calls.push(keys.to_string());
             Ok(())
         }
 
@@ -293,6 +390,48 @@ mod tests {
         let state = runtime.state.lock().unwrap();
         assert_eq!(state.url_calls, vec!["https://example.com".to_string()]);
         assert!(state.errors.is_empty());
+    }
+
+    #[test]
+    fn execute_tool_web_search_encodes_query() {
+        let (_dir, conn) = test_conn();
+        let runtime = MockRuntime::default();
+        execute_tool(
+            &conn,
+            "web_search",
+            &HashMap::from([("query".to_string(), "rust traits".to_string())]),
+            &runtime,
+            None,
+        )
+        .expect("execute web search");
+        assert_eq!(
+            runtime.state.lock().unwrap().url_calls,
+            ["https://www.google.com/search?q=rust+traits"]
+        );
+    }
+
+    #[test]
+    fn execute_tool_shortcut_sends_copy_and_rejects_unknown_enum() {
+        let (_dir, conn) = test_conn();
+        let runtime = MockRuntime::default();
+        execute_tool(
+            &conn,
+            "shortcut",
+            &HashMap::from([("name".to_string(), "copy".to_string())]),
+            &runtime,
+            None,
+        )
+        .expect("execute copy shortcut");
+        assert_eq!(runtime.state.lock().unwrap().key_calls, ["^c"]);
+        let err = execute_tool(
+            &conn,
+            "shortcut",
+            &HashMap::from([("name".to_string(), "bogus".to_string())]),
+            &runtime,
+            None,
+        )
+        .unwrap_err();
+        assert!(err.contains("invalid value"));
     }
 
     #[test]

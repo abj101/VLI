@@ -125,8 +125,72 @@ fn send_unicode_char(ch: char) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn send_virtual_key(vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY) -> Result<(), String> {
+pub(crate) fn send_virtual_key(
+    vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY,
+) -> Result<(), String> {
     send_virtual_key_burst(vk, 1)
+}
+
+#[cfg(windows)]
+pub(crate) fn send_virtual_key_chord(keys: &[u16]) -> Result<(), String> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+    };
+
+    let mut inputs = Vec::with_capacity(keys.len() * 2);
+    for &key in keys {
+        inputs.push(INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(key),
+                    wScan: 0,
+                    dwFlags: Default::default(),
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        });
+    }
+    for &key in keys.iter().rev() {
+        inputs.push(INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(key),
+                    wScan: 0,
+                    dwFlags: KEYEVENTF_KEYUP,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        });
+    }
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent != inputs.len() as u32 {
+        let releases: Vec<_> = keys
+            .iter()
+            .rev()
+            .map(|&key| INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(key),
+                        wScan: 0,
+                        dwFlags: KEYEVENTF_KEYUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            })
+            .collect();
+        unsafe { SendInput(&releases, std::mem::size_of::<INPUT>() as i32) };
+        return Err(format!(
+            "SendInput accepted {sent}/{} key events",
+            inputs.len()
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(not(windows))]
@@ -137,6 +201,16 @@ pub fn type_unicode(_text: &str) -> Result<(), String> {
 #[cfg(not(windows))]
 pub fn send_backspaces(_count: usize) -> Result<(), String> {
     Err("dictation typing is Windows-only for now".into())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn send_virtual_key(_vk: u16) -> Result<(), String> {
+    Err("not supported on platform".into())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn send_virtual_key_chord(_keys: &[u16]) -> Result<(), String> {
+    Err("not supported on platform".into())
 }
 
 #[cfg(test)]
