@@ -27,8 +27,9 @@ function pickHudState(s: HudStore): HudState {
     actionError: s.actionError,
     amplitude: s.amplitude,
     audioError: s.audioError,
-    dictationPreview: s.dictationPreview,
+    dictationPrint: s.dictationPrint,
     dictationSessionId: s.dictationSessionId,
+    dictationWaiting: s.dictationWaiting,
   };
 }
 

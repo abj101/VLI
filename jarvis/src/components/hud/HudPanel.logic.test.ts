@@ -18,6 +18,18 @@ function base(phase: HudPhase) {
 }
 
 describe("selectCenterContent", () => {
+  it("replaces routing/status text with a completion confirmation on done", () => {
+    const input = { ...base("done"), actionText: "Understanding…" };
+    const selected = selectCenterContent(input);
+    expect(selected).toEqual({ kind: "success" });
+    expect(announcableText(input, selected)).toBe("Command completed");
+  });
+
+  it("keeps execution errors visible instead of showing success", () => {
+    expect(selectCenterContent({ ...base("done"), actionError: "Launch failed" }))
+      .toEqual({ kind: "error", text: "Launch failed" });
+  });
+
   it("shows transcript while listening with no match", () => {
     const out = selectCenterContent({
       ...base("listening"),

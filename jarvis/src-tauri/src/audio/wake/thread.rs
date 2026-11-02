@@ -54,6 +54,7 @@ pub(crate) fn spawn_wake_thread(
     is_paused: Arc<AtomicBool>,
     mic_suppressed: Arc<AtomicBool>,
     on_wake: Arc<dyn Fn() + Send + Sync + 'static>,
+    on_snap: Arc<dyn Fn() + Send + Sync + 'static>,
 ) -> Result<WakeSupervisor, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
@@ -84,6 +85,10 @@ pub(crate) fn spawn_wake_thread(
                 is_paused,
                 mic_suppressed,
                 on_wake,
+                settings
+                    .snap_toggle_enabled
+                    .then(|| super::snap::SnapDetector::new(settings.snap_sensitivity_db)),
+                on_snap,
             );
         })
         .map_err(|e| e.to_string())?;
@@ -104,6 +109,8 @@ fn wake_thread_main(
     is_paused: Arc<AtomicBool>,
     mic_suppressed: Arc<AtomicBool>,
     on_wake: Arc<dyn Fn() + Send + Sync + 'static>,
+    mut snap: Option<super::snap::SnapDetector>,
+    on_snap: Arc<dyn Fn() + Send + Sync + 'static>,
 ) {
     struct WakeMic {
         session: capture::CaptureSession,
@@ -147,6 +154,9 @@ fn wake_thread_main(
         // reopen + warm-up after every command, so back-to-back "hey jarvis" was missed.
         let suppressed = mic_suppressed.load(Ordering::Relaxed);
         if is_paused.load(Ordering::Relaxed) || (suppressed && !cfg!(windows)) {
+            if let Some(snap) = snap.as_mut() {
+                snap.reset();
+            }
             if mic.take().is_some() {
                 pending_i16.clear();
                 detector.reset();
@@ -163,10 +173,7 @@ fn wake_thread_main(
                 if !mic_error_emitted && mic_open_failures >= WAKE_MIC_FAIL_EMIT_THRESHOLD {
                     if let Some(message) = last_mic_error.clone() {
                         mic_error_emitted = true;
-                        let _ = app.emit(
-                            "audio-error",
-                            serde_json::json!({ "message": message }),
-                        );
+                        let _ = app.emit("audio-error", serde_json::json!({ "message": message }));
                     }
                 }
                 #[cfg(target_os = "macos")]
@@ -194,6 +201,9 @@ fn wake_thread_main(
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => {
                 mic = None;
+                if let Some(snap) = snap.as_mut() {
+                    snap.reset();
+                }
                 if stop.load(Ordering::Relaxed) {
                     break;
                 }
@@ -202,6 +212,12 @@ fn wake_thread_main(
         };
 
         let resampled = resample_mono_to_16k(&chunk, *sample_rate);
+        if !is_paused.load(Ordering::Relaxed)
+            && snap.as_mut().is_some_and(|snap| snap.process(&resampled))
+        {
+            let _ = app.emit("snap-detected", json!({}));
+            on_snap();
+        }
 
         if let Some(preroll) = app.try_state::<crate::audio::WakePreroll>() {
             preroll.push_resampled_16k(&resampled);

@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, TRUE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, MONITOR_DEFAULTTOPRIMARY,
-    MONITOR_DEFAULTTONEAREST, MONITORINFO,
+    GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    MONITOR_DEFAULTTOPRIMARY,
 };
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -18,8 +18,8 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetAncestor, GetForegroundWindow, GetWindowRect, GetWindowTextW,
     GetWindowThreadProcessId, IsIconic, IsWindowVisible, PostMessageW, SetForegroundWindow,
-    SetWindowPos, ShowWindow, GA_ROOT, HWND_TOP, SW_MAXIMIZE, SW_RESTORE, SWP_NOZORDER,
-    SWP_SHOWWINDOW, WM_CLOSE,
+    SetWindowPos, ShowWindow, GA_ROOT, HWND_TOP, SWP_NOZORDER, SWP_SHOWWINDOW, SW_MAXIMIZE,
+    SW_RESTORE, WM_CLOSE,
 };
 
 /// Minimum title / display-name fuzzy ratio for existing-window focus.
@@ -58,7 +58,7 @@ fn bring_to_front(hwnd: HWND) {
     }
 }
 
-fn is_own_pid(window_pid: u32, own_pid: u32) -> bool {
+pub(super) fn is_own_pid(window_pid: u32, own_pid: u32) -> bool {
     window_pid == own_pid
 }
 
@@ -83,7 +83,10 @@ pub fn placement_status_label(zone: &str) -> String {
 pub fn snapshot_top_level_windows() -> WindowSnapshot {
     let mut hwnds = WindowSnapshot::new();
     unsafe {
-        let _ = EnumWindows(Some(enum_collect_visible), LPARAM(&mut hwnds as *mut _ as isize));
+        let _ = EnumWindows(
+            Some(enum_collect_visible),
+            LPARAM(&mut hwnds as *mut _ as isize),
+        );
     }
     hwnds
 }
@@ -206,7 +209,10 @@ fn snap_target_window() -> Option<HWND> {
     }
     let mut ctx: (u32, Option<HWND>) = (own_pid, None);
     unsafe {
-        let _ = EnumWindows(Some(enum_first_foreign), LPARAM(&mut ctx as *mut _ as isize));
+        let _ = EnumWindows(
+            Some(enum_first_foreign),
+            LPARAM(&mut ctx as *mut _ as isize),
+        );
     }
     ctx.1
 }
@@ -226,7 +232,8 @@ unsafe extern "system" fn enum_first_foreign(hwnd: HWND, lparam: LPARAM) -> BOOL
 
 /// An open window matches `name` by exe or title, for apps the index doesn't list (CLI-launched).
 pub fn has_open_app_window(name: &str) -> bool {
-    find_existing_window_for_app(name, name).is_some_and(|h| window_pid(h) != Some(std::process::id()))
+    find_existing_window_for_app(name, name)
+        .is_some_and(|h| window_pid(h) != Some(std::process::id()))
 }
 
 fn apply_zone(hwnd: HWND, zone: &str, monitor: &str) -> Result<(), String> {
@@ -264,9 +271,13 @@ fn apply_zone(hwnd: HWND, zone: &str, monitor: &str) -> Result<(), String> {
 
 fn monitor_work_area(hwnd: HWND, monitor: &str) -> Result<RECT, String> {
     let hmon = match monitor.trim() {
-        DEFAULT_MONITOR | "" => unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) },
+        DEFAULT_MONITOR | "" => unsafe {
+            MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY)
+        },
         other => {
-            return Err(format!("unsupported monitor selector `{other}` (use `{DEFAULT_MONITOR}`)"));
+            return Err(format!(
+                "unsupported monitor selector `{other}` (use `{DEFAULT_MONITOR}`)"
+            ));
         }
     };
     let hmon = if hmon.0.is_null() {
@@ -431,7 +442,7 @@ fn is_placeable_top_level(hwnd: HWND) -> bool {
     }
 }
 
-fn window_pid(hwnd: HWND) -> Option<u32> {
+pub(super) fn window_pid(hwnd: HWND) -> Option<u32> {
     unsafe {
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));

@@ -453,6 +453,8 @@ mod tests {
         let settings = AppSettings {
             wake_engine: "oww".into(),
             oww_threshold: 0.73,
+            snap_toggle_enabled: false,
+            snap_sensitivity_db: 18.0,
             stt_provider: "local".into(),
             remote_stt_url: String::new(),
             remote_stt_model: None,
@@ -461,7 +463,8 @@ mod tests {
             local_whisper_use_gpu: false,
             local_whisper_model: crate::audio::stt::DEFAULT_LOCAL_WHISPER_MODEL.to_string(),
             llm_router_model_path: None,
-            llm_router_confidence_threshold: crate::db::settings::DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD,
+            llm_router_confidence_threshold:
+                crate::db::settings::DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD,
             llm_router_tier2_enabled: false,
             llm_router_warmup_on_launch: false,
             llm_composer_enabled: false,

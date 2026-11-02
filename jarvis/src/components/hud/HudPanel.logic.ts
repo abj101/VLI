@@ -12,6 +12,7 @@ export type CenterSelectorInput = {
 export type CenterSelectorResult =
   | { kind: "error"; text: string }
   | { kind: "match" }
+  | { kind: "success" }
   | { kind: "action"; text: string }
   | { kind: "transcript"; text: string }
   | { kind: "placeholder" };
@@ -28,6 +29,8 @@ export function announcableText(
       return selected.text;
     case "match":
       return input.match?.matched_phrase ?? "";
+    case "success":
+      return "Command completed";
     case "placeholder":
       return "";
   }
@@ -47,6 +50,10 @@ export function selectCenterContent(
 
   if (input.actionError) {
     return { kind: "error", text: input.actionError };
+  }
+
+  if (input.phase === "done") {
+    return { kind: "success" };
   }
 
   const transcript = input.transcript.trim();
@@ -77,8 +84,7 @@ export function selectCenterContent(
     normalizedActionText &&
     (input.phase === "matched" ||
       input.phase === "executing" ||
-      input.phase === "awaiting_input" ||
-      input.phase === "done")
+      input.phase === "awaiting_input")
   ) {
     return { kind: "action", text: normalizedActionText };
   }

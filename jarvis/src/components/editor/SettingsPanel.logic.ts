@@ -148,7 +148,7 @@ export function applyEditorThemeToDocument(pref: EditorThemePreference): void {
 const HUD_TRANSPARENCY_MIN = 0;
 const HUD_TRANSPARENCY_MAX = 100;
 export const HUD_TRANSPARENCY_DEFAULT = 50;
-const HUD_MATERIAL_ALPHA_FLOOR_PCT = 50;
+const HUD_MATERIAL_ALPHA_FLOOR_PCT = 65;
 
 const HUD_MATERIAL_ALPHA_DEFAULT: Record<ResolvedEditorTheme, number> = {
   light: 78,
@@ -205,7 +205,7 @@ const EDITOR_TRANSPARENCY_MIN = 0;
 const EDITOR_TRANSPARENCY_MAX = 100;
 export const EDITOR_TRANSPARENCY_DEFAULT = 50;
 const EDITOR_MATERIAL_ALPHA_MAX_PCT = 100;
-const EDITOR_MATERIAL_ALPHA_FLOOR_PCT = 75;
+const EDITOR_MATERIAL_ALPHA_FLOOR_PCT = 85;
 
 const EDITOR_MATERIAL_ALPHA_DEFAULT: Record<ResolvedEditorTheme, number> = {
   light: 92,

@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head><meta charset="utf-8"><title>HUD text check</title></head>
+<body>
+  <main style="height:100vh;display:grid;place-content:center;justify-items:center;gap:24px;background:var(--color-bg-app);color:var(--glass-text)">
+    <div id="preview" style="width:480px;height:172px"></div>
+    <label>Preview text <input id="text" size="60" value="Open my calendar and show tomorrow’s meetings"></label>
+    <div>
+      <button id="transcript">Transcript</button>
+      <button id="match">Recognized command</button>
+      <button id="error">Error</button>
+      <button id="completed">Completed</button>
+      <button id="replay">Replay completion</button>
+      <button id="theme">Switch theme</button>
+      <button id="width">Switch width</button>
+      <button id="checks">Run checks</button>
+    </div>
+    <output id="result" style="max-width:65ch;font:14px/1.5 system-ui"></output>
+  </main>
+  <script type="module">
+    import React from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
+    import { HudPanel } from '/src/components/hud/HudPanel.tsx';
+    import { useHudStore } from '/src/store/hudStore.ts';
+    import '@fontsource/work-sans/400.css';
+    import '@fontsource/work-sans/500.css';
+    import '/src/App.css';
+
+    mockIPC(() => null, { shouldMockEvents: true });
+    mockWindows('hud');
+    const store = useHudStore;
+    const preview = document.getElementById('preview');
+    const input = document.getElementById('text');
+    const result = document.getElementById('result');
+    const settle = () => new Promise(resolve => setTimeout(resolve, 300));
+    const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const transcript = text => store.setState({ phase:'listening', overlayMode:'command', transcript:text, match:null, actionText:null, actionError:null });
+    const match = text => store.setState({ transcript:'', match:{ node_id:'preview', matched_phrase:text }, actionError:null });
+    createRoot(preview).render(React.createElement(HudPanel));
+    document.getElementById('transcript').onclick = () => transcript(input.value);
+    document.getElementById('match').onclick = () => match(input.value);
+    document.getElementById('error').onclick = () => store.setState({ actionError:input.value });
+    document.getElementById('completed').onclick = () => {
+      store.setState({ actionError:null });
+      store.getState().applyIpc('hud-phase', {phase:'done'});
+    };
+    document.getElementById('replay').onclick = async () => {
+      transcript(input.value);
+      await wait(600);
+      store.getState().applyIpc('hud-phase', {phase:'routing'});
+      await wait(600);
+      store.getState().applyIpc('hud-phase', {phase:'executing'});
+      await wait(300);
+      store.getState().applyIpc('hud-phase', {phase:'done'});
+      await wait(900);
+      store.getState().applyIpc('hud-phase', {phase:'stopped'});
+    };
+    document.getElementById('theme').onclick = () => document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    document.getElementById('width').onclick = () => preview.style.width = preview.style.width === '480px' ? '320px' : '480px';
+
+    async function checks() {
+      result.textContent = 'Running…';
+      const passed = [];
+      function check(condition, message) {
+        if (!condition) throw new Error(message);
+        passed.push(message);
+      }
+      try {
+        await document.fonts.ready;
+        transcript('Open my calendar');
+        await settle();
+        const firstWord = document.querySelector('.hud-text-word');
+        transcript('Open my calendar and show tomorrow’s meetings');
+        await settle();
+        check(firstWord === document.querySelector('.hud-text-word'), 'existing words stay mounted');
+        transcript('Open my calendar and show Friday’s meetings');
+        await settle();
+        check(document.querySelector('.hud-text').textContent.includes('Friday’s'), 'recognition corrections appear');
+        const longText = 'Open my calendar and show tomorrow’s meetings then move the design review to the afternoon and send everyone an updated invitation with the new meeting time';
+        for (const width of [480, 320]) {
+          preview.style.width = `${width}px`;
+          transcript(longText);
+          await settle();
+          const viewport = document.querySelector('.hud-text');
+          const track = document.querySelector('.hud-text-track');
+          await Promise.all(track.getAnimations().map(animation => animation.finished));
+          const lineHeight = parseFloat(getComputedStyle(viewport).lineHeight);
+          check(viewport.clientHeight <= 2 * lineHeight + 1, `${width}px: two-line limit`);
+          const shell = document.querySelector('.hud-root').getBoundingClientRect();
+          const textBox = viewport.getBoundingClientRect();
+          check(Math.abs((textBox.top + textBox.bottom - shell.top - shell.bottom) / 2) < 1, `${width}px: text vertically centered`);
+          check(track.scrollHeight > viewport.clientHeight, `${width}px: long transcript overflows`);
+          check(track.getBoundingClientRect().bottom <= viewport.getBoundingClientRect().bottom + 1, `${width}px: latest words visible`);
+          check(viewport.getBoundingClientRect().bottom < document.querySelector('.hud-waveform').getBoundingClientRect().top, `${width}px: waveform has its own space`);
+          match(longText);
+          await settle();
+          check(!track.style.transform, `${width}px: result resets transcript offset`);
+          check(getComputedStyle(document.querySelector('.hud-text-content')).webkitLineClamp === '2', `${width}px: long result clamped`);
+        }
+        store.getState().applyIpc('hud-phase', {phase:'executing'});
+        await settle();
+        check(!!document.querySelector('.hud-root'), 'execution keeps the HUD visible');
+        store.getState().applyIpc('hud-phase', {phase:'done'});
+        await settle();
+        check(!!document.querySelector('.hud-confirmation'), 'completion shows checkmark');
+        check(!document.querySelector('.hud-transcript-visual').textContent.includes('Understanding'), 'completion replaces understanding text');
+        await wait(600);
+        check(!!document.querySelector('.hud-confirmation'), 'checkmark remains visible for confirmation');
+        store.getState().applyIpc('hud-phase', {phase:'stopped'});
+        await wait(140);
+        const fadingShell = document.querySelector('.hud-root');
+        check(!!fadingShell && !!fadingShell.querySelector('.hud-confirmation'), 'checkmark persists during exit');
+        const opacity = Number(getComputedStyle(fadingShell).opacity);
+        check(opacity > 0 && opacity < 1, 'shell fades through intermediate opacity');
+        check(getComputedStyle(fadingShell).backdropFilter !== 'none', 'glass stays intact during fade');
+        await settle();
+        check(!document.querySelector('.hud-root'), 'HUD unmounts after fade');
+        result.textContent = `PASS: ${passed.join(' · ')}. Reduced motion: ${matchMedia('(prefers-reduced-motion: reduce)').matches ? 'on' : 'off'}.`;
+      } catch (error) {
+        result.textContent = `FAIL: ${error.message}`;
+        console.error(error);
+      } finally {
+        preview.style.width = '480px';
+        transcript(input.value);
+      }
+    }
+    document.getElementById('checks').onclick = checks;
+    checks();
+  </script>
+</body>
+</html>

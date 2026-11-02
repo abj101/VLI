@@ -3,9 +3,11 @@
 #[cfg(feature = "oww")]
 pub mod oww;
 
+mod snap;
+
 use std::path::{Path, PathBuf};
-use thiserror::Error;
 use tauri::{AppHandle, Manager};
+use thiserror::Error;
 
 /// OpenWakeWord ONNX assets under `resource_root/oww/` (keep aligned with `oww.rs`).
 const OWW_MELSPEC_ONNX: &str = "melspectrogram.onnx";
@@ -228,6 +230,8 @@ mod tests {
         let s = crate::db::AppSettings {
             wake_engine: "hotkey".into(),
             oww_threshold: crate::db::settings::DEFAULT_OWW_THRESHOLD,
+            snap_toggle_enabled: false,
+            snap_sensitivity_db: 18.0,
             stt_provider: "local".into(),
             remote_stt_url: String::new(),
             remote_stt_model: None,
@@ -236,7 +240,8 @@ mod tests {
             local_whisper_use_gpu: false,
             local_whisper_model: crate::audio::stt::DEFAULT_LOCAL_WHISPER_MODEL.to_string(),
             llm_router_model_path: None,
-            llm_router_confidence_threshold: crate::db::settings::DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD,
+            llm_router_confidence_threshold:
+                crate::db::settings::DEFAULT_LLM_ROUTER_CONFIDENCE_THRESHOLD,
             llm_router_tier2_enabled: false,
             llm_router_warmup_on_launch: false,
             llm_composer_enabled: false,

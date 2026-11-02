@@ -16,6 +16,75 @@ it("keeps the last phrase visible when the decoder resets its silence buffer", (
 });
 
 describe("reduceHudState", () => {
+  it("preserves an execution error through completion feedback", () => {
+    const failed = { ...initialHudState, phase: "executing" as const, actionError: "Launch failed" };
+    const done = reduceHudState(failed, "hud-phase", { phase: "done" });
+    expect(done.actionError).toBe("Launch failed");
+    const stopped = reduceHudState(done, "hud-phase", { phase: "stopped" });
+    expect(stopped.actionError).toBeNull();
+  });
+
+  it("tracks dictation waiting and ignores stale waiting events", () => {
+    const waiting = reduceHudState(initialHudState, "dictation-phase", {
+      active: true, sessionId: 8, waitingForInput: true,
+    });
+    expect(waiting.dictationWaiting).toBe(true);
+    const stale = reduceHudState(waiting, "dictation-phase", {
+      active: true, sessionId: 7, waitingForInput: false,
+    });
+    expect(stale).toBe(waiting);
+    const ready = reduceHudState(waiting, "dictation-phase", {
+      active: true, sessionId: 8, waitingForInput: false,
+    });
+    expect(ready.dictationWaiting).toBe(false);
+    const stopped = reduceHudState(waiting, "dictation-phase", {
+      active: false, sessionId: 8,
+    });
+    expect(stopped.dictationWaiting).toBe(false);
+  });
+  it.each([
+    ["Hey Jarvis, open notepad", "open notepad"],
+    ["HEY, JARVIS. Open Discord.", "Open Discord."],
+    ["Hey Jarvis.", ""],
+    ["Jarvis, open notepad", "open notepad"],
+    ["Okay Jervis, open notepad", "open notepad"],
+    ["open the hey jarvis settings", "open the hey jarvis settings"],
+    ["hey Sam, open notepad", "hey Sam, open notepad"],
+  ])("hides the wake prefix in HUD transcript %j", (text, expected) => {
+    const listening = reduceHudState(initialHudState, "hud-phase", {
+      phase: "listening", session_id: 7,
+    });
+    for (const is_final of [false, true]) {
+      const next = reduceHudState(listening, "transcript-update", {
+        text, is_final, hud_session_id: 7,
+      });
+      expect(next.transcript).toBe(expected);
+      expect(next.transcriptFinal).toBe(is_final);
+    }
+  });
+
+  it("replays the dictation print for every inserted sentence, even repeats", () => {
+    const once = reduceHudState(initialHudState, "dictation-phase", { active: true, sessionId: 3, text: "Hi." });
+    const twice = reduceHudState(once, "dictation-phase", { active: true, sessionId: 3, text: "Hi." });
+    const idle = reduceHudState(twice, "dictation-phase", { active: true, sessionId: 3 });
+    expect(once.dictationPrint).toEqual({ text: "Hi.", id: 1 });
+    expect(twice.dictationPrint.id).toBe(2);
+    expect(idle.dictationPrint).toBe(twice.dictationPrint);
+  });
+
+  it("ignores the starting command's late status after switching to dictation", () => {
+    const command = reduceHudState(initialHudState, "hud-phase", {
+      phase: "executing", session_id: 7, overlay_mode: "command",
+    });
+    const dictation = reduceHudState(command, "hud-phase", {
+      phase: "listening", session_id: 8, overlay_mode: "dictation",
+    });
+    const next = reduceHudState(dictation, "action-status", { text: "Started dictation" });
+    expect(next).toBe(dictation);
+    expect(next.phase).toBe("listening");
+    expect(next.actionText).toBeNull();
+  });
+
   it("applies hud-phase and replaces phase", () => {
     const next = reduceHudState(initialHudState, "hud-phase", {
       phase: "listening" as HudPhase,

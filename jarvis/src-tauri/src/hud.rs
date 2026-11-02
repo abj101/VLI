@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::window::Color;
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Listener, LogicalPosition, LogicalSize, Manager, WebviewWindow};
 
 /// Suppresses persisting HUD position while Rust applies default / restored placement.
 #[derive(Debug, Default)]
@@ -69,15 +69,20 @@ impl<'de> Deserialize<'de> for HudOverlayMode {
 
 pub const HUD_COMMAND_WIDTH: f64 = 480.0;
 pub const HUD_COMMAND_HEIGHT: f64 = 172.0;
-pub const HUD_DICTATION_WIDTH: f64 = 200.0;
-pub const HUD_DICTATION_HEIGHT: f64 = 88.0;
+pub const HUD_DICTATION_WIDTH: f64 = 24.0;
+pub const HUD_DICTATION_HEIGHT: f64 = 24.0;
+// Must match the transparent 2px margin on .hud-root--dictation in App.css.
+const DICTATION_EDGE_INSET: f64 = 2.0;
 /// Logical px gap between dictation HUD bottom edge and monitor work area bottom.
 pub const HUD_DICTATION_BOTTOM_MARGIN: f64 = 48.0;
 
 pub fn overlay_logical_size(mode: HudOverlayMode) -> LogicalSize<f64> {
     match mode {
         HudOverlayMode::Command => LogicalSize::new(HUD_COMMAND_WIDTH, HUD_COMMAND_HEIGHT),
-        HudOverlayMode::Dictation => LogicalSize::new(HUD_DICTATION_WIDTH, HUD_DICTATION_HEIGHT),
+        HudOverlayMode::Dictation => LogicalSize::new(
+            HUD_DICTATION_WIDTH + DICTATION_EDGE_INSET * 2.0,
+            HUD_DICTATION_HEIGHT + DICTATION_EDGE_INSET * 2.0,
+        ),
     }
 }
 
@@ -142,6 +147,230 @@ fn set_hud_position_guarded(
         .map_err(|e| e.to_string());
     guard.0.store(false, Ordering::SeqCst);
     result
+}
+
+/// Physical-px rect `(left, top, right, bottom)`.
+pub type PxRect = (i32, i32, i32, i32);
+
+/// Top-left for a `(w, h)` HUD beside `t`: right, left, below, above - first that fits `work`;
+/// else the right-hand spot clamped on-screen. Left/right centre on `t`, below/above align to its left.
+pub fn anchor_beside(t: PxRect, (w, h): (i32, i32), work: PxRect, gap: i32) -> (i32, i32) {
+    let mid_y = (t.1 + t.3 - h) / 2;
+    let sides = [
+        (t.2 + gap, mid_y),
+        (t.0 - gap - w, mid_y),
+        (t.0, t.3 + gap),
+        (t.0, t.1 - gap - h),
+    ];
+    let fits =
+        |&(x, y): &(i32, i32)| x >= work.0 && y >= work.1 && x + w <= work.2 && y + h <= work.3;
+    let (x, y) = sides.iter().copied().find(fits).unwrap_or(sides[0]);
+    (x.min(work.2 - w).max(work.0), y.min(work.3 - h).max(work.1))
+}
+
+static DICTATION_TYPING: AtomicBool = AtomicBool::new(false);
+
+/// Set while dictated text is being typed, so the orb tracks the caret every frame.
+pub fn set_dictation_typing(on: bool) {
+    DICTATION_TYPING.store(on, Ordering::Relaxed);
+}
+
+/// Orb diameter for an anchor rect: the caret's line height (so it sits within the line and
+/// matches the font), or the default beside a selection / text box. All physical px.
+pub fn orb_diameter(rect: PxRect, scale: f64) -> i32 {
+    let px = |l: f64| (l * scale).round() as i32;
+    if rect.2 - rect.0 <= 3 {
+        (rect.3 - rect.1).clamp(px(16.0), px(32.0))
+    } else {
+        px(HUD_DICTATION_WIDTH)
+    }
+}
+
+const HUD_MORPH_SECONDS: f64 = 0.380;
+
+/// Zero velocity and acceleration at both ends keep the first few frames from jumping.
+fn morph_rect(from: [f64; 4], to: [f64; 4], elapsed: f64) -> [f64; 4] {
+    let t = (elapsed / HUD_MORPH_SECONDS).clamp(0.0, 1.0);
+    let eased = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+    std::array::from_fn(|i| from[i] + (to[i] - from[i]) * eased)
+}
+
+/// Keeps the dictation orb beside the text caret (or selection / text box) until the session ends.
+/// With `morph`, glide and shrink the same visible surface after its shape is ready.
+/// ponytail: polls every frame while typing, else every ~50 ms; SetWinEventHook
+/// (EVENT_OBJECT_LOCATIONCHANGE on OBJID_CARET) if CPU shows up.
+#[cfg(windows)]
+pub fn follow_text_box(app: AppHandle, session_id: u64, morph: bool) {
+    use crate::window::focused_text_rect;
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION, SWP_NOACTIVATE,
+        SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    };
+    std::thread::spawn(move || {
+        let Some(window) = app.get_webview_window(HUD_WINDOW_LABEL) else {
+            return;
+        };
+        let Ok(hwnd) = window.hwnd() else { return };
+        let (Ok(start), Ok(size)) = (window.outer_position(), window.outer_size()) else {
+            return;
+        };
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+        let ready_listener = app.listen("hud-dictation-ready", move |event| {
+            if serde_json::from_str::<u64>(event.payload()).ok() == Some(session_id) {
+                let _ = ready_tx.try_send(());
+            }
+        });
+        let scale = window.scale_factor().unwrap_or(1.0);
+        // (x, y, w, h) in physical px.
+        let mut cur = [
+            start.x as f64,
+            start.y as f64,
+            size.width as f64,
+            size.height as f64,
+        ];
+        let mut placed = [start.x, start.y, size.width as i32, size.height as i32];
+        let mut target = None::<[f64; 4]>;
+        let mut animations = BOOL(1);
+        let _ = unsafe {
+            SystemParametersInfoW(
+                SPI_GETCLIENTAREAANIMATION,
+                0,
+                Some(std::ptr::from_mut(&mut animations).cast()),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        };
+        let animate = animations.as_bool();
+        let mut origin = cur;
+        let mut needs_morph = morph;
+        let mut morphing = morph && animate;
+        let mut morph_started = None::<std::time::Instant>;
+        let mut first_placement = true;
+        let mut frame = 0u32;
+        let mut last = std::time::Instant::now();
+        while crate::dictation::accepts(&app, session_id) {
+            let typing = DICTATION_TYPING.load(Ordering::Relaxed);
+            if target.is_none() || typing || frame % 3 == 0 {
+                let destination = focused_text_rect()
+                    .map(|(rect, work)| {
+                        let target_scale = window
+                            .monitor_from_point(rect.0 as f64, rect.1 as f64)
+                            .ok()
+                            .flatten()
+                            .map(|m| m.scale_factor())
+                            .unwrap_or(scale);
+                        let d = orb_diameter(rect, target_scale)
+                            + (DICTATION_EDGE_INSET * 2.0 * target_scale).round() as i32;
+                        let gap = (6.0 * target_scale).round() as i32;
+                        let (x, y) = anchor_beside(rect, (d, d), work, gap);
+                        [x as f64, y as f64, d as f64, d as f64]
+                    });
+                if destination.is_none() {
+                    if let Err(err) = crate::dictation::set_input_available(&app, session_id, false) {
+                        warn!("dictation input pause: {err}");
+                        break;
+                    }
+                    if crate::dictation::waiting_expired(&app, session_id) {
+                        let _ = crate::dictation::stop_dictation(
+                            &app, &app.state::<crate::SharedHud>(), &app.state::<crate::audio::SharedAudioPipeline>(),
+                        );
+                        break;
+                    }
+                    if let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) {
+                        origin = [position.x as f64, position.y as f64, size.width as f64, size.height as f64];
+                        cur = origin;
+                        placed = [position.x, position.y, size.width as i32, size.height as i32];
+                    }
+                    target = None;
+                    needs_morph = true;
+                    morphing = animate;
+                    first_placement = true;
+                    last = std::time::Instant::now();
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    continue;
+                }
+                if crate::dictation::waiting_for_input(&app) {
+                    // Readiness belongs to this morph, not the previous caret placement.
+                    while ready_rx.try_recv().is_ok() {}
+                }
+                if let Err(err) = crate::dictation::set_input_available(&app, session_id, true) {
+                    warn!("dictation input resume: {err}");
+                    break;
+                }
+                if let Some(t) = destination {
+                    if target.is_none() {
+                        if needs_morph {
+                            // Commit the original outline before the first native resize.
+                            while crate::dictation::accepts(&app, session_id)
+                                && ready_rx
+                                    .recv_timeout(std::time::Duration::from_millis(50))
+                                    .is_err()
+                            {}
+                        }
+                        if !morphing {
+                            cur = t;
+                        }
+                        morph_started = Some(std::time::Instant::now());
+                    }
+                    target = Some(t);
+                }
+            }
+            frame += 1;
+            let dt = last.elapsed().as_secs_f64();
+            last = std::time::Instant::now();
+            if let Some(t) = target {
+                if morphing {
+                    let elapsed = morph_started.unwrap().elapsed().as_secs_f64();
+                    cur = morph_rect(origin, t, elapsed);
+                    morphing = elapsed < HUD_MORPH_SECONDS;
+                } else {
+                    let rate = if typing { 45.0 } else { 18.0 };
+                    let k = if animate {
+                        1.0 - (-rate * dt).exp()
+                    } else {
+                        1.0
+                    };
+                    for i in 0..4 {
+                        cur[i] += (t[i] - cur[i]) * k;
+                    }
+                }
+                let next = cur.map(|v| v.round() as i32);
+                // A single native update avoids rendering a resized frame at the previous position.
+                if next != placed {
+                    // A caret query can outlive cancellation or a replacement session.
+                    if !crate::dictation::accepts(&app, session_id) {
+                        break;
+                    }
+                    if unsafe {
+                        SetWindowPos(
+                            HWND(hwnd.0),
+                            None,
+                            next[0],
+                            next[1],
+                            next[2],
+                            next[3],
+                            SWP_NOACTIVATE | SWP_NOZORDER,
+                        )
+                    }
+                    .is_err()
+                    {
+                        break;
+                    }
+                    placed = next;
+                }
+                if !morphing
+                    && (first_placement || ready_rx.try_recv().is_ok())
+                    && crate::dictation::accepts(&app, session_id)
+                {
+                    let _ = app.emit("hud-dictation-placed", session_id);
+                    first_placement = false;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(16));
+        }
+        app.unlisten(ready_listener);
+    });
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -283,6 +512,18 @@ pub fn apply_hud_window_geometry(app: &AppHandle, mode: HudOverlayMode) -> Resul
     apply_hud_window_position(app, &window, mode)
 }
 
+/// Waiting dictation uses the main HUD footprint at the center without taking text focus.
+pub fn present_dictation_waiting(app: &AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window(HUD_WINDOW_LABEL)
+        .ok_or_else(|| "missing HUD window".to_string())?;
+    window.set_size(overlay_logical_size(HudOverlayMode::Command)).map_err(|e| e.to_string())?;
+    let position = default_hud_position(&window, app, HudOverlayMode::Command)?;
+    set_hud_position_guarded(&window, &app.state::<HudPositionGuard>(), position)?;
+    present_hud_window(app, &window, HudOverlayMode::Command)?;
+    sync_hud_webview_background(app);
+    Ok(())
+}
+
 pub fn persist_hud_window_position(app: &AppHandle, mode: HudOverlayMode) -> Result<(), String> {
     let window = app
         .get_webview_window(HUD_WINDOW_LABEL)
@@ -383,8 +624,11 @@ pub fn sync_hud_window(app: &AppHandle, phase: HudPhase) -> Result<(), String> {
     let window = app
         .get_webview_window(HUD_WINDOW_LABEL)
         .ok_or_else(|| format!("missing webview window `{HUD_WINDOW_LABEL}`"))?;
+    // Dictation HUD sits beside the user's text: never steal clicks or drags there.
     window
-        .set_ignore_cursor_events(ignore_cursor_for_phase(phase))
+        .set_ignore_cursor_events(
+            ignore_cursor_for_phase(phase) || crate::dictation::is_active(app),
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -512,9 +756,62 @@ pub fn present_hud_window(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn morph_has_a_gentle_first_frame_and_finishes_without_overshooting() {
+        let from = [800.0, 400.0, 480.0, 172.0];
+        let to = [120.0, 900.0, 28.0, 28.0];
+        assert_eq!(super::morph_rect(from, to, 0.0), from);
+        let first = super::morph_rect(from, to, 1.0 / 60.0);
+        assert!((first[2] - from[2]).abs() < 1.0);
+        for fps in [30, 60, 144] {
+            let frames = (super::HUD_MORPH_SECONDS * fps as f64).ceil() as usize;
+            let mut previous = from;
+            for frame in 1..=frames {
+                let next = super::morph_rect(from, to, frame as f64 / fps as f64);
+                for i in 0..4 {
+                    assert!((next[i] - to[i]).abs() <= (previous[i] - to[i]).abs() + 1e-9);
+                    assert!(next[i] >= from[i].min(to[i]) && next[i] <= from[i].max(to[i]));
+                }
+                previous = next;
+            }
+            assert_eq!(previous, to);
+        }
+    }
+
+    #[test]
+    fn orb_matches_caret_line_height_within_limits() {
+        assert_eq!(orb_diameter((10, 0, 11, 20), 1.0), 20);
+        assert_eq!(orb_diameter((10, 0, 11, 20), 2.0), 32); // 20 px caret at 2x is below the 16 px floor
+        assert_eq!(orb_diameter((10, 0, 11, 90), 1.0), 32);
+        assert_eq!(orb_diameter((10, 0, 300, 40), 1.0), 24); // text box: default size
+    }
+
+    #[test]
+    fn anchor_beside_picks_first_side_that_fits() {
+        let work = (0, 0, 1000, 800);
+        let hud = (100, 50);
+        // right
+        assert_eq!(
+            anchor_beside((100, 300, 300, 340), hud, work, 10),
+            (310, 295)
+        );
+        // left (no room right)
+        assert_eq!(
+            anchor_beside((800, 300, 950, 340), hud, work, 10),
+            (690, 295)
+        );
+        // below (target spans width)
+        assert_eq!(anchor_beside((0, 100, 1000, 140), hud, work, 10), (0, 150));
+        // above (target spans width, no room below)
+        assert_eq!(anchor_beside((0, 740, 1000, 790), hud, work, 10), (0, 680));
+        // fits nowhere: clamped on-screen
+        let (x, y) = anchor_beside((0, 0, 1000, 800), hud, work, 10);
+        assert!((0..=900).contains(&x) && (0..=750).contains(&y));
+    }
+
     use super::{
-        ignore_cursor_for_phase, overlay_logical_size, parse_hud_position, HudLogicalPosition,
-        HudOverlayMode, HudPhase,
+        anchor_beside, ignore_cursor_for_phase, orb_diameter, overlay_logical_size,
+        parse_hud_position, HudLogicalPosition, HudOverlayMode, HudPhase,
     };
 
     #[test]
@@ -539,6 +836,8 @@ mod tests {
     #[test]
     fn dictation_overlay_is_compact() {
         let size = overlay_logical_size(HudOverlayMode::Dictation);
+        assert_eq!(size.width, super::HUD_DICTATION_WIDTH + 4.0);
+        assert_eq!(size.height, super::HUD_DICTATION_HEIGHT + 4.0);
         assert!(size.width < super::HUD_COMMAND_WIDTH);
         assert!(size.height < super::HUD_COMMAND_HEIGHT);
     }

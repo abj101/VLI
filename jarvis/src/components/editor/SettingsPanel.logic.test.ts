@@ -118,9 +118,9 @@ describe("SettingsPanel logic", () => {
   it("resolves HUD material alpha from transparency with theme defaults at 0", () => {
     expect(resolveHudMaterialAlphaPct(0, "light")).toBeNull();
     expect(resolveHudMaterialAlphaPct(0, "dark")).toBeNull();
-    expect(resolveHudMaterialAlphaPct(100, "light")).toBe(50);
-    expect(resolveHudMaterialAlphaPct(100, "dark")).toBe(50);
-    expect(resolveHudMaterialAlphaPct(50, "dark")).toBe(69);
+    expect(resolveHudMaterialAlphaPct(100, "light")).toBe(65);
+    expect(resolveHudMaterialAlphaPct(100, "dark")).toBe(65);
+    expect(resolveHudMaterialAlphaPct(50, "dark")).toBe(77);
   });
 
   it("parses editor transparency as 0–100 with unset/invalid → 50", () => {
@@ -136,14 +136,14 @@ describe("SettingsPanel logic", () => {
 
   it("resolves editor material alpha from transparency (0 = opaque, 100 = floor)", () => {
     expect(resolveEditorMaterialAlphaPct(0)).toBe(100);
-    expect(resolveEditorMaterialAlphaPct(100)).toBe(75);
-    expect(resolveEditorMaterialAlphaPct(50)).toBe(88);
+    expect(resolveEditorMaterialAlphaPct(100)).toBe(85);
+    expect(resolveEditorMaterialAlphaPct(50)).toBe(93);
     expect(resolveEditorSidebarMaterialAlphaPct(0, "light")).toBe(100);
     expect(resolveEditorSidebarMaterialAlphaPct(0, "dark")).toBe(100);
-    expect(resolveEditorSidebarMaterialAlphaPct(100, "light")).toBe(80);
-    expect(resolveEditorSidebarMaterialAlphaPct(100, "dark")).toBe(78);
-    expect(resolveEditorSidebarMaterialAlphaPct(50, "dark")).toBe(91);
-    expect(resolveEditorSidebarMaterialAlphaPct(50, "light")).toBe(93);
+    expect(resolveEditorSidebarMaterialAlphaPct(100, "light")).toBe(90);
+    expect(resolveEditorSidebarMaterialAlphaPct(100, "dark")).toBe(88);
+    expect(resolveEditorSidebarMaterialAlphaPct(50, "dark")).toBe(96);
+    expect(resolveEditorSidebarMaterialAlphaPct(50, "light")).toBe(98);
   });
 
   it("keeps sidebar denser than shell by the theme default offset when headroom allows", () => {

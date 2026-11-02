@@ -23,6 +23,7 @@ export interface DictationPhasePayload {
   active: boolean;
   sessionId: number;
   text?: string;
+  waitingForInput?: boolean;
 }
 
 export interface HudPhaseSnapshot {

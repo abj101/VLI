@@ -35,8 +35,10 @@ export type HudState = {
   actionError: string | null;
   amplitude: number;
   audioError: string | null;
-  dictationPreview: string;
+  /** Last sentence inserted by dictation; `id` bumps per insert so repeats replay the print. */
+  dictationPrint: { text: string; id: number };
   dictationSessionId: number;
+  dictationWaiting: boolean;
 };
 
 export const initialHudState: HudState = {
@@ -50,8 +52,9 @@ export const initialHudState: HudState = {
   actionError: null,
   amplitude: 0,
   audioError: null,
-  dictationPreview: "",
+  dictationPrint: { text: "", id: 0 },
   dictationSessionId: 0,
+  dictationWaiting: false,
 };
 
 export function reduceHudState(
@@ -103,7 +106,7 @@ export function reduceHudState(
       ) {
         next.match = null;
         next.actionText = null;
-        next.actionError = null;
+      if (phase !== "done") next.actionError = null;
         next.transcript = "";
         next.transcriptFinal = false;
         next.amplitude = 0;
@@ -127,7 +130,11 @@ export function reduceHudState(
       }
       return {
         ...state,
-        transcript: u.text,
+        // Wake preroll is included in STT, but only the spoken command belongs in the HUD.
+        transcript: u.text.replace(
+          /^\s*(?:(?:hey|hay|hi|ok|okay)[\s,.:;!?-]+)?(?:jarvis|javis|jervis)\b[\s,.:;!?-]*/i,
+          "",
+        ),
         transcriptFinal: u.is_final,
         // Only clear match on new partials while still listening; late STT finals after match
         // would otherwise wipe the HUD before executing/done.
@@ -137,6 +144,8 @@ export function reduceHudState(
     case "match-result":
       return { ...state, match: payload as MatchResult };
     case "action-status":
+      // The command that starts dictation can finish after the dictation HUD opens.
+      if (state.overlayMode === "dictation") return state;
       return { ...state, actionText: (payload as ActionStatus).text, actionError: null };
     case "action-error": {
       const { message } = payload as ActionErrorPayload;
@@ -161,7 +170,10 @@ export function reduceHudState(
       return {
         ...state,
         dictationSessionId: update.sessionId,
-        dictationPreview: update.active ? update.text ?? "" : "",
+        dictationWaiting: update.active && (update.waitingForInput ?? state.dictationWaiting),
+        dictationPrint: update.active && update.text
+          ? { text: update.text, id: state.dictationPrint.id + 1 }
+          : state.dictationPrint,
       };
     }
     default:

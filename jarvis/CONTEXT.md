@@ -31,7 +31,7 @@ Warm CMake build trees under `jarvis/.cache/gpu-prebuild/<arch>/` for `whisper-r
 
 ## Dictation session
 
-Voice-dictation period using the shared HUD session counter. Partial transcripts appear only in the HUD. Each final utterance is inserted into the focused field once, without deleting existing text.
+Voice-dictation period using the shared HUD session counter. Active dictation shows only a microphone waveform beside the caret. On Windows, starting without an editable field opens a centered main HUD with a waiting prompt and pauses microphone capture; focusing a field morphs that surface into the caret orb. Initial waiting dismisses after ten seconds. Losing focus later pauses capture and retains untyped text until a field returns, without an automatic timeout. Partial transcripts never touch the focused field. Each final utterance is inserted once, without deleting existing text.
 
 ## Dictation utterance
 

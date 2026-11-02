@@ -35,7 +35,32 @@ pub fn ensure_tools_schema(conn: &Connection) -> Result<(), DbError> {
     Ok(())
 }
 
-/// Older installs seeded `shortcut` before browser back/forward existed.
+/// Builtin shortcut names, in the order d1 sees them; must match `execute_shortcut_tool`.
+const SHORTCUT_NAMES: [&str; 20] = [
+    "copy",
+    "paste",
+    "cut",
+    "undo",
+    "redo",
+    "select_all",
+    "save",
+    "find",
+    "browser_back",
+    "browser_forward",
+    "new_tab",
+    "close_tab",
+    "reopen_tab",
+    "next_tab",
+    "previous_tab",
+    "refresh",
+    "close_window",
+    "switch_app",
+    "minimize",
+    "show_desktop",
+];
+
+/// Older installs stored a different list (missing values, stale ones like `hard_refresh`, other
+/// order). d1 answers by option position, so a drifted list routes "new tab" to `next_tab`.
 fn migrate_builtin_shortcut_enum(conn: &Connection) -> Result<(), DbError> {
     let Some(tool) = get_tool_by_name(conn, "shortcut")? else {
         return Ok(());
@@ -47,14 +72,8 @@ fn migrate_builtin_shortcut_enum(conn: &Connection) -> Result<(), DbError> {
     let Some(param) = parameters.iter_mut().find(|p| p.name == "name") else {
         return Ok(());
     };
-    let mut changed = false;
-    for value in ["browser_back", "browser_forward"] {
-        if !param.enum_values.iter().any(|v| v == value) {
-            param.enum_values.push(value.into());
-            changed = true;
-        }
-    }
-    if changed {
+    if param.enum_values != SHORTCUT_NAMES {
+        param.enum_values = SHORTCUT_NAMES.into_iter().map(str::to_string).collect();
         update_tool(
             conn,
             tool.id,
@@ -189,31 +208,7 @@ fn seed_builtin_shortcut(conn: &Connection) -> Result<(), DbError> {
                 param_type: "enum".into(),
                 description: Some("Shortcut to run".into()),
                 required: true,
-                enum_values: [
-                    "copy",
-                    "paste",
-                    "cut",
-                    "undo",
-                    "redo",
-                    "select_all",
-                    "save",
-                    "find",
-                    "browser_back",
-                    "browser_forward",
-                    "new_tab",
-                    "close_tab",
-                    "reopen_tab",
-                    "next_tab",
-                    "previous_tab",
-                    "refresh",
-                    "close_window",
-                    "switch_app",
-                    "minimize",
-                    "show_desktop",
-                ]
-                .into_iter()
-                .map(str::to_string)
-                .collect(),
+                enum_values: SHORTCUT_NAMES.into_iter().map(str::to_string).collect(),
             }],
             actions: vec![Action::SendKeys {
                 keys: "{{name}}".into(),
@@ -230,7 +225,8 @@ fn seed_builtin_media(conn: &Connection) -> Result<(), DbError> {
         NewToolDefinition {
             name: "media".into(),
             display_name: "Media control".into(),
-            description: "play/pause music, next or previous song/track, volume up/down, mute".into(),
+            description: "play/pause music, next or previous song/track, volume up/down, mute"
+                .into(),
             parameters: vec![ToolParameter {
                 name: "control".into(),
                 param_type: "enum".into(),
@@ -432,7 +428,8 @@ fn seed_builtin_open_target(conn: &Connection) -> Result<(), DbError> {
     let row = NewToolDefinition {
         name: "open_target".into(),
         display_name: "Open app or site".into(),
-        description: "open or launch an app or program by name, optionally on the left/right".into(),
+        description: "open or launch an app or program by name, optionally on the left/right"
+            .into(),
         parameters,
         actions,
         enabled: true,

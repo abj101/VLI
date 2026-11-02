@@ -550,33 +550,37 @@ fn stt_loop(
         )?;
     }
 
-    while let Ok(chunk) = pcm_rx.recv() {
+    while let Ok(first) = pcm_rx.recv() {
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        let chunk_16k = resample_mono_to_16k(&chunk, input_sample_rate);
-        if silence_reset.push_and_should_reset(&chunk_16k) {
-            debug!("stt: silence gap reached; reset rolling decode context");
-            buffer_16k.clear();
-            if !last_text.is_empty() {
-                last_text.clear();
-                let _ = app.emit(
-                    "transcript-update",
-                    TranscriptUpdate {
-                        text: String::new(),
-                        is_final: false,
-                        hud_session_id,
-                        kind: TranscriptPartialKind::SilenceReset,
-                    },
-                );
-            } else {
-                last_text.clear();
+        // Decoding blocks this loop, so take every chunk queued meanwhile before the next one.
+        // Otherwise a decode slower than `INFER_EVERY` runs once per ~10 ms chunk and the
+        // transcript falls further behind live speech on every pass (looks frozen).
+        let queued = std::iter::from_fn(|| pcm_rx.try_recv().ok());
+        for chunk in std::iter::once(first).chain(queued) {
+            let chunk_16k = resample_mono_to_16k(&chunk, input_sample_rate);
+            if silence_reset.push_and_should_reset(&chunk_16k) {
+                debug!("stt: silence gap reached; reset rolling decode context");
+                buffer_16k.clear();
+                if !last_text.is_empty() {
+                    last_text.clear();
+                    let _ = app.emit(
+                        "transcript-update",
+                        TranscriptUpdate {
+                            text: String::new(),
+                            is_final: false,
+                            hud_session_id,
+                            kind: TranscriptPartialKind::SilenceReset,
+                        },
+                    );
+                }
+                first_decode_pending = true;
+                last_decode = Instant::now();
+                continue;
             }
-            first_decode_pending = true;
-            last_decode = Instant::now();
-            continue;
+            push_ring(&mut buffer_16k, &chunk_16k);
         }
-        push_ring(&mut buffer_16k, &chunk_16k);
         maybe_decode(
             &mut buffer_16k,
             &mut last_decode,
@@ -610,10 +614,6 @@ fn stt_loop(
     Ok(())
 }
 
-pub(crate) fn push_dictation(buffer: &mut Vec<f32>, chunk: &[f32]) {
-    buffer.extend_from_slice(chunk);
-}
-
 pub(crate) fn trim_utterance(samples: &[f32]) -> &[f32] {
     let frame = TARGET_RATE as usize / 50;
     let threshold = crate::audio::transcript_event::MIN_SPEECH_PEAK_FOR_DECODE;
@@ -630,6 +630,15 @@ pub(crate) fn trim_utterance(samples: &[f32]) -> &[f32] {
     &samples[start..end]
 }
 
+enum DictationJob {
+    /// The utterance so far, for a live hypothesis.
+    Partial(Vec<f32>),
+    /// The finished utterance.
+    Final(Vec<f32>),
+}
+
+/// Audio side of live dictation: never decodes itself, so speech can't back up. It hands the
+/// growing utterance to `decode_dictation` every `INFER_EVERY`, and the finished one at a pause.
 fn dictation_loop(
     app: &AppHandle,
     model: &Path,
@@ -639,69 +648,241 @@ fn dictation_loop(
     id: u64,
     cancel: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let mut buffer = Vec::new();
-    let mut silence = SilenceResetTracker::for_mode(true);
+    let mut utterances = Utterances::default();
+    let mut tail = DictationTail::for_app(app);
     let end_on_pause = crate::load_dictation_hotkey_mode(app) == crate::DictationHotkeyMode::Toggle;
-    let mut last_decode = Instant::now();
-    let mut speech = false;
-    let finalize = |buffer: &[f32]| {
-        let prompt = crate::dictation::dictation_prompt(app, id);
-        let started = Instant::now();
-        let decoded = run_decode_prompt(app, model, trim_utterance(buffer), gpu, &prompt);
-        if let Ok(raw) = decoded {
-            if let Some(text) = normalize_transcript_candidate(&raw) {
-                let _ = crate::dictation::publish_transcript(
-                    app,
-                    TranscriptUpdate {
-                        text,
-                        is_final: true,
-                        hud_session_id: id,
-                        kind: TranscriptPartialKind::Growth,
-                    },
-                    started.elapsed().as_millis(),
-                );
-            }
-        }
+    let (jobs, job_rx) = std::sync::mpsc::channel();
+    let decoder = {
+        let (app, model, cancel) = (app.clone(), model.to_path_buf(), Arc::clone(&cancel));
+        std::thread::spawn(move || decode_dictation(&app, &model, gpu, id, job_rx, &cancel))
     };
+    let mut last_partial = Instant::now();
     while let Ok(chunk) = rx.recv() {
         if cancel.load(Ordering::Relaxed) {
-            return Ok(());
+            break;
         }
-        let chunk = resample_mono_to_16k(&chunk, rate);
-        speech |= audio_has_speech(&chunk);
-        let pause = silence.push_and_should_reset(&chunk);
-        push_dictation(&mut buffer, &chunk);
-        if (end_on_pause && speech && pause) || buffer.len() >= TARGET_RATE as usize * 28 {
-            finalize(&buffer);
-            buffer.clear();
-            speech = false;
-            last_decode = Instant::now();
-            continue;
-        }
-        if last_decode.elapsed() >= INFER_EVERY {
-            last_decode = Instant::now();
-            let start = buffer.len().saturating_sub(MAX_BUFFER_SAMPLES);
-            let prompt = crate::dictation::dictation_prompt(app, id);
-            if let Ok(raw) = run_decode_prompt(app, model, &buffer[start..], gpu, &prompt) {
-                if let Some(text) = normalize_transcript_candidate(&raw) {
-                    let _ = crate::dictation::publish_transcript(
-                        app,
-                        TranscriptUpdate {
-                            text,
-                            is_final: false,
-                            hud_session_id: id,
-                            kind: TranscriptPartialKind::Growth,
-                        },
-                        0,
-                    );
-                }
+        let ready = tail.push(&resample_mono_to_16k(&chunk, rate));
+        if let Some(utterance) = utterances.push(&ready, end_on_pause) {
+            let _ = jobs.send(DictationJob::Final(utterance));
+            last_partial = Instant::now();
+        } else if last_partial.elapsed() >= INFER_EVERY {
+            if let Some(live) = utterances.live() {
+                let _ = jobs.send(DictationJob::Partial(live.to_vec()));
+                last_partial = Instant::now();
             }
         }
     }
     if !cancel.load(Ordering::Relaxed) {
-        finalize(&buffer);
+        if let Some(utterance) = utterances.push(
+            &tail.finish(crate::dictation::stopped_by_snap(app, id)),
+            end_on_pause,
+        ) {
+            let _ = jobs.send(DictationJob::Final(utterance));
+        }
+        if let Some(utterance) = utterances.finish() {
+            let _ = jobs.send(DictationJob::Final(utterance));
+        }
     }
+    drop(jobs);
+    // Stop waits for the last words to land.
+    let _ = decoder.join();
     Ok(())
+}
+
+/// Decoder side: types words as soon as two consecutive live hypotheses agree on them, then the
+/// rest when the utterance ends. Only the newest partial is decoded, so it never falls behind.
+/// Utterances that end before anything is committed go through the normal path (with cleanup).
+fn decode_dictation(
+    app: &AppHandle,
+    model: &Path,
+    gpu: bool,
+    id: u64,
+    jobs: Receiver<DictationJob>,
+    cancel: &AtomicBool,
+) {
+    let mut prev = String::new();
+    let mut committed = 0usize;
+    let mut prompt = None::<String>;
+    while let Ok(mut job) = jobs.recv() {
+        // A newer partial supersedes this one; a final always wins.
+        while matches!(job, DictationJob::Partial(_)) {
+            match jobs.try_recv() {
+                Ok(next) => job = next,
+                Err(_) => break,
+            }
+        }
+        if cancel.load(Ordering::Relaxed) {
+            continue;
+        }
+        // Prior utterances only: this utterance's own words must not be in its prompt.
+        let prompt_text = prompt
+            .get_or_insert_with(|| crate::dictation::dictation_prompt(app, id))
+            .clone();
+        let decode = |audio: &[f32]| {
+            run_decode_prompt(app, model, trim_utterance(audio), gpu, &prompt_text)
+                .ok()
+                .and_then(|raw| normalize_transcript_candidate(&raw))
+        };
+        match job {
+            DictationJob::Partial(audio) => {
+                let next = decode(&audio).unwrap_or_default();
+                let words = agreed_words(&prev, &next, committed);
+                prev = next;
+                if !words.is_empty() {
+                    committed += words.len();
+                    let _ = crate::dictation::commit_live(app, id, &words.join(" "));
+                }
+            }
+            DictationJob::Final(audio) => {
+                let started = Instant::now();
+                if let Some(text) = decode(&audio) {
+                    if committed == 0 {
+                        let _ = crate::dictation::publish_transcript(
+                            app,
+                            TranscriptUpdate {
+                                text,
+                                is_final: true,
+                                hud_session_id: id,
+                                kind: TranscriptPartialKind::Growth,
+                            },
+                            started.elapsed().as_millis(),
+                        );
+                    } else {
+                        // ponytail: assumes the final keeps the committed words as its prefix;
+                        // Whisper rarely rewrites earlier words, at worst a word is doubled or lost.
+                        let rest: Vec<&str> = text.split_whitespace().skip(committed).collect();
+                        if !rest.is_empty() {
+                            let _ = crate::dictation::commit_live(app, id, &rest.join(" "));
+                        }
+                    }
+                }
+                let _ = crate::dictation::finish_live_utterance(app, id);
+                prev.clear();
+                committed = 0;
+                prompt = None;
+            }
+        }
+    }
+}
+
+/// LocalAgreement: words two consecutive hypotheses share (ignoring case and punctuation),
+/// except the newest's last word (it may be cut mid-word), past the `committed` count.
+pub(crate) fn agreed_words(prev: &str, next: &str, committed: usize) -> Vec<String> {
+    let norm = |w: &str| {
+        w.chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>()
+            .to_lowercase()
+    };
+    let next_words: Vec<&str> = next.split_whitespace().collect();
+    let common = prev
+        .split_whitespace()
+        .zip(&next_words)
+        .take_while(|(a, b)| norm(a) == norm(b))
+        .count();
+    let stable = common.min(next_words.len().saturating_sub(1));
+    next_words
+        .get(committed..stable)
+        .map(|w| w.iter().map(|s| s.to_string()).collect())
+        .unwrap_or_default()
+}
+
+/// Keep the snap confirmation window out of every decode, including live partials.
+pub(crate) struct DictationTail {
+    samples: Vec<f32>,
+    keep: usize,
+}
+
+impl DictationTail {
+    pub(crate) fn for_app(app: &AppHandle) -> Self {
+        let enabled = crate::open_db_connection(app)
+            .ok()
+            .and_then(|conn| crate::db::get_app_settings(&conn).ok())
+            .is_some_and(|s| s.snap_toggle_enabled && s.wake_engine == "oww");
+        Self {
+            samples: Vec::new(),
+            keep: if enabled { TARGET_RATE as usize / 4 } else { 0 },
+        }
+    }
+
+    pub(crate) fn push(&mut self, chunk: &[f32]) -> Vec<f32> {
+        self.samples.extend_from_slice(chunk);
+        let ready = self.samples.len().saturating_sub(self.keep);
+        self.samples.drain(..ready).collect()
+    }
+
+    pub(crate) fn finish(self, discard: bool) -> Vec<f32> {
+        if discard {
+            Vec::new()
+        } else {
+            self.samples
+        }
+    }
+}
+
+/// Splits dictation audio into utterances. Speech needs a sustained voiced run, so key clicks
+/// (deleting, typing) never reach Whisper, and the pause floor follows the speaker's level so
+/// fan or room hum above the fixed floor still ends the sentence.
+#[derive(Default)]
+pub(crate) struct Utterances {
+    buffer: Vec<f32>,
+    voiced_run: usize,
+    speech: bool,
+    peak: f32,
+    silent: usize,
+}
+
+impl Utterances {
+    const MIN_VOICED: usize = TARGET_RATE as usize * 120 / 1000;
+    const CAP: usize = TARGET_RATE as usize * 28;
+    const IDLE_KEEP: usize = TARGET_RATE as usize;
+
+    /// Feed 16 kHz audio; returns a finished utterance (speech then a pause, or the 28 s cap).
+    pub(crate) fn push(&mut self, chunk: &[f32], end_on_pause: bool) -> Option<Vec<f32>> {
+        self.buffer.extend_from_slice(chunk);
+        for frame in chunk.chunks(TARGET_RATE as usize / 50) {
+            let p = crate::audio::transcript_event::audio_peak(frame);
+            if p > crate::audio::transcript_event::MIN_SPEECH_PEAK_FOR_DECODE {
+                self.voiced_run += frame.len();
+                if self.voiced_run >= Self::MIN_VOICED {
+                    self.speech = true;
+                    self.peak = self.peak.max(p);
+                }
+            } else {
+                self.voiced_run = 0;
+            }
+            if p <= SILENCE_PEAK_THRESHOLD.max(self.peak * 0.15) {
+                self.silent += frame.len();
+            } else {
+                self.silent = 0;
+            }
+        }
+        let paused =
+            self.silent as f64 >= TARGET_RATE as f64 * SILENCE_RESET_DICTATION.as_secs_f64();
+        if (end_on_pause && self.speech && paused) || self.buffer.len() >= Self::CAP {
+            return self.finish_and_reset();
+        }
+        if !self.speech && self.buffer.len() > 2 * Self::IDLE_KEEP {
+            // Idle noise never piles up; keep a second so the first syllable survives.
+            self.buffer.drain(..self.buffer.len() - Self::IDLE_KEEP);
+        }
+        None
+    }
+
+    /// The utterance so far, once it holds speech.
+    pub(crate) fn live(&self) -> Option<&[f32]> {
+        self.speech.then_some(&self.buffer[..])
+    }
+
+    pub(crate) fn finish(mut self) -> Option<Vec<f32>> {
+        self.finish_and_reset()
+    }
+
+    fn finish_and_reset(&mut self) -> Option<Vec<f32>> {
+        let had_speech = self.speech;
+        let buffer = std::mem::take(self).buffer;
+        had_speech.then_some(buffer)
+    }
 }
 
 #[cfg(test)]
@@ -714,12 +895,61 @@ mod tests {
     use crate::audio::whisper_models::whisper_model_filename;
 
     #[test]
-    fn dictation_buffer_keeps_ten_seconds() {
-        let mut buffer = Vec::new();
-        for _ in 0..10 {
-            super::push_dictation(&mut buffer, &vec![0.1; TARGET_RATE as usize]);
+    fn dictation_tail_holds_snap_audio_and_preserves_normal_stop() {
+        let make_tail = || super::DictationTail {
+            samples: Vec::new(),
+            keep: 4_000,
+        };
+        let mut tail = make_tail();
+        let speech = vec![0.2; 8_000];
+        let snap = vec![0.9; 4_000];
+        let mut decoded = tail.push(&speech);
+        decoded.extend(tail.push(&snap));
+        assert_eq!(decoded, speech);
+        assert!(tail.finish(true).is_empty());
+
+        let mut tail = make_tail();
+        assert!(tail.push(&speech[..2_000]).is_empty());
+        assert_eq!(tail.finish(false), speech[..2_000]);
+        let mut disabled = super::DictationTail {
+            samples: Vec::new(),
+            keep: 0,
+        };
+        assert_eq!(disabled.push(&speech), speech);
+        assert!(disabled.finish(false).is_empty());
+    }
+
+    #[test]
+    fn agreed_words_commit_stable_prefix_only() {
+        use super::agreed_words;
+        assert!(agreed_words("", "hello there", 0).is_empty());
+        // "hello" agrees and isn't last; "there" is still the trailing word.
+        assert_eq!(agreed_words("Hello the", "hello, there", 0), vec!["hello,"]);
+        assert_eq!(
+            agreed_words("hello there my", "Hello there, my friend", 1),
+            vec!["there,", "my"]
+        );
+        // A revision before the committed point commits nothing new.
+        assert!(agreed_words("yellow there", "hello there now", 1).is_empty());
+    }
+
+    #[test]
+    fn utterances_ignore_key_clicks_and_end_on_hum_level_pause() {
+        let ms = |n: usize, level: f32| vec![level; TARGET_RATE as usize * n / 1000];
+        let mut u = super::Utterances::default();
+        // 20 key clicks (30 ms spikes) over quiet: never an utterance, buffer stays bounded.
+        for _ in 0..20 {
+            assert!(u.push(&ms(30, 0.5), true).is_none());
+            assert!(u.push(&ms(300, 0.0), true).is_none());
         }
-        assert_eq!(buffer.len(), TARGET_RATE as usize * 10);
+        assert!(u.buffer.len() <= 2 * TARGET_RATE as usize);
+        // Speech, then a pause at fan-hum level (above the fixed 0.01 floor) ends it.
+        assert!(u.push(&ms(600, 0.3), true).is_none());
+        let utterance = u
+            .push(&ms(800, 0.015), true)
+            .expect("pause ends the utterance");
+        assert!(utterance.len() >= TARGET_RATE as usize * 1400 / 1000);
+        assert!(u.finish().is_none());
     }
 
     #[test]

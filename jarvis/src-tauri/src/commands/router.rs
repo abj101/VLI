@@ -1,36 +1,29 @@
 //! Tiered command routing: pinned trigger match → on-device LLM router → tool clarify.
 
 use crate::{
+    apps::intent::{classify_open_target, parse_open_intent, parse_tile_intent, OpenIntent},
     assign_routing_cancel,
     audio::{self, SharedAudioPipeline},
-    AppIndexStore,
-    cancel_active_run_in_state,
+    await_follow_up_input, cancel_active_run_in_state,
     commands::{
+        execute_command_with_context, execute_tool,
         executor::{ActionRuntime, TauriActionRuntime},
-        execute_command_with_context,
-        execute_tool, match_command,
+        match_command,
         matcher::MatchResult,
         open_target::execute_open_target_with_aliases,
         ToolCallContext,
     },
-    apps::intent::{classify_open_target, parse_open_intent, parse_tile_intent, OpenIntent},
-    db::{self, get_all_tools, get_app_settings, get_all_target_aliases, CommandNode},
+    db::{self, get_all_target_aliases, get_all_tools, get_app_settings, CommandNode},
     finalize_command_run,
-    hide_hud_window,
     hud::HudPhase,
     llm::{
-    infer_router_completion, llm_gpu_runtime_available,
-        normalize_router_tool_calls, resolve_router_model_path, route_transcript_with_infer,
-        RouterError, RouterErrorCode, RouterInfer, RouterRouteResult,
+        infer_router_completion, llm_gpu_runtime_available, normalize_router_tool_calls,
+        resolve_router_model_path, route_transcript_with_infer, RouterError, RouterErrorCode,
+        RouterInfer, RouterRouteResult,
     },
-    load_default_fuzzy_threshold_pct,
-    open_db_connection,
-    read_command_cache,
-    resolve_fuzzy_threshold_pct,
-    set_phase,
-    should_finalize_execution,
-    await_follow_up_input,
-    CommandCache, SharedHud, ACTION_RUN_CANCELLED_MSG,
+    load_default_fuzzy_threshold_pct, open_db_connection, read_command_cache,
+    resolve_fuzzy_threshold_pct, set_phase, should_finalize_execution, AppIndexStore, CommandCache,
+    SharedHud, ACTION_RUN_CANCELLED_MSG,
 };
 use log::{debug, info, warn};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -48,10 +41,7 @@ impl RouterInfer for LocalInfer {
     }
 }
 
-fn matcher_nodes(
-    nodes: &[CommandNode],
-    default_threshold_pct: u16,
-) -> Vec<CommandNode> {
+fn matcher_nodes(nodes: &[CommandNode], default_threshold_pct: u16) -> Vec<CommandNode> {
     nodes
         .iter()
         .cloned()
@@ -119,11 +109,16 @@ where
     });
 }
 
+fn command_keeps_hud_for_dictation(node: &CommandNode) -> bool {
+    matches!(node.actions.first(), Some(db::Action::StartDictation {}))
+}
+
 fn begin_execution_session(
     app: &AppHandle,
     rt: &SharedHud,
     audio: &SharedAudioPipeline,
     from_routing: bool,
+    keep_hud_visible: bool,
 ) -> Result<(u64, Arc<AtomicBool>), String> {
     if from_routing {
         route_commit_gate(rt)?;
@@ -136,8 +131,17 @@ fn begin_execution_session(
     }
     debug!("flow: stopping mic pipeline");
     audio::stop_shared_pipeline(app, audio);
-    let executing_session_id = set_phase(app, rt, HudPhase::Executing)?;
-    hide_hud_window(app);
+    let executing_session_id = if keep_hud_visible {
+        let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
+        if !s.visible || !matches!(s.phase, HudPhase::Listening | HudPhase::Matched) {
+            return Err("skip".into());
+        }
+        // Execution advances internally while dictation inherits the visible listening surface.
+        s.phase = HudPhase::Executing;
+        s.session_id
+    } else {
+        set_phase(app, rt, HudPhase::Executing)?
+    };
     let cancel_flag = Arc::new(AtomicBool::new(false));
     {
         let mut s = rt.lock().map_err(|_| "hud state poisoned".to_string())?;
@@ -197,10 +201,8 @@ fn execute_tier1_match(
         "flow: MATCH node_id={} phrase={:?} span={}..{}",
         matched.node_id, matched.matched_phrase, matched.span_start, matched.span_end
     );
-    let _ = app.emit("match-result", &matched);
-    let _ = set_phase(app, rt, HudPhase::Matched)?;
+    // Resolve the action before deciding whether the command should dismiss its overlay.
 
-    let (executing_session_id, cancel_flag) = begin_execution_session(app, rt, audio, false)?;
     let Some(node) = nodes.iter().find(|n| n.id.to_string() == matched.node_id) else {
         warn!(
             "flow: matched node_id={} but no row in loaded nodes (count={})",
@@ -210,6 +212,13 @@ fn execute_tier1_match(
         finalize_command_run(app, rt, audio);
         return Ok(());
     };
+    let keep_hud_visible = command_keeps_hud_for_dictation(node);
+    if !keep_hud_visible {
+        let _ = app.emit("match-result", &matched);
+        let _ = set_phase(app, rt, HudPhase::Matched)?;
+    }
+    let (executing_session_id, cancel_flag) =
+        begin_execution_session(app, rt, audio, false, keep_hud_visible)?;
     let node = node.clone();
     info!("flow: spawn execute_command for node_id={}", node.id);
     let tool_context = if matched.remainder.is_empty() {
@@ -232,13 +241,7 @@ fn execute_tier1_match(
     let rt_h = Arc::clone(rt);
     let audio_h = audio.clone();
     spawn_action_run(&app_h.clone(), &rt_h.clone(), &audio_h.clone(), move || {
-        let runtime = follow_up_runtime(
-            &app_h,
-            &rt_h,
-            &audio_h,
-            executing_session_id,
-            cancel_flag,
-        );
+        let runtime = follow_up_runtime(&app_h, &rt_h, &audio_h, executing_session_id, cancel_flag);
         let command_conn = open_db_connection(&app_h).ok();
         execute_command_with_context(
             &node,
@@ -304,10 +307,12 @@ pub(crate) fn route_transcript_tier2(
         .filter(|t| t.enabled)
         .collect();
     let use_gpu = llm_gpu_runtime_available(app);
-    crate::llm::ensure_router_server(app, &model_path.display().to_string(), use_gpu).map_err(|message| RouterError {
-        code: RouterErrorCode::InferFailed,
-        message,
-    })?;
+    crate::llm::ensure_router_server(app, &model_path.display().to_string(), use_gpu).map_err(
+        |message| RouterError {
+            code: RouterErrorCode::InferFailed,
+            message,
+        },
+    )?;
     let port = crate::llm::local::router_server_port().map_err(|message| RouterError {
         code: RouterErrorCode::InferFailed,
         message,
@@ -362,20 +367,14 @@ fn execute_tier2_route(
             "confidence": route.confidence,
         }),
     );
-    let (executing_session_id, cancel_flag) = begin_execution_session(app, rt, audio, true)?;
+    let (executing_session_id, cancel_flag) = begin_execution_session(app, rt, audio, true, false)?;
     let app_h = app.clone();
     let rt_h = Arc::clone(rt);
     let audio_h = audio.clone();
     let tool_calls = route.tool_calls;
     let transcript_for_confirmation = transcript;
     spawn_action_run(&app_h.clone(), &rt_h.clone(), &audio_h.clone(), move || {
-        let runtime = follow_up_runtime(
-            &app_h,
-            &rt_h,
-            &audio_h,
-            executing_session_id,
-            cancel_flag,
-        );
+        let runtime = follow_up_runtime(&app_h, &rt_h, &audio_h, executing_session_id, cancel_flag);
         let conn = match open_db_connection(&app_h) {
             Ok(c) => c,
             Err(err) => {
@@ -409,13 +408,8 @@ fn execute_tier2_route(
             }
         }
         if !runtime.is_cancelled()
-            && crate::finalize_decider_confirmation(
-                &app_h,
-                &rt_h,
-                &audio_h,
-                executing_session_id,
-            )
-            .unwrap_or(false)
+            && crate::finalize_decider_confirmation(&app_h, &rt_h, &audio_h, executing_session_id)
+                .unwrap_or(false)
         {
             let _ = app_h.emit(
                 "decider-confirm",
@@ -519,15 +513,16 @@ fn try_tier0_open_intent(
 
     let _ = set_phase(app, rt, HudPhase::Matched).ok()?;
 
-    let (executing_session_id, cancel_flag) = match begin_execution_session(app, rt, audio, false) {
-        Ok(pair) => pair,
-        Err(err) if err == "skip" => {
-            warn!("flow: tier0 open intent could not start execution (phase/session changed)");
-            let _ = set_phase(app, rt, HudPhase::Listening);
-            return Some(Ok(()));
-        }
-        Err(err) => return Some(Err(err)),
-    };
+    let (executing_session_id, cancel_flag) =
+        match begin_execution_session(app, rt, audio, false, false) {
+            Ok(pair) => pair,
+            Err(err) if err == "skip" => {
+                warn!("flow: tier0 open intent could not start execution (phase/session changed)");
+                let _ = set_phase(app, rt, HudPhase::Listening);
+                return Some(Ok(()));
+            }
+            Err(err) => return Some(Err(err)),
+        };
     let app_h = app.clone();
     let rt_h = Arc::clone(rt);
     let audio_h = audio.clone();
@@ -535,13 +530,7 @@ fn try_tier0_open_intent(
     let alias_snapshot = aliases;
 
     spawn_action_run(&app_h.clone(), &rt_h.clone(), &audio_h.clone(), move || {
-        let runtime = follow_up_runtime(
-            &app_h,
-            &rt_h,
-            &audio_h,
-            executing_session_id,
-            cancel_flag,
-        );
+        let runtime = follow_up_runtime(&app_h, &rt_h, &audio_h, executing_session_id, cancel_flag);
         let conn = match open_db_connection(&app_h) {
             Ok(c) => c,
             Err(err) => {
@@ -551,7 +540,9 @@ fn try_tier0_open_intent(
         };
         for intent in intents {
             let result = match intent {
-                OpenIntent::App { target, placement, .. } => execute_open_target_with_aliases(
+                OpenIntent::App {
+                    target, placement, ..
+                } => execute_open_target_with_aliases(
                     &target,
                     placement.as_deref(),
                     &alias_snapshot,
@@ -567,7 +558,9 @@ fn try_tier0_open_intent(
                     execute_tool(&conn, "open_url", &args, &runtime, Some(index.as_slice()))
                         .map(|_| "Opening URL…".to_string())
                 }
-                OpenIntent::Unknown { .. } => unreachable!("tier0 rejects Unknown before execution"),
+                OpenIntent::Unknown { .. } => {
+                    unreachable!("tier0 rejects Unknown before execution")
+                }
             };
             if let Err(err) = result {
                 if err != ACTION_RUN_CANCELLED_MSG {
@@ -626,7 +619,9 @@ pub fn try_route_and_execute(
     let rt_bg = Arc::clone(rt);
     let audio_bg = audio.clone();
     let context = {
-        let state = rt.lock().map_err(|_| "HUD runtime lock poisoned".to_string())?;
+        let state = rt
+            .lock()
+            .map_err(|_| "HUD runtime lock poisoned".to_string())?;
         state.focus.as_ref().map(|focus| {
             let index = app.state::<AppIndexStore>();
             let apps = index.read().ok();
@@ -653,13 +648,9 @@ pub fn try_route_and_execute(
                     debug!("flow: skip tier2 execute (cancelled after infer)");
                     return;
                 }
-                if let Err(err) = execute_tier2_route(
-                    &app_bg,
-                    &rt_bg,
-                    &audio_bg,
-                    transcript.clone(),
-                    route,
-                ) {
+                if let Err(err) =
+                    execute_tier2_route(&app_bg, &rt_bg, &audio_bg, transcript.clone(), route)
+                {
                     if err != "skip" {
                         warn!("flow: tier2 execute failed: {err}");
                     }
@@ -699,8 +690,8 @@ mod tests {
     use crate::apps::intent::OpenIntent;
     use crate::apps::AppEntry;
     use crate::commands::router::tier0_open_classification;
-    use crate::llm::intent_validate::normalize_router_tool_calls;
     use crate::db::{init_db, Action, MatchMode};
+    use crate::llm::intent_validate::normalize_router_tool_calls;
     use crate::llm::router::RouterInfer;
     use rusqlite::Connection;
     use std::collections::HashMap;
@@ -720,6 +711,28 @@ mod tests {
         let path = dir.path().join("router-orchestrator.db");
         init_db(&path).unwrap();
         (dir, Connection::open(&path).unwrap())
+    }
+
+    #[test]
+    fn dictation_triggers_keep_the_existing_hud_through_command_execution() {
+        let (_dir, conn) = test_conn();
+        let nodes = db::get_all_commands(&conn).unwrap();
+        for phrase in ["start dictation", "dictate"] {
+            let matched = match_command(phrase, &nodes).expect("seeded dictation trigger");
+            let node = nodes
+                .iter()
+                .find(|node| node.id.to_string() == matched.node_id)
+                .unwrap();
+            assert!(
+                super::command_keeps_hud_for_dictation(node),
+                "{phrase} must not hide/reopen the HUD"
+            );
+        }
+        let ordinary = nodes
+            .iter()
+            .find(|node| node.name == "Open target")
+            .unwrap();
+        assert!(!super::command_keeps_hud_for_dictation(ordinary));
     }
 
     fn open_node(id: i64) -> CommandNode {
@@ -762,14 +775,9 @@ mod tests {
         let mock = MockInfer(
             r#"{"tool":"open_target","args":{"target":"slack","placement":"left_half"},"confidence":0.91}"#,
         );
-        let result = route_transcript_with_infer(
-            &conn,
-            &[tool],
-            "put slack on the left",
-            0.7,
-            &mock,
-        )
-        .expect("route");
+        let result =
+            route_transcript_with_infer(&conn, &[tool], "put slack on the left", 0.7, &mock)
+                .expect("route");
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].tool, "open_target");
         assert_eq!(
@@ -788,7 +796,7 @@ mod tests {
     #[derive(Default)]
     struct MockRuntimeState {
         opened_apps: Vec<String>,
-    opened_urls: Vec<String>,
+        opened_urls: Vec<String>,
         statuses: Vec<String>,
         errors: Vec<String>,
     }
@@ -800,7 +808,11 @@ mod tests {
 
     impl ActionRuntime for MockRuntime {
         fn open_app(&self, path: &str) -> Result<(), String> {
-            self.state.lock().unwrap().opened_apps.push(path.to_string());
+            self.state
+                .lock()
+                .unwrap()
+                .opened_apps
+                .push(path.to_string());
             Ok(())
         }
 
@@ -888,7 +900,9 @@ mod tests {
             icon_data_url: None,
         }];
         let intents = tier0_tile_classification("put discord on the right", &index, &[]).unwrap();
-        assert!(matches!(&intents[..], [OpenIntent::App { placement: Some(p), .. }] if p == "right_half"));
+        assert!(
+            matches!(&intents[..], [OpenIntent::App { placement: Some(p), .. }] if p == "right_half")
+        );
         assert!(tier0_tile_classification("put this window on the left", &index, &[]).is_none());
     }
 
@@ -922,9 +936,19 @@ mod tests {
             icon_data_url: None,
         }];
         let args = HashMap::from([("target".to_string(), "github".to_string())]);
-        execute_tool(&conn, "open_target", &args, &runtime, Some(index.as_slice())).expect("tool run");
+        execute_tool(
+            &conn,
+            "open_target",
+            &args,
+            &runtime,
+            Some(index.as_slice()),
+        )
+        .expect("tool run");
         assert!(runtime.state.lock().unwrap().errors.is_empty());
-        assert_eq!(runtime.state.lock().unwrap().opened_apps, ["GitHubDesktop.exe"]);
+        assert_eq!(
+            runtime.state.lock().unwrap().opened_apps,
+            ["GitHubDesktop.exe"]
+        );
     }
     #[test]
     fn learned_two_tool_command_matches_and_replays_run_tool_actions() {

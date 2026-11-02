@@ -281,11 +281,9 @@ fn remote_dictation_loop(
     rate: u32,
     id: u64,
 ) -> Result<(), String> {
-    let mut buffer = Vec::new();
-    let mut silence = SilenceResetTracker::for_mode(true);
+    let mut utterances = crate::audio::stt::Utterances::default();
+    let mut tail = crate::audio::stt::DictationTail::for_app(app);
     let end_on_pause = crate::load_dictation_hotkey_mode(app) == crate::DictationHotkeyMode::Toggle;
-    let mut last_infer = std::time::Instant::now();
-    let mut speech = false;
     let finalize = |buffer: &[f32]| {
         let started = std::time::Instant::now();
         let decoded = post_transcription(
@@ -309,41 +307,21 @@ fn remote_dictation_loop(
         }
     };
     while let Ok(chunk) = rx.recv() {
-        let chunk = resample_mono_to_16k(&chunk, rate);
-        speech |= audio_has_speech(&chunk);
-        let pause = silence.push_and_should_reset(&chunk);
-        crate::audio::stt::push_dictation(&mut buffer, &chunk);
-        if (end_on_pause && speech && pause) || buffer.len() >= TARGET_RATE as usize * 28 {
-            finalize(&buffer);
-            buffer.clear();
-            speech = false;
-            last_infer = std::time::Instant::now();
-            continue;
+        let ready = tail.push(&resample_mono_to_16k(&chunk, rate));
+        if let Some(utterance) = utterances.push(&ready, end_on_pause) {
+            finalize(&utterance);
         }
-        if last_infer.elapsed() >= INFER_EVERY {
-            last_infer = std::time::Instant::now();
-            let start = buffer.len().saturating_sub(TARGET_RATE as usize * 4);
-            if let Ok(raw) = post_transcription(
-                params,
-                &buffer[start..],
-                Some(&crate::dictation::dictation_prompt(app, id)),
-            ) {
-                if let Some(text) = normalize_transcript_candidate(&raw) {
-                    let _ = crate::dictation::publish_transcript(
-                        app,
-                        TranscriptUpdate {
-                            text,
-                            is_final: false,
-                            hud_session_id: id,
-                            kind: TranscriptPartialKind::Growth,
-                        },
-                        0,
-                    );
-                }
-            }
-        }
+        // No partial requests: see `dictation_loop` in `stt.rs`.
     }
-    finalize(&buffer);
+    if let Some(utterance) = utterances.push(
+        &tail.finish(crate::dictation::stopped_by_snap(app, id)),
+        end_on_pause,
+    ) {
+        finalize(&utterance);
+    }
+    if let Some(utterance) = utterances.finish() {
+        finalize(&utterance);
+    }
     Ok(())
 }
 

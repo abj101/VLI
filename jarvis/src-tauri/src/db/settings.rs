@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 pub const SETTING_WAKE_ENGINE: &str = "wake_engine";
 pub const SETTING_OWW_THRESHOLD: &str = "oww_threshold";
 pub const DEFAULT_OWW_THRESHOLD: f32 = 0.7;
+pub const SETTING_SNAP_TOGGLE_ENABLED: &str = "snap_toggle_enabled";
+pub const SETTING_SNAP_SENSITIVITY_DB: &str = "snap_sensitivity_db";
+pub const DEFAULT_SNAP_SENSITIVITY_DB: f32 = 25.0;
 pub const SETTING_STT_PROVIDER: &str = "stt_provider";
 pub const SETTING_REMOTE_STT_URL: &str = "remote_stt_url";
 pub const SETTING_REMOTE_STT_MODEL: &str = "remote_stt_model";
@@ -87,6 +90,12 @@ fn parse_oww_threshold(raw: Option<String>) -> f32 {
         .unwrap_or(DEFAULT_OWW_THRESHOLD)
 }
 
+fn parse_snap_sensitivity_db(raw: Option<String>) -> f32 {
+    raw.and_then(|s| s.trim().parse::<f32>().ok())
+        .filter(|value| value.is_finite() && (10.0..=30.0).contains(value))
+        .unwrap_or(DEFAULT_SNAP_SENSITIVITY_DB)
+}
+
 fn parse_stt_provider_str(raw: Option<String>) -> String {
     use crate::audio::transcription::{parse_stt_provider, SttProvider};
     match parse_stt_provider(raw.as_deref()) {
@@ -138,6 +147,10 @@ pub fn parse_dictation_hotkey_mode(raw: Option<&str>) -> String {
 pub struct AppSettings {
     pub wake_engine: String,
     pub oww_threshold: f32,
+    /// Whether a finger snap toggles dictation (Windows wake mic only).
+    pub snap_toggle_enabled: bool,
+    /// Snap onset sensitivity in dB above the noise floor (10–30).
+    pub snap_sensitivity_db: f32,
     /// `local` | `os` | `remote`
     pub stt_provider: String,
     /// Non-secret remote endpoint base URL (HTTPS recommended).
@@ -177,6 +190,8 @@ pub struct AppSettings {
 pub struct SettingsPatch {
     pub wake_engine: Option<String>,
     pub oww_threshold: Option<f32>,
+    pub snap_toggle_enabled: Option<bool>,
+    pub snap_sensitivity_db: Option<f32>,
     pub stt_provider: Option<String>,
     pub remote_stt_url: Option<String>,
     pub remote_stt_model: Option<String>,
@@ -200,6 +215,11 @@ pub struct SettingsPatch {
 pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
     Ok(AppSettings {
         wake_engine: parse_wake_engine(get_setting(conn, SETTING_WAKE_ENGINE)?),
+        snap_toggle_enabled: bool_from_setting(get_setting(conn, SETTING_SNAP_TOGGLE_ENABLED)?),
+        snap_sensitivity_db: parse_snap_sensitivity_db(get_setting(
+            conn,
+            SETTING_SNAP_SENSITIVITY_DB,
+        )?),
         oww_threshold: parse_oww_threshold(get_setting(conn, SETTING_OWW_THRESHOLD)?),
         stt_provider: parse_stt_provider_str(get_setting(conn, SETTING_STT_PROVIDER)?),
         remote_stt_url: get_setting(conn, SETTING_REMOTE_STT_URL)?
@@ -290,6 +310,25 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
             ));
         }
         set_setting(conn, SETTING_OWW_THRESHOLD, &format!("{t}"))?;
+    }
+    if let Some(enabled) = patch.snap_toggle_enabled {
+        set_setting(
+            conn,
+            SETTING_SNAP_TOGGLE_ENABLED,
+            if enabled { "1" } else { "0" },
+        )?;
+    }
+    if let Some(sensitivity_db) = patch.snap_sensitivity_db {
+        if !(sensitivity_db.is_finite() && (10.0..=30.0).contains(&sensitivity_db)) {
+            return Err(DbError::Validation(
+                "snap_sensitivity_db must be between 10 and 30".into(),
+            ));
+        }
+        set_setting(
+            conn,
+            SETTING_SNAP_SENSITIVITY_DB,
+            &format!("{sensitivity_db}"),
+        )?;
     }
     if let Some(ref raw) = patch.stt_provider {
         let normalized = raw.trim().to_ascii_lowercase();
@@ -449,6 +488,33 @@ mod tests {
         (dir, conn)
     }
 
+    fn empty_patch() -> SettingsPatch {
+        SettingsPatch {
+            wake_engine: None,
+            oww_threshold: None,
+            snap_toggle_enabled: None,
+            snap_sensitivity_db: None,
+            stt_provider: None,
+            remote_stt_url: None,
+            remote_stt_model: None,
+            remote_stt_timeout_secs: None,
+            local_whisper_use_gpu: None,
+            local_whisper_model: None,
+            llm_router_model_path: None,
+            llm_router_confidence_threshold: None,
+            llm_router_tier2_enabled: None,
+            llm_router_warmup_on_launch: None,
+            llm_composer_enabled: None,
+            llm_composer_model_path: None,
+            llm_composer_warmup_on_launch: None,
+            dictation_cleanup: None,
+            dictation_style: None,
+            dictation_vocabulary: None,
+            dictation_hotkey: None,
+            dictation_hotkey_mode: None,
+        }
+    }
+
     #[test]
     fn round_trip_insert_update_get_setting() {
         let (_dir, conn) = open_temp();
@@ -465,6 +531,40 @@ mod tests {
             get_setting(&conn, "theme").expect("get light"),
             Some("light".to_string())
         );
+    }
+
+    #[test]
+    fn snap_settings_default_and_sensitivity_parse_range() {
+        let (_dir, conn) = open_temp();
+        let settings = get_app_settings(&conn).expect("settings");
+        assert!(!settings.snap_toggle_enabled);
+        assert_eq!(settings.snap_sensitivity_db, DEFAULT_SNAP_SENSITIVITY_DB);
+
+        for valid in ["10", "18", "30"] {
+            assert_eq!(
+                parse_snap_sensitivity_db(Some(valid.into())),
+                valid.parse::<f32>().unwrap()
+            );
+        }
+        for invalid in ["9.9", "30.1", "NaN", "inf", "bad"] {
+            assert_eq!(
+                parse_snap_sensitivity_db(Some(invalid.into())),
+                DEFAULT_SNAP_SENSITIVITY_DB
+            );
+        }
+    }
+
+    #[test]
+    fn snap_sensitivity_patch_rejects_out_of_range_and_non_finite_values() {
+        let (_dir, conn) = open_temp();
+        for invalid in [9.0, 30.1, f32::NAN, f32::INFINITY] {
+            let mut patch = empty_patch();
+            patch.snap_sensitivity_db = Some(invalid);
+            assert!(matches!(
+                apply_settings_patch(&conn, &patch),
+                Err(DbError::Validation(_))
+            ));
+        }
     }
 
     #[test]
@@ -518,6 +618,8 @@ mod tests {
             &SettingsPatch {
                 wake_engine: Some("oww".into()),
                 oww_threshold: Some(0.35),
+                snap_toggle_enabled: Some(true),
+                snap_sensitivity_db: Some(23.0),
                 stt_provider: None,
                 remote_stt_url: None,
                 remote_stt_model: None,
@@ -542,6 +644,8 @@ mod tests {
         let s = get_app_settings(&conn).expect("reload");
         assert_eq!(s.wake_engine, "oww");
         assert!((s.oww_threshold - 0.35).abs() < 0.0001);
+        assert!(s.snap_toggle_enabled);
+        assert!((s.snap_sensitivity_db - 23.0).abs() < 0.0001);
     }
 
     #[test]
@@ -552,6 +656,8 @@ mod tests {
             &SettingsPatch {
                 wake_engine: Some("bogus".into()),
                 oww_threshold: None,
+                snap_toggle_enabled: None,
+                snap_sensitivity_db: None,
                 stt_provider: None,
                 remote_stt_url: None,
                 remote_stt_model: None,
@@ -587,6 +693,8 @@ mod tests {
             &SettingsPatch {
                 wake_engine: None,
                 oww_threshold: None,
+                snap_toggle_enabled: None,
+                snap_sensitivity_db: None,
                 stt_provider: Some("remote".into()),
                 remote_stt_url: Some("https://example.com/v1/transcribe".into()),
                 remote_stt_model: Some("test-model".into()),
@@ -623,6 +731,8 @@ mod tests {
             &SettingsPatch {
                 wake_engine: None,
                 oww_threshold: None,
+                snap_toggle_enabled: None,
+                snap_sensitivity_db: None,
                 stt_provider: None,
                 remote_stt_url: Some("ftp://bad.example/transcribe".into()),
                 remote_stt_model: None,
@@ -655,6 +765,8 @@ mod tests {
             &SettingsPatch {
                 wake_engine: None,
                 oww_threshold: None,
+                snap_toggle_enabled: None,
+                snap_sensitivity_db: None,
                 stt_provider: None,
                 remote_stt_url: None,
                 remote_stt_model: None,
@@ -688,6 +800,8 @@ mod tests {
             &SettingsPatch {
                 wake_engine: None,
                 oww_threshold: None,
+                snap_toggle_enabled: None,
+                snap_sensitivity_db: None,
                 stt_provider: None,
                 remote_stt_url: None,
                 remote_stt_model: None,
@@ -720,6 +834,8 @@ mod tests {
             &SettingsPatch {
                 wake_engine: None,
                 oww_threshold: None,
+                snap_toggle_enabled: None,
+                snap_sensitivity_db: None,
                 stt_provider: None,
                 remote_stt_url: None,
                 remote_stt_model: None,
@@ -748,6 +864,8 @@ mod tests {
             &SettingsPatch {
                 wake_engine: None,
                 oww_threshold: None,
+                snap_toggle_enabled: None,
+                snap_sensitivity_db: None,
                 stt_provider: None,
                 remote_stt_url: None,
                 remote_stt_model: None,
@@ -782,6 +900,8 @@ mod tests {
             &SettingsPatch {
                 wake_engine: None,
                 oww_threshold: None,
+                snap_toggle_enabled: None,
+                snap_sensitivity_db: None,
                 stt_provider: None,
                 remote_stt_url: None,
                 remote_stt_model: None,

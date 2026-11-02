@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head><meta charset="utf-8"><title>Dictation HUD verification</title></head>
+<body>
+  <main style="height:100vh;display:grid;place-content:center;justify-items:center;gap:28px;background:var(--color-bg-app)">
+<div style="width:480px;height:172px;display:grid;place-items:center"><div id="preview" style="width:480px;height:172px"></div></div>
+    <div style="display:flex;gap:12px"><button id="speech">Speech</button><button id="silence">Silence</button><button id="theme">Switch theme</button><button id="handoff">Replay command handoff</button></div>
+    <p style="font:13px system-ui;color:var(--glass-text-muted)">Actual HUD component · simulated microphone</p>
+  </main>
+  <script type="module">
+    import React from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
+import { listen, emit } from '@tauri-apps/api/event';
+    import { HudPanel } from '/src/components/hud/HudPanel.tsx';
+    import { useHudStore } from '/src/store/hudStore.ts';
+    import '/src/App.css';
+    mockIPC(() => null, { shouldMockEvents: true });
+    mockWindows('hud');
+    const store = useHudStore;
+const checks = document.createElement('output');
+checks.id = 'handoff-check';
+checks.style.cssText = 'font:13px system-ui;color:var(--glass-text-muted)';
+document.querySelector('main').append(checks);
+let animatingSession = 0;
+await listen('hud-dictation-ready', async ({payload}) => {
+  if (payload !== store.getState().sessionId) return;
+  if (animatingSession === payload) return;
+  animatingSession = payload;
+  const shell = document.querySelector('.hud-root');
+  const preview = document.getElementById('preview');
+  const startRadius = parseFloat(getComputedStyle(shell).borderRadius);
+  const startInset = parseFloat(getComputedStyle(shell).marginTop);
+  const start = performance.now();
+  let minOpacity = 1, intermediateFrames = 0;
+  const frame = async (now) => {
+    if (payload !== store.getState().sessionId) return;
+    const t = matchMedia('(prefers-reduced-motion: reduce)').matches ? 1 : Math.min(1, (now - start) / 380);
+    const ease = t*t*t*(t*(t*6-15)+10);
+    preview.style.width = `${480 + (28 - 480) * ease}px`;
+    preview.style.height = `${172 + (28 - 172) * ease}px`;
+    minOpacity = Math.min(minOpacity, Number(getComputedStyle(shell).opacity));
+    if (t > 0 && t < 1) intermediateFrames++;
+    if (t < 1) requestAnimationFrame(frame);
+    else {
+      const pass = minOpacity > 0.99 && startRadius === 12 && startInset === 0 && intermediateFrames > 0;
+      checks.textContent = `${pass ? 'PASS' : 'FAIL'}: visible morph · minimum opacity ${minOpacity.toFixed(2)} · initial radius ${startRadius}px · initial inset ${startInset}px · ${intermediateFrames} intermediate frames`;
+      await emit('hud-dictation-placed', payload);
+    }
+  };
+  requestAnimationFrame(frame);
+});
+let replay = 0;
+    const handoff = () => {
+      const id = ++replay;
+      const preview = document.getElementById('preview');
+      preview.style.width = '480px';
+      preview.style.height = '172px';
+      store.getState().applyIpc('hud-phase', { phase:'listening', session_id:store.getState().sessionId + 1, overlay_mode:'command' });
+      setTimeout(() => {
+        if (id !== replay) return;
+        const startDictation = () => {
+          if (id !== replay) return;
+          store.getState().applyIpc('hud-phase', { phase:'listening', session_id:store.getState().sessionId + 1, overlay_mode:'dictation' });
+          store.getState().applyIpc('action-status', { text:'Started dictation' });
+        };
+        if (new URLSearchParams(location.search).has('legacyRoute')) {
+          // Reproduce the router's former exit/re-entry before starting the same morph.
+          store.getState().applyIpc('hud-phase', { phase:'matched', session_id:store.getState().sessionId, overlay_mode:'command' });
+          store.getState().applyIpc('hud-phase', { phase:'executing', session_id:store.getState().sessionId, overlay_mode:'command' });
+          setTimeout(startDictation, 80);
+        } else startDictation();
+      }, 600);
+    };
+    createRoot(document.getElementById('preview')).render(React.createElement(HudPanel));
+    handoff();
+    let speech = true, tick = 0;
+    setInterval(() => {
+      tick++;
+      store.getState().applyIpc('amplitude-update', { amplitude:speech ? Math.max(0, Math.sin(tick*.27)) * (.12 + .32 * Math.abs(Math.sin(tick*.71))) : 0 });
+    }, 50);
+    document.getElementById('speech').onclick = () => speech = true;
+    document.getElementById('silence').onclick = () => speech = false;
+    document.getElementById('theme').onclick = () => document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    document.getElementById('handoff').onclick = handoff;
+  </script>
+</body>
+</html>

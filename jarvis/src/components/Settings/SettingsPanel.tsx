@@ -50,6 +50,8 @@ const EDITOR_TRANSPARENCY_KEY = "editor_transparency";
 type AppSettingsPayload = {
   wakeEngine: string;
   owwThreshold: number;
+  snapToggleEnabled: boolean;
+  snapSensitivityDb: number;
   sttProvider: string;
   remoteSttUrl: string;
   remoteSttModel: string | null;
@@ -118,6 +120,8 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
 
   const [wakeEngine, setWakeEngine] = useState("oww");
   const [owwThreshold, setOwwThreshold] = useState(0.7);
+  const [snapToggleEnabled, setSnapToggleEnabled] = useState(false);
+  const [snapSensitivityDb, setSnapSensitivityDb] = useState(25);
 
   const [localWhisperUseGpu, setLocalWhisperUseGpu] = useState(false);
   const [localWhisperModel, setLocalWhisperModel] = useState(DEFAULT_LOCAL_WHISPER_MODEL);
@@ -225,6 +229,8 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
     applyEditorTransparencyToDocument(parsedEditorTransparency, normalizedTheme);
     setWakeEngine(app.wakeEngine);
     setOwwThreshold(app.owwThreshold);
+    setSnapToggleEnabled(app.snapToggleEnabled);
+    setSnapSensitivityDb(app.snapSensitivityDb);
     setLocalWhisperUseGpu(app.localWhisperUseGpu);
     setLocalWhisperModel(normalizeLocalWhisperModel(app.localWhisperModel));
       setLlmRouterTier2Enabled(app.llmRouterTier2Enabled);
@@ -434,6 +440,32 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
       });
     } catch (err) {
       showSettingsNotice(formatUserError(err, "Could not save OpenWakeWord sensitivity."));
+    }
+  };
+
+  const persistSnapToggleEnabled = async (next: boolean) => {
+    const previous = snapToggleEnabled;
+    setSnapToggleEnabled(next);
+    try {
+      const settings = await invoke<AppSettingsPayload>("update_settings", {
+        patch: { snapToggleEnabled: next },
+      });
+      setSnapToggleEnabled(settings.snapToggleEnabled);
+    } catch (err) {
+      setSnapToggleEnabled(previous);
+      showSettingsNotice(formatUserError(err, "Could not save snap toggle setting."));
+    }
+  };
+  const commitSnapSensitivityDb = async (next: number) => {
+    const clamped = Math.max(10, Math.min(30, next));
+    setSnapSensitivityDb(clamped);
+    try {
+      const settings = await invoke<AppSettingsPayload>("update_settings", {
+        patch: { snapSensitivityDb: clamped },
+      });
+      setSnapSensitivityDb(settings.snapSensitivityDb);
+    } catch (err) {
+      showSettingsNotice(formatUserError(err, "Could not save snap sensitivity."));
     }
   };
 
@@ -978,6 +1010,63 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
                         </div>
                       </div>
                     )}
+                    <div className="editor-settings-row editor-settings-row--switch">
+                      <div className="editor-settings-row-label">
+                        <SettingsLabelWithInfo
+                          id="editor-snap-toggle-label"
+                          tipId="tip-snap-toggle"
+                          tip="One finger snap starts dictation; another stops it. Requires OpenWakeWord on Windows."
+                        >
+                          Snap toggle
+                        </SettingsLabelWithInfo>
+                      </div>
+                      <div className="editor-settings-row-control editor-settings-row-control--switch">
+                        <button
+                          type="button"
+                          className={`editor-switch${snapToggleEnabled ? " is-on" : ""}`}
+                          role="switch"
+                          aria-labelledby="editor-snap-toggle-label"
+                          aria-checked={snapToggleEnabled}
+                          disabled={wakeEngine !== "oww"}
+                          onClick={() => void persistSnapToggleEnabled(!snapToggleEnabled)}
+                        >
+                          <span className="editor-switch-knob" />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="editor-settings-help">Works only with OpenWakeWord on Windows.</p>
+                    <div className="editor-settings-row">
+                      <div className="editor-settings-row-label">
+                        <SettingsLabelWithInfo
+                          id="editor-snap-sensitivity-label"
+                          tipId="tip-snap-sensitivity"
+                          tip="How far above background noise a snap must be. Lower values detect quieter snaps; higher values reduce false triggers."
+                        >
+                          Snap sensitivity
+                        </SettingsLabelWithInfo>
+                      </div>
+                      <div className="editor-settings-row-control editor-settings-row-control--slider">
+                        <input
+                          type="range"
+                          min={10}
+                          max={30}
+                          step={1}
+                          value={snapSensitivityDb}
+                          aria-labelledby="editor-snap-sensitivity-label"
+                          aria-valuetext={`${snapSensitivityDb} dB`}
+                          aria-describedby="tip-snap-sensitivity"
+                          disabled={!snapToggleEnabled || wakeEngine !== "oww"}
+                          onChange={(event) => setSnapSensitivityDb(Number(event.target.value))}
+                          onPointerUp={(event) => void commitSnapSensitivityDb(Number(event.currentTarget.value))}
+                          onKeyUp={(event) => {
+                            if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) {
+                              void commitSnapSensitivityDb(Number(event.currentTarget.value));
+                            }
+                          }}
+                        />
+                        <span className="editor-settings-slider-value" aria-hidden>{snapSensitivityDb} dB</span>
+                      </div>
+                    </div>
                   </section>
                 </div>
               </div>

@@ -1,7 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useShallow } from "zustand/react/shallow";
 import { useDebounced } from "../../hooks/useDebounced";
@@ -9,12 +9,13 @@ import { useHudStore } from "../../store/hudStore";
 import {
   announcableText,
   selectCenterContent,
-  selectPhaseLabel,
   type CenterSelectorInput,
   type CenterSelectorResult,
 } from "./HudPanel.logic";
 import { isHudOverlayShellActive } from "./hudOverlayPhases";
 import { HUD_SHELL_TRANSITION_MS, hudShellEase } from "./hudMotion";
+import { dictationMorphGeometry } from "./hudMorph";
+import { HudText } from "./HudText";
 
 /** Trailing debounce (ms) for streaming transcript in the SR-only live region. */
 const TRANSCRIPT_ANNOUNCE_DEBOUNCE_MS = 380;
@@ -55,64 +56,120 @@ function useHudCenterInput(): CenterSelectorInput {
   );
 }
 
-function WaveformBars({ dictation = false }: { dictation?: boolean }) {
+const ORB_BARS = [0.45, 0.7, 0.9, 1, 0.9, 0.7, 0.45];
+
+/**
+ * Minimal dictation orb: bars that breathe with the mic, fixed in place. Drawn on a canvas in
+ * a supersampled backing surface, with fractional bar heights for smooth motion at small sizes.
+ */
+function DictationOrb() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const reduceMotion = useReducedMotion();
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    let W = 0;
+    let H = 0;
+    let density = 0;
+    const fit = () => {
+      const dpr = Math.max(2, window.devicePixelRatio || 1);
+      density = dpr;
+      W = canvas.clientWidth;
+      H = canvas.clientHeight;
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    const resize = new ResizeObserver(fit);
+    resize.observe(canvas);
+    fit();
+    let color = getComputedStyle(canvas).color;
+    const theme = new MutationObserver(() => { color = getComputedStyle(canvas).color; });
+    theme.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+    let level = 0;
+    let last = performance.now();
+    let raf = 0;
+    const frame = (now: number) => {
+      if (density !== Math.max(2, window.devicePixelRatio || 1)) fit();
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const { phase, amplitude } = useHudStore.getState();
+      const raw = phase === "listening"
+        ? Math.min(1, Math.pow(Math.max(0, amplitude - 0.02) * 3, 0.55))
+        : 0;
+      // Fast attack, slow release.
+      level += (raw - level) * (1 - Math.exp(-(raw > level ? 28 : 7) * dt));
+      const t = now / 1000;
+
+      // Geometry stays in CSS pixels; extra backing pixels only improve antialiasing.
+      const bw = Math.max(2, H / 8);
+      const gap = Math.max(1, bw * 0.6);
+      let n = ORB_BARS.length;
+      while (n > 3 && n * bw + (n - 1) * gap > W * 0.72) n -= 2;
+      const x0 = (W - (n * bw + (n - 1) * gap)) / 2;
+      const maxH = H * 0.62;
+
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = color;
+      for (let i = 0; i < n; i++) {
+        // Each bar moves on its own two sine voices, so the shape keeps changing, not just scaling.
+        const k = i + (ORB_BARS.length - n) / 2;
+        const wobble = reduceMotion ? 1 : 0.45 + 0.35 * Math.sin(t * (7 + k * 1.9) + k * 2.4)
+          + 0.2 * Math.sin(t * (13 - k * 0.8) + k);
+        // Fractional heights avoid visible one-pixel jumps on quiet speech.
+        const h = bw + (maxH - bw) * Math.min(1, level * ORB_BARS[k] * wobble * 1.3);
+        ctx.beginPath();
+        ctx.roundRect(x0 + i * (bw + gap), (H - h) / 2, bw, h, bw / 2);
+        ctx.fill();
+      }
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => {
+      resize.disconnect();
+      theme.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, [reduceMotion]);
+
+  return <canvas ref={canvasRef} className="hud-orb" aria-hidden="true" />;
+}
+
+function WaveformBars() {
   const phase = useHudStore((s) => s.phase);
   const amplitude = useHudStore((s) => s.amplitude);
   const active = phase === "listening";
   const level = active ? amplitude : 0;
-  // Dictation: boost mic level so bars read taller in the compact HUD.
-  const visualLevel = dictation && active ? Math.min(1, level * 1.35 + 0.08) : level;
 
   const bars = useMemo(() => [0, 1, 2, 3, 4, 5, 6], []);
 
   return (
     <div
-      className={dictation ? "hud-waveform hud-waveform--dictation" : "hud-waveform"}
+      className="hud-waveform"
       aria-hidden
     >
       {bars.map((i) => {
-        const wave = 0.25 + 0.75 * Math.sin((i / 6) * Math.PI + visualLevel * 2.4);
-        let scaleY: number;
-        if (dictation) {
-          scaleY = active
-            ? Math.max(0.22, Math.min(1, 0.18 + visualLevel * wave * 0.82))
-            : 0.22;
-        } else {
-          const rawH = 6 + level * wave * 22;
-          scaleY = active
-            ? Math.max(0.14, Math.min(1, rawH / WAVE_BAR_SLEEVE_PX))
-            : 0.14;
-        }
+        const wave = 0.25 + 0.75 * Math.sin((i / 6) * Math.PI + level * 2.4);
+        const rawH = 6 + level * wave * 22;
+        const scaleY = active
+          ? Math.max(0.14, Math.min(1, rawH / WAVE_BAR_SLEEVE_PX))
+          : 0.14;
 
         return (
           <div
             key={i}
             className="hud-waveform-bar"
             style={{
-              ...(dictation ? {} : { height: WAVE_BAR_SLEEVE_PX }),
+              height: WAVE_BAR_SLEEVE_PX,
               transform: `scaleY(${scaleY})`,
-              opacity: active ? 0.55 + visualLevel * 0.45 : 0.12,
+              opacity: active ? 0.55 + level * 0.45 : 0.12,
             }}
           />
         );
       })}
-    </div>
-  );
-}
-
-function RecognizedPhrase({ phrase, motionKey }: { phrase: string; motionKey: string }) {
-  const reduceMotion = useReducedMotion();
-
-  return (
-    <div
-      key={motionKey}
-      className={
-        reduceMotion
-          ? "hud-recognized-wrap"
-          : "hud-recognized-wrap hud-recognized-wrap--enter"
-      }
-    >
-      <span className="hud-recognized-text">{phrase}</span>
     </div>
   );
 }
@@ -125,45 +182,75 @@ function CenterContent({
   selected: CenterSelectorResult;
 }) {
   switch (selected.kind) {
-    case "error":
+    case "success":
       return (
-        <div className="hud-line hud-line-error" role="alert">
-          {selected.text}
-        </div>
+        <svg className="hud-confirmation" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+          <circle cx="20" cy="20" r="17" stroke="currentColor" strokeWidth="1.5" opacity="0.3" />
+          <path d="m12 20 5.5 5.5L28 15" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       );
+    case "error":
+      return <HudText text={selected.text} kind="error" />;
     case "match": {
       const m = input.match;
       if (!m) return <div className="hud-center-placeholder" aria-hidden />;
-      const motionKey = `${m.node_id}-${m.matched_phrase}`;
-      return (
-        <RecognizedPhrase
-          phrase={m.matched_phrase}
-          motionKey={motionKey}
-        />
-      );
+      return <HudText text={m.matched_phrase} kind="match" />;
     }
     case "action":
-      return (
-        <div className="hud-line hud-line-action">
-          <span>{selected.text}</span>
-        </div>
-      );
+      return <HudText text={selected.text} kind="action" />;
     case "transcript":
-      return <div className="hud-line hud-line-transcript">{selected.text}</div>;
+      return <HudText text={selected.text} kind="transcript" />;
     default:
       return <div className="hud-center-placeholder" aria-hidden />;
   }
 }
 
-function HudShell() {
+function HudShell({ centerInput }: { centerInput: CenterSelectorInput }) {
   const reduceMotion = useReducedMotion();
   const shellRef = useRef<HTMLDivElement>(null);
-  const centerInput = useHudCenterInput();
   const overlayMode = useHudStore((s) => s.overlayMode);
-  const dictationPreview = useHudStore((s) => s.dictationPreview);
-  // Pin layout for this shell instance so exit fade keeps dictation chrome if mode flips mid-animation.
-  const [pinnedOverlayMode] = useState(overlayMode);
-  const isDictation = pinnedOverlayMode === "dictation";
+  const sessionId = useHudStore((s) => s.sessionId);
+  const waitingForInput = useHudStore((s) => s.dictationWaiting);
+  const isDictation = overlayMode === "dictation" && !waitingForInput;
+
+  useLayoutEffect(() => {
+    const shell = shellRef.current;
+    const host = shell?.parentElement;
+    if (!shell || !host) return;
+    if (!isDictation) {
+      shell.style.removeProperty("--hud-morph-inset");
+      shell.style.removeProperty("--hud-morph-radius");
+      return;
+    }
+    const sourceWidth = host.clientWidth;
+    const sourceRadius = parseFloat(getComputedStyle(shell).borderRadius) || 12;
+    const fit = () => {
+      const { inset, radius } = dictationMorphGeometry(host.clientWidth, host.clientHeight, sourceWidth, sourceRadius);
+      shell.style.setProperty("--hud-morph-inset", `${inset}px`);
+      shell.style.setProperty("--hud-morph-radius", `${radius}px`);
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [isDictation]);
+
+  useEffect(() => {
+    if (!isDictation || !/Windows/.test(navigator.userAgent)) return;
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    let retry: ReturnType<typeof setInterval> | undefined;
+    void listen<number>("hud-dictation-placed", ({ payload }) => {
+      if (payload === sessionId) clearInterval(retry);
+    }).then((unlisten) => {
+      if (cancelled) { unlisten(); return; }
+      stop = unlisten;
+      // Native motion starts only after the initial shape has been committed.
+      void emit("hud-dictation-ready", sessionId);
+      retry = setInterval(() => { void emit("hud-dictation-ready", sessionId); }, 100);
+    });
+    return () => { cancelled = true; clearInterval(retry); stop?.(); };
+  }, [isDictation, sessionId]);
   const selected = useMemo(
     () => selectCenterContent(centerInput),
     [centerInput],
@@ -179,7 +266,6 @@ function HudShell() {
   const srAnnounced = useDebounced(srSource, debounceMs);
 
   const phase = centerInput.phase;
-  const phaseLabel = selectPhaseLabel(phase);
 
   // Always show mic chrome while `listening`. `match-result` can arrive before `hud-phase`
   // advances; hiding chrome when `match` is set produced an empty frosted shell with no level
@@ -188,13 +274,17 @@ function HudShell() {
 
   /**
    * Backdrop-filter / inset shadows can outlast opacity on WebView2. Strip those layers as soon as
-   * the session leaves overlay phases — `executing` / `done` dismiss before `stopped`, so gating on
-   * `stopped` alone left a rim fading on its own.
+   * the session leaves overlay phases, so the rim fades with the rest of the shell.
    */
   useLayoutEffect(() => {
-    if (isHudOverlayShellActive(phase)) return;
     const el = shellRef.current;
     if (!el) return;
+    if (isHudOverlayShellActive(phase)) {
+      for (const property of ["backdrop-filter", "-webkit-backdrop-filter", "box-shadow", "border"]) {
+        el.style.removeProperty(property);
+      }
+      return;
+    }
     el.style.setProperty("backdrop-filter", "none");
     el.style.setProperty("-webkit-backdrop-filter", "none");
     el.style.setProperty("box-shadow", "none");
@@ -209,86 +299,89 @@ function HudShell() {
     [reduceMotion],
   );
 
-  const shellInitial = reduceMotion
-    ? { opacity: 1, scale: 1 }
-    : { opacity: 0, scale: 0.985 };
-
-  const shellExit = reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 1 };
-
-  if (isDictation) {
-    return (
-      <motion.div
-        ref={shellRef}
-        className="hud-root hud-root--dictation"
-        data-tauri-drag-region
-        onPointerDown={handleHudDragPointerDown}
-        role="region"
-        aria-label="Dictation session"
-        initial={shellInitial}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={shellExit}
-        transition={transition}
-      >
-        <div className="hud-body hud-body--dictation">
-          <WaveformBars dictation />
-          <span className="hud-dictation-preview">{dictationPreview}</span>
-        </div>
-      </motion.div>
-    );
-  }
+  const shellInitial = { opacity: reduceMotion ? 1 : 0 };
+  const shellExit = { opacity: 0 };
 
   return (
     <motion.div
       ref={shellRef}
-      className="hud-root"
+      className={isDictation ? "hud-root hud-root--dictation" : "hud-root"}
       data-tauri-drag-region
       onPointerDown={handleHudDragPointerDown}
       role="region"
-      {...(phaseLabel
-        ? { "aria-labelledby": "hud-phase-label" }
-        : { "aria-label": "Voice session" })}
+      aria-label={overlayMode === "dictation" ? "Dictation session" : "Voice session"}
       initial={shellInitial}
-      animate={{ opacity: 1, scale: 1 }}
+      animate={{ opacity: 1 }}
       exit={shellExit}
       transition={transition}
     >
-      <div
-        className={
-          showListeningChrome ? "hud-body" : "hud-body hud-body--solo"
-        }
-      >
-        {phaseLabel && (
-          <div className="hud-phase-label" id="hud-phase-label">
-            {phaseLabel}
-          </div>
+      <AnimatePresence initial={false} mode="popLayout">
+        {overlayMode === "dictation" && waitingForInput ? (
+          <motion.div
+            key="dictation-waiting"
+            className="hud-body hud-body--solo"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reduceMotion ? 0 : 0.1 }}
+          >
+            <div className="hud-phase-label">Dictation paused</div>
+            <div className="hud-transcript-wrap" role="status" aria-live="polite">
+              <div className="hud-transcript-visual">
+                <HudText text="Click a text field to start dictating." kind="transcript" />
+              </div>
+            </div>
+            <div className="hud-phase-label">Microphone paused</div>
+          </motion.div>
+        ) : isDictation ? (
+          <motion.div
+            key="dictation"
+            className="hud-body hud-body--dictation"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reduceMotion ? 0 : 0.14, delay: reduceMotion ? 0 : 0.12 }}
+          >
+            <DictationOrb />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="command"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reduceMotion ? 0 : 0.1 }}
+            className={showListeningChrome ? "hud-body" : "hud-body hud-body--solo"}
+          >
+            <div className="hud-transcript-wrap">
+              <span className="hud-sr-only" role="status" aria-live="polite" aria-atomic="true">
+                {srAnnounced}
+              </span>
+              <div className="hud-transcript-visual" aria-hidden={selected.kind !== "error"}>
+                <CenterContent input={centerInput} selected={selected} />
+              </div>
+            </div>
+            {showListeningChrome && (
+              <div className="hud-bottom-bar">
+                <WaveformBars />
+              </div>
+            )}
+          </motion.div>
         )}
-        <div className="hud-transcript-wrap">
-          <span className="hud-sr-only" role="status" aria-live="polite" aria-atomic="true">
-            {srAnnounced}
-          </span>
-          <div className="hud-transcript-visual">
-            <CenterContent input={centerInput} selected={selected} />
-          </div>
-        </div>
-        {showListeningChrome && (
-          <div className="hud-bottom-bar">
-            <WaveformBars />
-          </div>
-        )}
-      </div>
+      </AnimatePresence>
     </motion.div>
   );
 }
 
 /** Fade / pulse wrapper: only mount animated shell while HUD session is active. */
 function HudBody() {
-  const phase = useHudStore((s) => s.phase);
-  const active = isHudOverlayShellActive(phase);
+  const centerInput = useHudCenterInput();
+  const active = isHudOverlayShellActive(centerInput.phase);
 
-  // `schedule_hud_window_hide_when_still_dismissed` in Rust delays native hide until exit finishes.
+  // Native hide waits for this exit; command-to-dictation keeps the same visible shell.
   return (
     <AnimatePresence>
-      {active ? <HudShell key="shell" /> : null}
+      {active ? <HudShell key="shell" centerInput={centerInput} /> : null}
     </AnimatePresence>
   );
 }
