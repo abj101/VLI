@@ -3450,6 +3450,18 @@ mod tests {
     }
 
     #[test]
+    fn no_match_timeout_ignores_later_dictation_session() {
+        let mut rt = HudRuntime::default();
+        let command_session_id = prepare_hud_listening_session(&mut rt);
+        assert!(should_fire_no_match_timeout(&rt, command_session_id));
+        rt.visible = false;
+        let dictation_session_id = rt.session_id.wrapping_add(1);
+        prepare_dictation_overlay(&mut rt, dictation_session_id);
+        assert!(dictation_session_id > command_session_id);
+        assert!(!should_fire_no_match_timeout(&rt, command_session_id));
+    }
+
+    #[test]
     fn follow_up_happy_path_consumes_response_once() {
         let mut rt = HudRuntime {
             visible: true,

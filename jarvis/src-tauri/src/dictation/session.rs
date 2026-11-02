@@ -43,18 +43,16 @@ impl HudSnapshot {
     }
 }
 
-/// Owns session id allocation and active reconcile state.
+/// Owns active reconcile state.
 #[derive(Debug)]
 pub struct DictationSessionController {
     session: Option<DictationSession>,
-    next_session_id: u64,
 }
 
 impl Default for DictationSessionController {
     fn default() -> Self {
         Self {
             session: None,
-            next_session_id: 1,
         }
     }
 }
@@ -64,7 +62,7 @@ impl DictationSessionController {
         self.session.is_some()
     }
 
-    pub fn start(&mut self, hud: HudSnapshot) -> Result<u64, String> {
+    pub fn start(&mut self, session_id: u64, hud: HudSnapshot) -> Result<u64, String> {
         if self.is_active() {
             return Err("dictation already active".into());
         }
@@ -72,8 +70,6 @@ impl DictationSessionController {
             return Err("cannot start dictation while voice HUD is active".into());
         }
 
-        let session_id = self.next_session_id;
-        self.next_session_id = self.next_session_id.saturating_add(1);
         self.session = Some(DictationSession::new(session_id));
         Ok(session_id)
     }
@@ -135,7 +131,7 @@ impl DictationSessionController {
             self.stop(injector)?;
             Ok(None)
         } else {
-            Ok(Some(self.start(hud)?))
+            Ok(Some(self.start(1, hud)?))
         }
     }
 
@@ -175,7 +171,7 @@ mod tests {
         assert!(!ctrl.is_active());
 
         let session_id = ctrl
-            .start(HudSnapshot {
+            .start(1, HudSnapshot {
                 visible: false,
                 phase: HudPhase::Idle,
                 overlay_mode: HudOverlayMode::Command,
@@ -191,7 +187,7 @@ mod tests {
         let mut ctrl = DictationSessionController::default();
         let mut injector = MockTextInjector::new();
         let session_id = ctrl
-            .start(HudSnapshot {
+            .start(1, HudSnapshot {
                 visible: false,
                 phase: HudPhase::Idle,
                 overlay_mode: HudOverlayMode::Command,
@@ -209,7 +205,7 @@ mod tests {
     fn flush_applies_pending_transcript() {
         let mut ctrl = DictationSessionController::default();
         let mut injector = MockTextInjector::new();
-        ctrl.start(HudSnapshot {
+        ctrl.start(1, HudSnapshot {
             visible: false,
             phase: HudPhase::Idle,
             overlay_mode: HudOverlayMode::Command,
@@ -237,7 +233,7 @@ mod tests {
     fn flush_is_noop_when_already_synced() {
         let mut ctrl = DictationSessionController::default();
         let mut injector = MockTextInjector::new();
-        ctrl.start(HudSnapshot {
+        ctrl.start(1, HudSnapshot {
             visible: false,
             phase: HudPhase::Idle,
             overlay_mode: HudOverlayMode::Command,
@@ -266,7 +262,7 @@ mod tests {
     fn hud_active_rejects_start() {
         let mut ctrl = DictationSessionController::default();
         let err = ctrl
-            .start(HudSnapshot {
+            .start(1, HudSnapshot {
                 visible: true,
                 phase: HudPhase::Listening,
                 overlay_mode: HudOverlayMode::Command,
@@ -309,7 +305,7 @@ mod tests {
         let mut ctrl = DictationSessionController::default();
         let mut injector = MockTextInjector::new();
         let session_id = ctrl
-            .start(HudSnapshot {
+            .start(1, HudSnapshot {
                 visible: false,
                 phase: HudPhase::Idle,
                 overlay_mode: HudOverlayMode::Command,

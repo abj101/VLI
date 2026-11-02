@@ -107,7 +107,14 @@ pub fn start_dictation(
         }
     }
 
-    let session_id = with_controller(app, |ctrl| ctrl.start(hud_snapshot(hud)?))?;
+    let session_id = {
+        let mut s = hud.lock().map_err(|_| "hud state poisoned".to_string())?;
+        let snapshot = HudSnapshot { visible: s.visible, phase: s.phase, overlay_mode: s.overlay_mode };
+        let session_id = s.session_id.wrapping_add(1);
+        with_controller(app, |ctrl| ctrl.start(session_id, snapshot))?;
+        s.session_id = session_id;
+        session_id
+    };
 
     if let Some(suppressed) = app.try_state::<audio::WakeMicSuppressed>() {
         use std::sync::atomic::Ordering;
