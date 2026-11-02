@@ -9,6 +9,7 @@ import type {
   ActionErrorPayload,
   ActionStatus,
   AudioErrorPayload,
+  DictationPhasePayload,
   HudPhasePayload,
   MatchResult,
   TranscriptUpdate,
@@ -26,6 +27,8 @@ function pickHudState(s: HudStore): HudState {
     actionError: s.actionError,
     amplitude: s.amplitude,
     audioError: s.audioError,
+    dictationPreview: s.dictationPreview,
+    dictationSessionId: s.dictationSessionId,
   };
 }
 
@@ -39,7 +42,8 @@ type HudStore = HudState & {
       | ActionStatus
       | ActionErrorPayload
       | { amplitude: number }
-      | AudioErrorPayload,
+      | AudioErrorPayload
+      | DictationPhasePayload,
   ) => void;
 };
 

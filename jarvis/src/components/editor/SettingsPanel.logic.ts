@@ -7,7 +7,7 @@ type ResolvedEditorTheme = "dark" | "light";
 export type SttProvider = "local" | "os" | "remote";
 
 /** Matches `local_whisper_model` in SQLite / `AppSettings.localWhisperModel`. */
-export type LocalWhisperModelId = "tiny.en" | "base.en" | "small.en";
+export type LocalWhisperModelId = "tiny.en" | "base.en" | "small.en" | "large-v3-turbo-q5_0";
 
 export const DEFAULT_LOCAL_WHISPER_MODEL: LocalWhisperModelId = "base.en";
 
@@ -18,13 +18,19 @@ export const LOCAL_WHISPER_MODEL_OPTIONS: ReadonlyArray<{
   { value: "tiny.en", label: "Tiny — fastest, weak punctuation" },
   { value: "base.en", label: "Base — balanced (default)" },
   { value: "small.en", label: "Small — best accuracy & punctuation" },
+  { value: "large-v3-turbo-q5_0", label: "Large v3 Turbo (best, GPU)" },
 ] as const;
 
 export function normalizeLocalWhisperModel(
   raw: string | null | undefined,
 ): LocalWhisperModelId {
   const s = (raw ?? "").trim();
-  if (s === "tiny.en" || s === "base.en" || s === "small.en") return s;
+  if (
+    s === "tiny.en" ||
+    s === "base.en" ||
+    s === "small.en" ||
+    s === "large-v3-turbo-q5_0"
+  ) return s;
   return DEFAULT_LOCAL_WHISPER_MODEL;
 }
 

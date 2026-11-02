@@ -1,5 +1,5 @@
 mod execution_context;
-mod executor;
+pub(crate) mod executor;
 mod matcher;
 mod open_target;
 mod router;

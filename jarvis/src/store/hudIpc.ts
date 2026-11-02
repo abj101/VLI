@@ -4,6 +4,7 @@ import type {
   ActionErrorPayload,
   ActionStatus,
   AudioErrorPayload,
+  DictationPhasePayload,
   HudOverlayMode,
   HudPhase,
   HudPhaseSnapshot,
@@ -87,6 +88,9 @@ export async function subscribeHudIpc(): Promise<() => void> {
     }),
     listen<AudioErrorPayload>("audio-error", (e) => {
       useHudStore.getState().applyIpc("audio-error", e.payload);
+    }),
+    listen<DictationPhasePayload>("dictation-phase", (e) => {
+      useHudStore.getState().applyIpc("dictation-phase", e.payload);
     }),
   ]);
 

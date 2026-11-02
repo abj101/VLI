@@ -30,6 +30,11 @@ pub const WHISPER_MODEL_SPECS: &[WhisperModelSpec] = &[
         size_bytes_approx: 142 * 1024 * 1024,
     },
     WhisperModelSpec {
+        id: "large-v3-turbo-q5_0",
+        label: "Large v3 Turbo (best, GPU)",
+        size_bytes_approx: 574 * 1024 * 1024,
+    },
+    WhisperModelSpec {
         id: "small.en",
         label: "Small",
         size_bytes_approx: 466 * 1024 * 1024,

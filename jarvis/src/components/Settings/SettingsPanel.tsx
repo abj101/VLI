@@ -734,6 +734,7 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
                     <p className="editor-settings-group-label">Transcription</p>
                         <WhisperModelsPane
                           activeModelId={normalizeLocalWhisperModel(localWhisperModel)}
+                          useGpu={localWhisperUseGpu}
                           onSelectModel={persistLocalWhisperModel}
                           onNotice={showSettingsNotice}
                         />

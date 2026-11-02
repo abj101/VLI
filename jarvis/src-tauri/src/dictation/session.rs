@@ -1,33 +1,12 @@
-//! Dictation session lifecycle — start/stop/toggle/flush/transcript without Tauri.
-
-use super::injector::{apply_transcript, apply_transcript_with_kind, TextInjector};
-use super::reconcile::TranscriptReconciler;
-use crate::audio::transcript_event::TranscriptPartialKind;
+//! Dictation session lifecycle and text joining.
 use crate::hud::{HudOverlayMode, HudPhase};
 
-#[derive(Debug, Clone)]
-pub struct DictationSession {
-    pub session_id: u64,
-    pub reconciler: TranscriptReconciler,
-}
-
-impl DictationSession {
-    pub fn new(session_id: u64) -> Self {
-        Self {
-            session_id,
-            reconciler: TranscriptReconciler::new(),
-        }
-    }
-}
-
-/// HUD visibility + phase snapshot for collision checks (no `SharedHud` lock in tests).
 #[derive(Debug, Clone, Copy)]
 pub struct HudSnapshot {
     pub visible: bool,
     pub phase: HudPhase,
     pub overlay_mode: HudOverlayMode,
 }
-
 impl HudSnapshot {
     pub fn blocks_dictation(self) -> bool {
         self.visible
@@ -42,26 +21,16 @@ impl HudSnapshot {
             )
     }
 }
-
-/// Owns active reconcile state.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DictationSessionController {
-    session: Option<DictationSession>,
+    session_id: Option<u64>,
+    inserted_tail: String,
+    utterance_count: usize,
 }
-
-impl Default for DictationSessionController {
-    fn default() -> Self {
-        Self {
-            session: None,
-        }
-    }
-}
-
 impl DictationSessionController {
     pub fn is_active(&self) -> bool {
-        self.session.is_some()
+        self.session_id.is_some()
     }
-
     pub fn start(&mut self, session_id: u64, hud: HudSnapshot) -> Result<u64, String> {
         if self.is_active() {
             return Err("dictation already active".into());
@@ -69,284 +38,89 @@ impl DictationSessionController {
         if hud.blocks_dictation() {
             return Err("cannot start dictation while voice HUD is active".into());
         }
-
-        self.session = Some(DictationSession::new(session_id));
+        self.session_id = Some(session_id);
+        self.inserted_tail.clear();
+        self.utterance_count = 0;
         Ok(session_id)
     }
-
-    /// Flush pending transcript, clear session; returns stopped session id (0 if none).
-    pub fn stop<I: TextInjector>(&mut self, injector: &mut I) -> Result<u64, String> {
-        if let Some(session) = self.session.as_mut() {
-            flush_session(session, injector)?;
-        }
-        let id = self.session.as_ref().map(|s| s.session_id).unwrap_or(0);
-        self.session = None;
-        Ok(id)
+    pub fn stop(&mut self) -> u64 {
+        self.session_id.take().unwrap_or(0)
     }
-
-    /// Apply one STT update.
-    ///
-    /// - `Ok(None)` — stale `session_id`, no apply
-    /// - `Ok(Some(preview))` — applied; `preview` is `None` when STT text was empty
-    pub fn on_transcript<I: TextInjector>(
-        &mut self,
-        session_id: u64,
-        text: &str,
-        kind: TranscriptPartialKind,
-        injector: &mut I,
-    ) -> Result<Option<Option<String>>, String> {
-        let session = self
-            .session
-            .as_mut()
-            .ok_or_else(|| "dictation not active".to_string())?;
-
-        if session_id != session.session_id {
-            return Ok(None);
-        }
-
-        apply_transcript_with_kind(&mut session.reconciler, text, kind, injector)?;
-
-        Ok(Some(
-            if matches!(kind, TranscriptPartialKind::SilenceReset) || text.is_empty() {
-                None
-            } else {
-                Some(text.to_string())
-            },
-        ))
+    pub fn accepts(&self, id: u64) -> bool {
+        self.session_id == Some(id)
+    }
+    pub fn final_text(&self, id: u64, text: &str, is_final: bool) -> Option<String> {
+        if self.accepts(id) && is_final { Some(join_and_capitalize(self.tail(), text)) } else { None }
+    }
+    pub fn tail(&self) -> &str {
+        &self.inserted_tail
+    }
+    pub fn remember(&mut self, text: &str) {
+        self.inserted_tail.push_str(text);
+        self.inserted_tail = self
+            .inserted_tail
+            .chars()
+            .rev()
+            .take(200)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        self.utterance_count += 1;
     }
 }
-
-#[cfg(test)]
-impl DictationSessionController {
-    pub fn current_session_id(&self) -> Option<u64> {
-        self.session.as_ref().map(|s| s.session_id)
+pub fn join_and_capitalize(tail: &str, text: &str) -> String {
+    let text = text.trim();
+    if text.is_empty() {
+        return String::new();
     }
-
-    pub fn toggle<I: TextInjector>(
-        &mut self,
-        hud: HudSnapshot,
-        injector: &mut I,
-    ) -> Result<Option<u64>, String> {
-        if self.is_active() {
-            self.stop(injector)?;
-            Ok(None)
-        } else {
-            Ok(Some(self.start(1, hud)?))
-        }
+    let capitalize = tail
+        .trim_end()
+        .chars()
+        .last()
+        .is_none_or(|c| matches!(c, '.' | '?' | '!'));
+    let mut chars = text.chars();
+    let first = chars.next().unwrap();
+    let mut result = String::new();
+    if !tail.is_empty() && !tail.ends_with(char::is_whitespace) {
+        result.push(' ');
     }
-
-    pub fn flush<I: TextInjector>(&mut self, injector: &mut I) -> Result<(), String> {
-        if let Some(session) = self.session.as_mut() {
-            flush_session(session, injector)?;
-        }
-        Ok(())
+    if capitalize {
+        result.extend(first.to_uppercase());
+    } else {
+        result.push(first);
     }
+    result.extend(chars);
+    result
 }
-
-fn flush_session<I: TextInjector>(
-    session: &mut DictationSession,
-    injector: &mut I,
-) -> Result<(), String> {
-    let last = session.reconciler.last_stt();
-    if last.is_empty() {
-        return Ok(());
-    }
-    if session.reconciler.segment_injected() == last {
-        return Ok(());
-    }
-    let pending = last.to_string();
-    apply_transcript(&mut session.reconciler, &pending, injector)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dictation::injector::MockTextInjector;
-    use crate::audio::transcript_event::TranscriptPartialKind;
-    use crate::hud::{HudOverlayMode, HudPhase};
-
     #[test]
-    fn start_sets_active_session() {
+    fn joins() {
+        assert_eq!(join_and_capitalize("", "hello"), "Hello");
+        assert_eq!(join_and_capitalize("Hi.", "there"), " There");
+        assert_eq!(join_and_capitalize("Hi,", "there"), " there");
+    }
+    #[test]
+    fn consecutive_finals_keep_one_space() {
         let mut ctrl = DictationSessionController::default();
-        assert!(!ctrl.is_active());
-
-        let session_id = ctrl
-            .start(1, HudSnapshot {
-                visible: false,
-                phase: HudPhase::Idle,
-                overlay_mode: HudOverlayMode::Command,
-            })
-            .unwrap();
-
-        assert!(ctrl.is_active());
-        assert_eq!(ctrl.current_session_id(), Some(session_id));
+        let first = join_and_capitalize(ctrl.tail(), "first sentence.");
+        ctrl.remember(&first);
+        let second = join_and_capitalize(ctrl.tail(), "second sentence.");
+        ctrl.remember(&second);
+        assert_eq!(ctrl.tail(), "First sentence. Second sentence.");
     }
 
     #[test]
-    fn stop_clears_session() {
+    fn partials_never_insert_and_final_inserts_once() {
         let mut ctrl = DictationSessionController::default();
-        let mut injector = MockTextInjector::new();
-        let session_id = ctrl
-            .start(1, HudSnapshot {
-                visible: false,
-                phase: HudPhase::Idle,
-                overlay_mode: HudOverlayMode::Command,
-            })
-            .unwrap();
-        assert!(ctrl.is_active());
-
-        let stopped = ctrl.stop(&mut injector).unwrap();
-        assert_eq!(stopped, session_id);
-        assert!(!ctrl.is_active());
-        assert_eq!(ctrl.current_session_id(), None);
+        ctrl.start(7, HudSnapshot { visible: false, phase: HudPhase::Idle, overlay_mode: HudOverlayMode::Command }).unwrap();
+        let mut inserted = Vec::new();
+        for (text, final_update) in [("hel", false), ("hello world", false), ("hello world", true)] {
+            if let Some(text) = ctrl.final_text(7, text, final_update) { inserted.push(text); }
+        }
+        assert_eq!(inserted, vec!["Hello world"]);
     }
 
-    #[test]
-    fn flush_applies_pending_transcript() {
-        let mut ctrl = DictationSessionController::default();
-        let mut injector = MockTextInjector::new();
-        ctrl.start(1, HudSnapshot {
-            visible: false,
-            phase: HudPhase::Idle,
-            overlay_mode: HudOverlayMode::Command,
-        })
-        .unwrap();
-
-        {
-            let session = ctrl.session.as_mut().unwrap();
-            session.reconciler = TranscriptReconciler::from_parts(
-                "hello".into(),
-                "hello world".into(),
-                "hello".into(),
-                true,
-            );
-        }
-
-        ctrl.flush(&mut injector).unwrap();
-        assert_eq!(
-            ctrl.session.as_ref().unwrap().reconciler.segment_injected(),
-            "hello world"
-        );
-    }
-
-    #[test]
-    fn flush_is_noop_when_already_synced() {
-        let mut ctrl = DictationSessionController::default();
-        let mut injector = MockTextInjector::new();
-        ctrl.start(1, HudSnapshot {
-            visible: false,
-            phase: HudPhase::Idle,
-            overlay_mode: HudOverlayMode::Command,
-        })
-        .unwrap();
-
-        {
-            let session = ctrl.session.as_mut().unwrap();
-            session.reconciler = TranscriptReconciler::from_parts(
-                "hello world".into(),
-                "hello world".into(),
-                "hello world".into(),
-                true,
-            );
-        }
-
-        ctrl.flush(&mut injector).unwrap();
-        assert_eq!(
-            ctrl.session.as_ref().unwrap().reconciler.segment_injected(),
-            "hello world"
-        );
-        assert!(injector.type_calls.is_empty());
-    }
-
-    #[test]
-    fn hud_active_rejects_start() {
-        let mut ctrl = DictationSessionController::default();
-        let err = ctrl
-            .start(1, HudSnapshot {
-                visible: true,
-                phase: HudPhase::Listening,
-                overlay_mode: HudOverlayMode::Command,
-            })
-            .unwrap_err();
-        assert_eq!(err, "cannot start dictation while voice HUD is active");
-        assert!(!ctrl.is_active());
-    }
-
-    #[test]
-    fn hud_snapshot_blocks_active_listen_phases_only() {
-        assert!(HudSnapshot {
-            visible: true,
-            phase: HudPhase::Listening,
-            overlay_mode: HudOverlayMode::Command,
-        }
-        .blocks_dictation());
-        assert!(!HudSnapshot {
-            visible: true,
-            phase: HudPhase::Listening,
-            overlay_mode: HudOverlayMode::Dictation,
-        }
-        .blocks_dictation());
-        assert!(!HudSnapshot {
-            visible: true,
-            phase: HudPhase::Idle,
-            overlay_mode: HudOverlayMode::Command,
-        }
-        .blocks_dictation());
-        assert!(!HudSnapshot {
-            visible: false,
-            phase: HudPhase::Listening,
-            overlay_mode: HudOverlayMode::Command,
-        }
-        .blocks_dictation());
-    }
-
-    #[test]
-    fn on_transcript_applies_delta_to_injector() {
-        let mut ctrl = DictationSessionController::default();
-        let mut injector = MockTextInjector::new();
-        let session_id = ctrl
-            .start(1, HudSnapshot {
-                visible: false,
-                phase: HudPhase::Idle,
-                overlay_mode: HudOverlayMode::Command,
-            })
-            .unwrap();
-
-        {
-            let session = ctrl.session.as_mut().unwrap();
-            session.reconciler = TranscriptReconciler::from_parts(
-                "hello".into(),
-                "hello".into(),
-                "hello".into(),
-                true,
-            );
-        }
-
-        let preview = ctrl
-            .on_transcript(
-                session_id,
-                "hello world",
-                TranscriptPartialKind::Growth,
-                &mut injector,
-            )
-            .unwrap();
-        assert_eq!(preview, Some(Some("hello world".to_string())));
-        assert_eq!(injector.type_calls, vec![" world"]);
-    }
-
-    #[test]
-    fn toggle_starts_then_stops() {
-        let mut ctrl = DictationSessionController::default();
-        let mut injector = MockTextInjector::new();
-        let hud = HudSnapshot {
-            visible: false,
-            phase: HudPhase::Idle,
-            overlay_mode: HudOverlayMode::Command,
-        };
-
-        assert_eq!(ctrl.toggle(hud, &mut injector).unwrap(), Some(1));
-        assert!(ctrl.is_active());
-        assert_eq!(ctrl.toggle(hud, &mut injector).unwrap(), None);
-        assert!(!ctrl.is_active());
-    }
 }

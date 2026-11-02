@@ -160,6 +160,7 @@ function HudShell() {
   const shellRef = useRef<HTMLDivElement>(null);
   const centerInput = useHudCenterInput();
   const overlayMode = useHudStore((s) => s.overlayMode);
+  const dictationPreview = useHudStore((s) => s.dictationPreview);
   // Pin layout for this shell instance so exit fade keeps dictation chrome if mode flips mid-animation.
   const [pinnedOverlayMode] = useState(overlayMode);
   const isDictation = pinnedOverlayMode === "dictation";
@@ -230,6 +231,7 @@ function HudShell() {
       >
         <div className="hud-body hud-body--dictation">
           <WaveformBars dictation />
+          <span className="hud-dictation-preview">{dictationPreview}</span>
         </div>
       </motion.div>
     );

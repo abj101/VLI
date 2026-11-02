@@ -31,20 +31,20 @@ Warm CMake build trees under `jarvis/.cache/gpu-prebuild/<arch>/` for `whisper-r
 
 ## Dictation session
 
-Voice-dictation period: STT partials stream into the focused text field without HUD focus steal. One session owns rolling decode state (`last_stt_text`), on-screen segment tracking (`segment_injected`), and cumulative typed text (`session_typed`).
+Voice-dictation period using the shared HUD session counter. Partial transcripts appear only in the HUD. Each final utterance is inserted into the focused field once, without deleting existing text.
 
-## Transcript reconcile
+## Dictation utterance
 
-Deep module (`dictation/reconcile.rs`): `TranscriptReconciler::apply_with_kind(partial, kind) → ReconcileResult`. Owns segment + `ScreenModel` state. Policy: `growth` → char-prefix delta; `revision` → overlap merge, then segment replace, then full-span fallback (never append); new utterance → overlap merge; `silence_reset` → clear rolling STT only.
+Local and remote STT retain up to 28 seconds of audio for a final decode. Preview decodes use at most the latest four seconds. Toggle dictation finalizes after 700 ms of silence; push-to-talk finalizes on release. Reaching the cap finalizes either mode and starts a fresh utterance.
 
 ## Transcript partial kind
 
-STT event tag (`audio/transcript_event.rs`): `growth`, `revision`, `silence_reset`. Carried on `TranscriptUpdate.kind`; dictation reconcile consumes it directly.
+STT event tag (`audio/transcript_event.rs`): `growth`, `revision`, `silence_reset`. Carried on `TranscriptUpdate.kind` for command recognition. Dictation uses `is_final` to distinguish previews from insertion.
 
 ## Dictation session controller
 
-Lifecycle module (`dictation/session.rs`): start/stop/toggle, flush on stop, HUD collision guard. Holds `TranscriptReconciler` per session.
+Lifecycle module (`dictation/session.rs`): active session, inserted text tail for spacing and Whisper context, and utterance count. Slow insertion runs outside its mutex.
 
-## Text injector seam
+## Dictation insertion
 
-Adapter turning reconcile deltas into OS keystrokes. `SystemTextInjector` in production — batched `SendInput` backspaces (32/burst), brief settle delay before large retypes; `MockTextInjector` / `VirtualScreen` in tests. Invariant: dictation only mutates field tail; `ScreenModel` clamps backspace count to typed screen length.
+Final text is pasted through the existing clipboard and key-chord helpers, then the previous text clipboard is restored. Batched UTF-16 keyboard input is the fallback. Dictation never backspaces or rewrites the focused field.

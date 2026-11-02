@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const DEFAULT_LOCAL_WHISPER_MODEL: &str = "base.en";
-pub const LOCAL_WHISPER_MODEL_IDS: &[&str] = &["tiny.en", "base.en", "small.en"];
+pub const LOCAL_WHISPER_MODEL_IDS: &[&str] =
+    &["tiny.en", "base.en", "small.en", "large-v3-turbo-q5_0"];
 
 /// Normalize persisted `local_whisper_model` setting (`tiny.en` | `base.en` | `small.en`).
 pub fn parse_local_whisper_model_id(raw: Option<&str>) -> &'static str {
@@ -25,6 +26,7 @@ pub fn parse_local_whisper_model_id(raw: Option<&str>) -> &'static str {
         "tiny.en" => "tiny.en",
         "base.en" => "base.en",
         "small.en" => "small.en",
+        "large-v3-turbo-q5_0" => "large-v3-turbo-q5_0",
         _ => DEFAULT_LOCAL_WHISPER_MODEL,
     }
 }
@@ -43,7 +45,7 @@ const SILENCE_PEAK_THRESHOLD: f32 = 0.01;
 /// Clear stale decode context after this much continuous silence (command HUD).
 const SILENCE_RESET_AFTER: Duration = Duration::from_millis(900);
 /// Longer silence window while dictating so slow speech does not reset rolling decode.
-pub(crate) const SILENCE_RESET_DICTATION: Duration = Duration::from_millis(1800);
+pub(crate) const SILENCE_RESET_DICTATION: Duration = Duration::from_millis(700);
 
 /// Whisper `full` thread count: GPU/Vulkan backends already offload heavy ops; keep CPU threads low
 /// to avoid oversubscription vs the STT worker thread and system audio.
@@ -142,6 +144,16 @@ fn run_decode(
     audio_16k: &[f32],
     use_gpu: bool,
 ) -> Result<String, String> {
+    run_decode_prompt(app, model_path, audio_16k, use_gpu, &vocabulary_prompt(app))
+}
+
+fn run_decode_prompt(
+    app: &AppHandle,
+    model_path: &Path,
+    audio_16k: &[f32],
+    use_gpu: bool,
+    prompt: &str,
+) -> Result<String, String> {
     if audio_16k.len() < MIN_DECODE_SAMPLES || !audio_has_speech(audio_16k) {
         return Ok(String::new());
     }
@@ -154,7 +166,7 @@ fn run_decode(
         .map_err(|_| "whisper server state poisoned".to_string())?;
     let port = ensure_whisper_server(app, &mut cached, model_path, use_gpu)?;
     let decode_started = Instant::now();
-    let text = match post_inference(port, &wav, &vocabulary_prompt(app)) {
+    let text = match post_inference(port, &wav, prompt) {
         Ok(text) => text,
         Err(e) => {
             *cached = None;
@@ -172,15 +184,16 @@ fn run_decode(
 /// Spawn whisper-server and run one throwaway decode so the first real listen is warm.
 pub fn warm_whisper_server(app: &AppHandle, model_id: &str, use_gpu: bool) {
     let started = Instant::now();
-    let result = crate::audio::whisper_models::ensure_whisper_model(app, model_id).and_then(|path| {
-        let state = app.state::<WhisperServerState>();
-        let mut cached = state
-            .0
-            .lock()
-            .map_err(|_| "whisper server state poisoned".to_string())?;
-        let port = ensure_whisper_server(app, &mut cached, &path, use_gpu)?;
-        post_inference(port, &pcm_wav_16k(&vec![0.0; TARGET_RATE as usize]), "")
-    });
+    let result =
+        crate::audio::whisper_models::ensure_whisper_model(app, model_id).and_then(|path| {
+            let state = app.state::<WhisperServerState>();
+            let mut cached = state
+                .0
+                .lock()
+                .map_err(|_| "whisper server state poisoned".to_string())?;
+            let port = ensure_whisper_server(app, &mut cached, &path, use_gpu)?;
+            post_inference(port, &pcm_wav_16k(&vec![0.0; TARGET_RATE as usize]), "")
+        });
     match result {
         Ok(_) => log::info!("stt: whisper warm in {} ms", started.elapsed().as_millis()),
         Err(e) => log::warn!("stt: whisper warmup failed: {e}"),
@@ -192,7 +205,11 @@ pub fn warm_whisper_server(app: &AppHandle, model_id: &str, use_gpu: bool) {
 fn vocabulary_prompt(app: &AppHandle) -> String {
     let mut names: Vec<String> = app
         .try_state::<crate::AppIndexStore>()
-        .and_then(|s| s.read().ok().map(|g| g.iter().map(|e| e.display_name.clone()).collect()))
+        .and_then(|s| {
+            s.read()
+                .ok()
+                .map(|g| g.iter().map(|e| e.display_name.clone()).collect())
+        })
         .unwrap_or_default();
     names.retain(|n| {
         n.split_whitespace().count() <= 2
@@ -309,7 +326,11 @@ fn pcm_wav_16k(samples: &[f32]) -> Vec<u8> {
 
 fn inference_multipart(boundary: &str, wav: &[u8], prompt: &str) -> Vec<u8> {
     let mut body = Vec::with_capacity(wav.len() + prompt.len() + 256);
-    let fields = [("response_format", "json"), ("temperature", "0"), ("prompt", prompt)];
+    let fields = [
+        ("response_format", "json"),
+        ("temperature", "0"),
+        ("prompt", prompt),
+    ];
     for (name, value) in fields.into_iter().filter(|(_, v)| !v.is_empty()) {
         body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
     }
@@ -433,6 +454,17 @@ fn stt_loop(
     for_dictation: bool,
     cancel: Arc<AtomicBool>,
 ) -> Result<(), String> {
+    if for_dictation {
+        return dictation_loop(
+            &app,
+            &model_path,
+            use_gpu,
+            pcm_rx,
+            input_sample_rate,
+            hud_session_id,
+            cancel,
+        );
+    }
     let had_preroll = !initial_audio_16k.is_empty();
     let mut buffer_16k: Vec<f32> = initial_audio_16k;
     let mut last_decode = Instant::now();
@@ -578,6 +610,99 @@ fn stt_loop(
     Ok(())
 }
 
+pub(crate) fn push_dictation(buffer: &mut Vec<f32>, chunk: &[f32]) {
+    buffer.extend_from_slice(chunk);
+}
+
+pub(crate) fn trim_utterance(samples: &[f32]) -> &[f32] {
+    let frame = TARGET_RATE as usize / 50;
+    let threshold = crate::audio::transcript_event::MIN_SPEECH_PEAK_FOR_DECODE;
+    let speech = |chunk: &[f32]| chunk.iter().any(|s| s.abs() >= threshold);
+    let Some(first) = samples.chunks(frame).position(speech) else {
+        return &[];
+    };
+    let last = samples.chunks(frame).rposition(speech).unwrap_or(first);
+    let padding = TARGET_RATE as usize * 150 / 1000;
+    let start = (first * frame).saturating_sub(padding);
+    let end = ((last + 1) * frame)
+        .saturating_add(padding)
+        .min(samples.len());
+    &samples[start..end]
+}
+
+fn dictation_loop(
+    app: &AppHandle,
+    model: &Path,
+    gpu: bool,
+    rx: Receiver<Vec<f32>>,
+    rate: u32,
+    id: u64,
+    cancel: Arc<AtomicBool>,
+) -> Result<(), String> {
+    let mut buffer = Vec::new();
+    let mut silence = SilenceResetTracker::for_mode(true);
+    let end_on_pause = crate::load_dictation_hotkey_mode(app) == crate::DictationHotkeyMode::Toggle;
+    let mut last_decode = Instant::now();
+    let mut speech = false;
+    let finalize = |buffer: &[f32]| {
+        let prompt = crate::dictation::prompt_tail(app, id);
+        let started = Instant::now();
+        let decoded = run_decode_prompt(app, model, trim_utterance(buffer), gpu, &prompt);
+        debug!("dictation: decode {} ms", started.elapsed().as_millis());
+        if let Ok(raw) = decoded {
+            if let Some(text) = normalize_transcript_candidate(&raw) {
+                let _ = crate::dictation::publish_transcript(
+                    app,
+                    TranscriptUpdate {
+                        text,
+                        is_final: true,
+                        hud_session_id: id,
+                        kind: TranscriptPartialKind::Growth,
+                    },
+                );
+            }
+        }
+    };
+    while let Ok(chunk) = rx.recv() {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let chunk = resample_mono_to_16k(&chunk, rate);
+        speech |= audio_has_speech(&chunk);
+        let pause = silence.push_and_should_reset(&chunk);
+        push_dictation(&mut buffer, &chunk);
+        if (end_on_pause && speech && pause) || buffer.len() >= TARGET_RATE as usize * 28 {
+            finalize(&buffer);
+            buffer.clear();
+            speech = false;
+            last_decode = Instant::now();
+            continue;
+        }
+        if last_decode.elapsed() >= INFER_EVERY {
+            last_decode = Instant::now();
+            let start = buffer.len().saturating_sub(MAX_BUFFER_SAMPLES);
+            let prompt = crate::dictation::prompt_tail(app, id);
+            if let Ok(raw) = run_decode_prompt(app, model, &buffer[start..], gpu, &prompt) {
+                if let Some(text) = normalize_transcript_candidate(&raw) {
+                    let _ = crate::dictation::publish_transcript(
+                        app,
+                        TranscriptUpdate {
+                            text,
+                            is_final: false,
+                            hud_session_id: id,
+                            kind: TranscriptPartialKind::Growth,
+                        },
+                    );
+                }
+            }
+        }
+    }
+    if !cancel.load(Ordering::Relaxed) {
+        finalize(&buffer);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -586,6 +711,13 @@ mod tests {
         TARGET_RATE,
     };
     use crate::audio::whisper_models::whisper_model_filename;
+
+    #[test]
+    fn dictation_buffer_keeps_ten_seconds() {
+        let mut buffer = Vec::new();
+        for _ in 0..10 { super::push_dictation(&mut buffer, &vec![0.1; TARGET_RATE as usize]); }
+        assert_eq!(buffer.len(), TARGET_RATE as usize * 10);
+    }
 
     #[test]
     fn parse_local_whisper_model_id_normalizes() {
@@ -665,7 +797,12 @@ mod tests {
 
     #[test]
     fn multipart_contains_json_temperature_and_audio_file() {
-        let body = String::from_utf8(inference_multipart("boundary-test", b"RIFF", "Hey Jarvis, open Claude.")).unwrap();
+        let body = String::from_utf8(inference_multipart(
+            "boundary-test",
+            b"RIFF",
+            "Hey Jarvis, open Claude.",
+        ))
+        .unwrap();
         assert!(body.contains("name=\"prompt\"\r\n\r\nHey Jarvis, open Claude."));
         assert!(body.contains("name=\"response_format\"\r\n\r\njson"));
         assert!(body.contains("name=\"temperature\"\r\n\r\n0"));

@@ -37,12 +37,14 @@ type WhisperModelDownloadEvent = {
 
 type WhisperModelsPaneProps = {
   activeModelId: LocalWhisperModelId;
+  useGpu: boolean;
   onSelectModel: (modelId: LocalWhisperModelId) => Promise<void>;
   onNotice: (text: string) => void;
 };
 
 export function WhisperModelsPane({
   activeModelId,
+  useGpu,
   onSelectModel,
   onNotice,
 }: WhisperModelsPaneProps) {
@@ -195,6 +197,9 @@ export function WhisperModelsPane({
                     )}
                     {model.installed && !model.managed && (
                       <span className="editor-whisper-model-badge">Bundled</span>
+                    )}
+                    {id === "large-v3-turbo-q5_0" && model.installed && useGpu && (
+                      <span className="editor-whisper-model-badge">Recommended</span>
                     )}
                     {model.installed && model.managed && !isActive && (
                       <span className="editor-whisper-model-badge">Installed</span>

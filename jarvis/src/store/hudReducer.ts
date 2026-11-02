@@ -2,6 +2,7 @@ import type {
   ActionErrorPayload,
   ActionStatus,
   AudioErrorPayload,
+  DictationPhasePayload,
   HudOverlayMode,
   HudPhase,
   HudPhasePayload,
@@ -19,7 +20,8 @@ export type HudWireTopic =
   | "action-status"
   | "action-error"
   | "amplitude-update"
-  | "audio-error";
+  | "audio-error"
+  | "dictation-phase";
 
 export type HudState = {
   phase: HudPhase;
@@ -33,6 +35,8 @@ export type HudState = {
   actionError: string | null;
   amplitude: number;
   audioError: string | null;
+  dictationPreview: string;
+  dictationSessionId: number;
 };
 
 export const initialHudState: HudState = {
@@ -46,6 +50,8 @@ export const initialHudState: HudState = {
   actionError: null,
   amplitude: 0,
   audioError: null,
+  dictationPreview: "",
+  dictationSessionId: 0,
 };
 
 export function reduceHudState(
@@ -58,7 +64,8 @@ export function reduceHudState(
     | ActionStatus
     | ActionErrorPayload
     | { amplitude: number }
-    | AudioErrorPayload,
+    | AudioErrorPayload
+    | DictationPhasePayload,
 ): HudState {
   switch (topic) {
     case "hud-phase": {
@@ -147,6 +154,15 @@ export function reduceHudState(
     case "audio-error": {
       const { message } = payload as AudioErrorPayload;
       return { ...state, audioError: message };
+    }
+    case "dictation-phase": {
+      const update = payload as DictationPhasePayload;
+      if (update.sessionId < state.dictationSessionId) return state;
+      return {
+        ...state,
+        dictationSessionId: update.sessionId,
+        dictationPreview: update.active ? update.text ?? "" : "",
+      };
     }
     default:
       return state;

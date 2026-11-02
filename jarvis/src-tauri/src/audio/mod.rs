@@ -166,6 +166,20 @@ impl Deref for SharedAudioPipeline {
     }
 }
 
+/// Finish the current utterance before ending dictation.
+pub fn finish_shared_pipeline(app: &AppHandle, slot: &SharedAudioPipeline) {
+    if let Some(suppressed) = app.try_state::<WakeMicSuppressed>() {
+        suppressed.0.store(false, Ordering::SeqCst);
+    }
+    let old = slot.lock().unwrap().take();
+    if let Some(mut pipeline) = old {
+        pipeline.capture.stop();
+        if let Some(worker) = pipeline.stt.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
 /// Clears any live pipeline (stops capture and joins STT).
 ///
 /// **Must not** drop [`AudioPipeline`] while holding `slot`'s mutex: `Drop` joins the STT thread,

@@ -240,8 +240,20 @@ html[data-theme="dark"] .hud-root {
   flex: 1;
   min-height: 0;
   display: flex;
-  align-items: stretch;
-  justify-content: center;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  overflow: hidden;
+}
+.hud-dictation-preview {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: color-mix(in oklch, var(--glass-text) 58%, transparent);
+  font-size: 12px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hud-sr-only {
@@ -369,7 +381,8 @@ html[data-theme="dark"] .hud-root {
 
 /* Dictation HUD — must follow `.hud-waveform` so height/width overrides win. */
 .hud-waveform--dictation {
-  width: 100%;
+  width: 42%;
+  flex: 0 0 42%;
   height: 100%;
   min-height: 0;
   gap: 5px;

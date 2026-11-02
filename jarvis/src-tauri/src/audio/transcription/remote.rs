@@ -141,6 +141,9 @@ fn remote_stt_loop(
     hud_session_id: u64,
     for_dictation: bool,
 ) -> Result<(), String> {
+    if for_dictation {
+        return remote_dictation_loop(&app, &params, pcm_rx, input_sample_rate, hud_session_id);
+    }
     use std::time::Instant;
 
     let mut buffer_16k: Vec<f32> = Vec::new();
@@ -262,6 +265,70 @@ impl RemoteSttParams {
             Duration::from_secs(u64::from(secs))
         }
     }
+}
+
+fn remote_dictation_loop(
+    app: &AppHandle,
+    params: &RemoteSttParams,
+    rx: Receiver<Vec<f32>>,
+    rate: u32,
+    id: u64,
+) -> Result<(), String> {
+    let mut buffer = Vec::new();
+    let mut silence = SilenceResetTracker::for_mode(true);
+    let end_on_pause = crate::load_dictation_hotkey_mode(app) == crate::DictationHotkeyMode::Toggle;
+    let mut last_infer = std::time::Instant::now();
+    let mut speech = false;
+    let finalize = |buffer: &[f32]| {
+        let started = std::time::Instant::now();
+        let decoded = post_transcription(params, crate::audio::stt::trim_utterance(buffer));
+        debug!("dictation: decode {} ms", started.elapsed().as_millis());
+        if let Ok(raw) = decoded {
+            if let Some(text) = normalize_transcript_candidate(&raw) {
+                let _ = crate::dictation::publish_transcript(
+                    app,
+                    TranscriptUpdate {
+                        text,
+                        is_final: true,
+                        hud_session_id: id,
+                        kind: TranscriptPartialKind::Growth,
+                    },
+                );
+            }
+        }
+    };
+    while let Ok(chunk) = rx.recv() {
+        let chunk = resample_mono_to_16k(&chunk, rate);
+        speech |= audio_has_speech(&chunk);
+        let pause = silence.push_and_should_reset(&chunk);
+        crate::audio::stt::push_dictation(&mut buffer, &chunk);
+        if (end_on_pause && speech && pause) || buffer.len() >= TARGET_RATE as usize * 28 {
+            finalize(&buffer);
+            buffer.clear();
+            speech = false;
+            last_infer = std::time::Instant::now();
+            continue;
+        }
+        if last_infer.elapsed() >= INFER_EVERY {
+            last_infer = std::time::Instant::now();
+            let start = buffer.len().saturating_sub(TARGET_RATE as usize * 4);
+            if let Ok(raw) = post_transcription(params, &buffer[start..]) {
+                if let Some(text) = normalize_transcript_candidate(&raw) {
+                    let _ = crate::dictation::publish_transcript(
+                        app,
+                        TranscriptUpdate {
+                            text,
+                            is_final: false,
+                            hud_session_id: id,
+                            kind: TranscriptPartialKind::Growth,
+                        },
+                    );
+                }
+            }
+        }
+    }
+    finalize(&buffer);
+    Ok(())
 }
 
 #[cfg(test)]

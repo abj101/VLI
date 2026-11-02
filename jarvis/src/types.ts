@@ -19,6 +19,12 @@ export interface HudPhasePayload {
   overlay_mode?: HudOverlayMode;
 }
 
+export interface DictationPhasePayload {
+  active: boolean;
+  sessionId: number;
+  text?: string;
+}
+
 export interface HudPhaseSnapshot {
   phase: HudPhase;
   sessionId: number;

@@ -4,46 +4,48 @@
 #[cfg(windows)]
 const SEND_INPUT_BATCH_EVENTS: usize = 64;
 
-/// Backspaces per batch (`down` + `up` = 2 events each).
 #[cfg(windows)]
-const BACKSPACES_PER_BATCH: usize = SEND_INPUT_BATCH_EVENTS / 2;
-
-#[cfg(windows)]
-pub fn type_unicode(text: &str) -> Result<(), String> {
-    use windows::Win32::UI::Input::KeyboardAndMouse::VK_RETURN;
-
-    if text.is_empty() {
-        return Ok(());
-    }
-
-    for ch in text.chars() {
-        if ch == '\n' || ch == '\r' {
-            send_virtual_key(VK_RETURN)?;
-            continue;
+fn unicode_inputs(text: &str) -> Vec<windows::Win32::UI::Input::KeyboardAndMouse::INPUT> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+        VIRTUAL_KEY, VK_RETURN,
+    };
+    let mut inputs = Vec::new();
+    for unit in text.encode_utf16() {
+        let newline = unit == b'\n' as u16 || unit == b'\r' as u16;
+        for up in [false, true] {
+            let mut flags = if newline {
+                Default::default()
+            } else {
+                KEYEVENTF_UNICODE
+            };
+            if up {
+                flags |= KEYEVENTF_KEYUP;
+            }
+            inputs.push(INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: if newline { VK_RETURN } else { VIRTUAL_KEY(0) },
+                        wScan: if newline { 0 } else { unit },
+                        dwFlags: flags,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            });
         }
-        send_unicode_char(ch)?;
     }
-    Ok(())
+    inputs
 }
 
 #[cfg(windows)]
-pub fn send_backspaces(count: usize) -> Result<(), String> {
-    use std::thread;
-    use std::time::Duration;
-    use windows::Win32::UI::Input::KeyboardAndMouse::VK_BACK;
-
-    if count == 0 {
-        return Ok(());
-    }
-
-    let mut remaining = count;
-    while remaining > 0 {
-        let batch = remaining.min(BACKSPACES_PER_BATCH);
-        send_virtual_key_burst(VK_BACK, batch)?;
-        remaining -= batch;
-        if remaining > 0 {
-            // Let the focused control drain the queue before the next burst.
-            thread::sleep(Duration::from_millis(1));
+pub fn type_unicode(text: &str) -> Result<(), String> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT};
+    for batch in unicode_inputs(text).chunks(SEND_INPUT_BATCH_EVENTS) {
+        let sent = unsafe { SendInput(batch, std::mem::size_of::<INPUT>() as i32) };
+        if sent != batch.len() as u32 {
+            return Err(format!("SendInput accepted {sent}/{} events", batch.len()));
         }
     }
     Ok(())
@@ -86,40 +88,6 @@ fn send_virtual_key_burst(
             "SendInput accepted {sent}/{} backspace events",
             inputs.len()
         ));
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn send_unicode_char(ch: char) -> Result<(), String> {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
-        VIRTUAL_KEY,
-    };
-
-    let code = ch as u16;
-    for key_up in [false, true] {
-        let flags = if key_up {
-            KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
-        } else {
-            KEYEVENTF_UNICODE
-        };
-        let input = INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: VIRTUAL_KEY(0),
-                    wScan: code,
-                    dwFlags: flags,
-                    time: 0,
-                    dwExtraInfo: 0,
-                },
-            },
-        };
-        let sent = unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) };
-        if sent == 0 {
-            return Err("SendInput failed".into());
-        }
     }
     Ok(())
 }
@@ -185,11 +153,6 @@ pub fn type_unicode(_text: &str) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-pub fn send_backspaces(_count: usize) -> Result<(), String> {
-    Err("dictation typing is Windows-only for now".into())
-}
-
-#[cfg(not(windows))]
 pub(crate) fn send_virtual_key(_vk: u16) -> Result<(), String> {
     Err("not supported on this platform".into())
 }
@@ -199,13 +162,10 @@ pub(crate) fn send_virtual_key_chord(_keys: &[u16]) -> Result<(), String> {
     Err("not supported on this platform".into())
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
-    use super::*;
-
     #[test]
-    fn backspace_batch_size_respects_sendinput_cap() {
-        #[cfg(windows)]
-        assert_eq!(BACKSPACES_PER_BATCH, 32);
+    fn unicode_input_includes_surrogate_pair() {
+        assert_eq!(super::unicode_inputs("a\u{1f600}").len(), 6);
     }
 }

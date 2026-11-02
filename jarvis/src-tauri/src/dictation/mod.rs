@@ -1,14 +1,10 @@
 //! Voice dictation: stream STT into the focused text field without HUD focus steal.
 
-mod injector;
-mod reconcile;
-mod screen;
 mod session;
 
-pub use injector::SystemTextInjector;
-pub use session::{DictationSessionController, HudSnapshot};
 use crate::audio::{self, stt::TranscriptUpdate, SharedAudioPipeline};
 use serde::Serialize;
+pub use session::{DictationSessionController, HudSnapshot};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -84,10 +80,8 @@ pub fn stop_dictation(
     hud: &crate::SharedHud,
     audio: &SharedAudioPipeline,
 ) -> Result<(), String> {
-    let mut injector = SystemTextInjector;
-    let session_id = with_controller(app, |ctrl| ctrl.stop(&mut injector))?;
-
-    audio::stop_shared_pipeline(app, audio);
+    audio::finish_shared_pipeline(app, audio);
+    let session_id = with_controller(app, |ctrl| Ok(ctrl.stop()))?;
     crate::hide_dictation_overlay(app, hud)?;
     emit_dictation_phase(app, false, session_id, None);
     Ok(())
@@ -109,7 +103,11 @@ pub fn start_dictation(
 
     let session_id = {
         let mut s = hud.lock().map_err(|_| "hud state poisoned".to_string())?;
-        let snapshot = HudSnapshot { visible: s.visible, phase: s.phase, overlay_mode: s.overlay_mode };
+        let snapshot = HudSnapshot {
+            visible: s.visible,
+            phase: s.phase,
+            overlay_mode: s.overlay_mode,
+        };
         let session_id = s.session_id.wrapping_add(1);
         with_controller(app, |ctrl| ctrl.start(session_id, snapshot))?;
         s.session_id = session_id;
@@ -140,22 +138,60 @@ pub fn toggle_dictation(
     }
 }
 
-pub fn handle_transcript(app: &AppHandle, update: &TranscriptUpdate) -> Result<(), String> {
-    let mut injector = SystemTextInjector;
-    let Some(text_preview) = with_controller(app, |ctrl| {
-        ctrl.on_transcript(
-            update.hud_session_id,
-            &update.text,
-            update.kind,
-            &mut injector,
-        )
-    })?
-    else {
-        return Ok(());
-    };
+pub fn prompt_tail(app: &AppHandle, session_id: u64) -> String {
+    with_controller(app, |ctrl| {
+        Ok(if ctrl.accepts(session_id) {
+            ctrl.tail().to_string()
+        } else {
+            String::new()
+        })
+    })
+    .unwrap_or_default()
+}
 
-    emit_dictation_phase(app, true, update.hud_session_id, text_preview);
+/// Dispatch directly for shutdown ordering, then notify webviews without re-entering the native listener.
+pub fn publish_transcript(app: &AppHandle, update: TranscriptUpdate) -> Result<(), String> {
+    handle_transcript(app, &update)?;
+    app.emit_filter("transcript-update", update, |target| !matches!(target, tauri::EventTarget::App))
+        .map_err(|e| e.to_string())
+}
+
+pub fn handle_transcript(app: &AppHandle, update: &TranscriptUpdate) -> Result<(), String> {
+    let (accepted, final_text) = with_controller(app, |ctrl| {
+        Ok((ctrl.accepts(update.hud_session_id), ctrl.final_text(update.hud_session_id, &update.text, update.is_final)))
+    })?;
+    if !accepted { return Ok(()); }
+    let text = final_text.unwrap_or_else(|| update.text.clone());
+    if !update.is_final {
+        emit_dictation_phase(app, true, update.hud_session_id, Some(text.clone()));
+    }
+    if dispatch_final(update.is_final, &text, &mut |text| {
+            let previous = crate::commands::executor::get_clipboard_text().ok();
+            let result = crate::commands::executor::set_clipboard_text(text)
+                .and_then(|_| crate::input::send_keys::send_keys("^v"));
+            if result.is_ok() {
+                std::thread::sleep(std::time::Duration::from_millis(120));
+            }
+            if let Some(previous) = previous {
+                let _ = crate::commands::executor::set_clipboard_text(&previous);
+            }
+            result.or_else(|_| crate::input::type_text::type_unicode(text))
+        })? {
+        with_controller(app, |ctrl| {
+            if ctrl.accepts(update.hud_session_id) {
+                ctrl.remember(&text);
+            }
+            Ok(())
+        })?;
+        emit_dictation_phase(app, true, update.hud_session_id, None);
+    }
     Ok(())
+}
+
+fn dispatch_final(is_final: bool, text: &str, insert: &mut impl FnMut(&str) -> Result<(), String>) -> Result<bool, String> {
+    if !is_final || text.is_empty() { return Ok(false); }
+    insert(text)?;
+    Ok(true)
 }
 
 /// Stop dictation when HUD opens for command listening.
@@ -168,49 +204,14 @@ pub fn stop_for_hud(app: &AppHandle, hud: &crate::SharedHud, audio: &SharedAudio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dictation::injector::{apply_transcript, apply_transcript_segment_with_kind, MockTextInjector};
-    use crate::dictation::reconcile::TranscriptReconciler;
-
     #[test]
-    fn apply_stt_delta_matches_reconcile_module() {
-        let delta = reconcile::apply_stt_delta("hi", "hi there");
-        assert_eq!(delta.suffix, " there");
-    }
-
-    #[test]
-    fn silence_reset_kind_clears_segment_without_typing() {
-        let mut segment = "hello world".to_string();
-        let mut last = "hello world".to_string();
-        let mut session = "hello world".to_string();
-        let mut typed = true;
-        let mut mock = MockTextInjector::new();
-
-        apply_transcript_segment_with_kind(
-            &mut segment,
-            &mut last,
-            &mut session,
-            &mut typed,
-            "",
-            crate::audio::transcript_event::TranscriptPartialKind::SilenceReset,
-            &mut mock,
-        )
-        .unwrap();
-
-        assert!(mock.type_calls.is_empty());
-        assert!(mock.backspace_calls.is_empty());
-        assert_eq!(segment, "hello world");
-        assert!(last.is_empty());
-    }
-
-    #[test]
-    fn handle_transcript_applies_delta_to_injector() {
-        let mut reconciler = TranscriptReconciler::new();
-        let mut mock = MockTextInjector::new();
-
-        apply_transcript(&mut reconciler, "hello", &mut mock).unwrap();
-        apply_transcript(&mut reconciler, "hello world", &mut mock).unwrap();
-
-        assert_eq!(mock.type_calls, vec!["hello", " world"]);
-        assert_eq!(reconciler.segment_injected(), "hello world");
+    fn partials_never_insert_final_inserts_once() {
+        let mut calls = Vec::new();
+        let mut insert = |text: &str| { calls.push(text.to_owned()); Ok(()) };
+        dispatch_final(false, "hel", &mut insert).unwrap();
+        dispatch_final(false, "hello world", &mut insert).unwrap();
+        dispatch_final(true, "hello world", &mut insert).unwrap();
+        assert_eq!(calls, vec!["hello world"]);
     }
 }
+
