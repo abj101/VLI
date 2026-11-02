@@ -2573,6 +2573,9 @@ fn update_settings(
     let conn = open_db_connection(&app)?;
     db::apply_settings_patch(&conn, &patch).map_err(|e| e.to_string())?;
     let settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
+    if settings.dictation_cleanup && (patch.dictation_cleanup == Some(true) || patch.local_whisper_use_gpu.is_some()) {
+        llm::local::warmup_dictation(app.clone(), settings.local_whisper_use_gpu);
+    }
     if patch.local_whisper_model.is_some() || patch.local_whisper_use_gpu.is_some() {
         audio::stt::clear_whisper_server(&app);
     }
@@ -2680,6 +2683,9 @@ pub fn run() {
                 refresh_command_cache(app.handle(), &command_cache_for_setup)?;
                 let conn = open_db_connection(app.handle())?;
                 let app_settings = db::get_app_settings(&conn).map_err(|e| e.to_string())?;
+                if app_settings.dictation_cleanup {
+                    llm::local::warmup_dictation(app.handle().clone(), app_settings.local_whisper_use_gpu);
+                }
                 let router_warmup = app_settings.llm_router_tier2_enabled
                     && app_settings.llm_router_warmup_on_launch;
         #[cfg(target_os = "macos")]
@@ -3029,6 +3035,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                llm::local::shutdown_dictation_server();
                 llm::local::shutdown_router_server();
                 audio::stt::clear_whisper_server(app_handle);
                 if let Some(cache) = app_handle.try_state::<llm::ComposerModelCache>() {
@@ -3118,6 +3125,9 @@ mod tests {
             llm_composer_enabled: false,
             llm_composer_model_path: None,
             llm_composer_warmup_on_launch: false,
+            dictation_cleanup: true,
+            dictation_style: "semi-formal".into(),
+            dictation_vocabulary: String::new(),
             dictation_hotkey: db::settings::DEFAULT_DICTATION_HOTKEY.to_string(),
             dictation_hotkey_mode: db::settings::DEFAULT_DICTATION_HOTKEY_MODE.to_string(),
         }
@@ -3147,6 +3157,9 @@ mod tests {
             llm_composer_enabled: None,
             llm_composer_model_path: None,
             llm_composer_warmup_on_launch: None,
+            dictation_cleanup: None,
+            dictation_style: None,
+            dictation_vocabulary: None,
             dictation_hotkey: None,
             dictation_hotkey_mode: None,
         };
@@ -3174,6 +3187,9 @@ mod tests {
             llm_composer_enabled: None,
             llm_composer_model_path: None,
             llm_composer_warmup_on_launch: None,
+            dictation_cleanup: None,
+            dictation_style: None,
+            dictation_vocabulary: None,
             dictation_hotkey: None,
             dictation_hotkey_mode: None,
         };

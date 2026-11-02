@@ -7,6 +7,7 @@ use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
+pub const DICTATION_MODEL_FILE: &str = "s1-mini-q4_k_m.gguf";
 pub const ROUTER_MODEL_FILE: &str = "d1-2B-Q4_K_M.gguf";
 pub const COMPOSER_MODEL_FILE: &str = "qwen2.5-3b-instruct-q4_k_m.gguf";
 const ROUTER_N_CTX: u32 = 2048;
@@ -22,6 +23,7 @@ const LLAMA_SERVER_EXE: &str = "llama/llama-server.exe";
 #[cfg(not(windows))]
 const LLAMA_SERVER_EXE: &str = "llama-server";
 
+static DICTATION_SERVER: OnceLock<Mutex<Option<RouterServer>>> = OnceLock::new();
 static ROUTER_SERVER: OnceLock<Mutex<Option<RouterServer>>> = OnceLock::new();
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
@@ -109,6 +111,40 @@ pub fn resolve_composer_model_path(
     custom_path: Option<&str>,
 ) -> Result<PathBuf, String> {
     resolve_model(app, custom_path, COMPOSER_MODEL_FILE, "Composer")
+}
+
+pub fn warmup_dictation(app: AppHandle, use_gpu: bool) {
+    std::thread::spawn(move || {
+        let result = (|| {
+            let path = resolve_model(&app, None, DICTATION_MODEL_FILE, "Dictation")?;
+            let path = path.to_string_lossy().into_owned();
+            let mut slot = DICTATION_SERVER.get_or_init(|| Mutex::new(None)).lock().map_err(|_| "dictation sidecar mutex poisoned".to_string())?;
+            let conn = crate::open_db_connection(&app)?;
+            let settings = crate::db::get_app_settings(&conn).map_err(|e| e.to_string())?;
+            if !settings.dictation_cleanup || settings.local_whisper_use_gpu != use_gpu {
+                return Ok(());
+            }
+            if slot.as_ref().is_some_and(|s| s.model_path == path && s.use_gpu == use_gpu) { return Ok(()); }
+            *slot = None;
+            let mut args = sidecar_args(&path, 2048, use_gpu);
+            args.extend(["--temp".into(), "0".into()]);
+            let sidecar = sidecar::spawn(&app, LLAMA_SERVER_EXE, &args, "/health", SIDECAR_START_TIMEOUT)?;
+            *slot = Some(RouterServer { model_path: path, use_gpu, sidecar });
+            Ok::<(), String>(())
+        })();
+        if let Err(e) = result { log::warn!("S1-mini by Superwhisper warmup: {e}"); }
+    });
+}
+
+pub(crate) fn dictation_server_port(use_gpu: bool) -> Option<u16> {
+    let slot = DICTATION_SERVER.get()?.try_lock().ok()?;
+    slot.as_ref().filter(|server| server.use_gpu == use_gpu).map(|server| server.sidecar.port)
+}
+
+pub fn shutdown_dictation_server() {
+    if let Some(slot) = DICTATION_SERVER.get() {
+        if let Ok(mut server) = slot.lock() { *server = None; }
+    }
 }
 
 fn sidecar_args(model_path: &str, context: u32, use_gpu: bool) -> Vec<String> {

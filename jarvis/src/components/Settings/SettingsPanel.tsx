@@ -6,6 +6,11 @@ import {
   applyEditorTransparencyToDocument,
   applyHudTransparencyToDocument,
   normalizeDictationHotkeyMode,
+  normalizeDictationStyle,
+  DEFAULT_DICTATION_CLEANUP,
+  DEFAULT_DICTATION_STYLE,
+  DEFAULT_DICTATION_VOCABULARY,
+  DICTATION_STYLE_OPTIONS,
   DEFAULT_LOCAL_WHISPER_MODEL,
   normalizeLocalWhisperModel,
   LOCAL_WHISPER_MODEL_OPTIONS,
@@ -25,6 +30,7 @@ import {
   type HotkeyRecordingState,
   type EditorThemePreference,
   type DictationHotkeyMode,
+  type DictationStyle,
   type LocalWhisperModelId,
 } from "../editor/SettingsPanel.logic";
 import { formatUserError } from "../../utils/userErrors";
@@ -57,6 +63,9 @@ type AppSettingsPayload = {
   llmRouterWarmupOnLaunch: boolean;
   dictationHotkey: string;
   dictationHotkeyMode: string;
+  dictationCleanup: boolean;
+  dictationStyle: string;
+  dictationVocabulary: string;
 };
 
 type RouterStatusPayload = {
@@ -98,6 +107,9 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
 
   const [dictationHotkey, setDictationHotkey] = useState("ctrl+shift+d");
   const [dictationHotkeyMode, setDictationHotkeyMode] = useState<DictationHotkeyMode>("toggle");
+  const [dictationCleanup, setDictationCleanup] = useState(DEFAULT_DICTATION_CLEANUP);
+  const [dictationStyle, setDictationStyle] = useState<DictationStyle>(DEFAULT_DICTATION_STYLE);
+  const [dictationVocabulary, setDictationVocabulary] = useState(DEFAULT_DICTATION_VOCABULARY);
   const [dictationHotkeyError, setDictationHotkeyError] = useState<string | null>(null);
   const [savingDictationHotkey, setSavingDictationHotkey] = useState(false);
   const [dictationHotkeyRecording, setDictationHotkeyRecording] = useState(false);
@@ -221,6 +233,9 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
       app.dictationHotkey?.trim().length ? app.dictationHotkey.trim() : "ctrl+shift+d",
     );
     setDictationHotkeyMode(normalizeDictationHotkeyMode(app.dictationHotkeyMode));
+    setDictationCleanup(app.dictationCleanup ?? DEFAULT_DICTATION_CLEANUP);
+    setDictationStyle(normalizeDictationStyle(app.dictationStyle));
+    setDictationVocabulary(app.dictationVocabulary ?? DEFAULT_DICTATION_VOCABULARY);
   };
 
   const routerModelPresent = routerStatus.modelPresent;
@@ -507,6 +522,45 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
     }
   };
 
+  const persistDictationCleanup = async (next: boolean) => {
+    const previous = dictationCleanup;
+    setDictationCleanup(next);
+    try {
+      const settings = await invoke<AppSettingsPayload>("update_settings", {
+        patch: { dictationCleanup: next },
+      });
+      setDictationCleanup(settings.dictationCleanup ?? DEFAULT_DICTATION_CLEANUP);
+    } catch (err) {
+      setDictationCleanup(previous);
+      showSettingsNotice(formatUserError(err, "Could not save dictation cleanup setting."));
+    }
+  };
+
+  const persistDictationStyle = async (next: DictationStyle) => {
+    const previous = dictationStyle;
+    setDictationStyle(next);
+    try {
+      const settings = await invoke<AppSettingsPayload>("update_settings", {
+        patch: { dictationStyle: next },
+      });
+      setDictationStyle(normalizeDictationStyle(settings.dictationStyle));
+    } catch (err) {
+      setDictationStyle(previous);
+      showSettingsNotice(formatUserError(err, "Could not save dictation style."));
+    }
+  };
+
+  const persistDictationVocabulary = async () => {
+    try {
+      const settings = await invoke<AppSettingsPayload>("update_settings", {
+        patch: { dictationVocabulary },
+      });
+      setDictationVocabulary(settings.dictationVocabulary ?? DEFAULT_DICTATION_VOCABULARY);
+    } catch (err) {
+      showSettingsNotice(formatUserError(err, "Could not save personal vocabulary."));
+    }
+  };
+
   const persistWakeEngine = async (next: string) => {
     setWakeEngine(next);
     try {
@@ -720,6 +774,62 @@ export function SettingsPanel({ activeNav: pane = "hotkeys" }: SettingsPanelProp
                       />
                     </span>
                   </div>
+                  <div className="editor-settings-row editor-settings-row--switch">
+                    <span className="editor-settings-row-label editor-settings-row-label--stack" id="editor-dictation-cleanup-label">
+                      <SettingsLabelWithInfo
+                        tipId="tip-dictation-cleanup"
+                        tip="Clean up each dictated chunk with S1-mini by Superwhisper. Turn this off to keep raw speech-to-text output."
+                      >
+                        Text cleanup
+                      </SettingsLabelWithInfo>
+                    </span>
+                    <span className="editor-settings-row-control editor-settings-row-control--switch">
+                      <button
+                        type="button"
+                        id="editor-dictation-cleanup"
+                        className={`editor-switch${dictationCleanup ? " is-on" : ""}`}
+                        role="switch"
+                        aria-labelledby="editor-dictation-cleanup-label"
+                        aria-checked={dictationCleanup}
+                        onClick={() => void persistDictationCleanup(!dictationCleanup)}
+                      >
+                        <span className="editor-switch-knob" />
+                      </button>
+                    </span>
+                  </div>
+                  <p className="editor-settings-help">
+                    S1-mini by Superwhisper cleans up dictated text after transcription.
+                  </p>
+                  <div className="editor-settings-row">
+                    <span className="editor-settings-row-label" id="editor-dictation-style-label">
+                      Writing style
+                    </span>
+                    <span className="editor-settings-row-control">
+                      <EditorSelect
+                        id="editor-dictation-style"
+                        labelledBy="editor-dictation-style-label"
+                        value={dictationStyle}
+                        onChange={(value) =>
+                          void persistDictationStyle(normalizeDictationStyle(value))
+                        }
+                        options={[...DICTATION_STYLE_OPTIONS]}
+                      />
+                    </span>
+                  </div>
+                  <label className="editor-settings-vocabulary" htmlFor="editor-dictation-vocabulary">
+                    Personal vocabulary
+                    <textarea
+                      id="editor-dictation-vocabulary"
+                      rows={3}
+                      value={dictationVocabulary}
+                      placeholder="Claude, Jarvis, Tauri"
+                      onChange={(event) => setDictationVocabulary(event.target.value)}
+                      onBlur={() => void persistDictationVocabulary()}
+                    />
+                  </label>
+                  <p className="editor-settings-help">
+                    Add names and terms separated by commas to improve speech recognition.
+                  </p>
                 </section>
               </div>
             )}

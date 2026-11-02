@@ -13,4 +13,9 @@ export const llmModels = [
     url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
     label: "composer",
   },
+  {
+    file: "s1-mini-q4_k_m.gguf",
+    url: "https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/main/s1-mini-q4_k_m.gguf",
+    label: "dictation",
+  },
 ];

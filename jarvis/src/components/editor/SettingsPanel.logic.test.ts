@@ -7,6 +7,8 @@ import {
   normalizeSttProvider,
   normalizeLocalWhisperModel,
   DEFAULT_LOCAL_WHISPER_MODEL,
+  DEFAULT_DICTATION_STYLE,
+  normalizeDictationStyle,
   formatByteSize,
   whisperModelShortTitle,
   whisperModelSubtitle,
@@ -30,6 +32,15 @@ import {
 } from "./SettingsPanel.logic";
 
 describe("SettingsPanel logic", () => {
+  it("normalizes dictation style to an allowed value with semi-formal default", () => {
+    expect(DEFAULT_DICTATION_STYLE).toBe("semi-formal");
+    expect(normalizeDictationStyle("casual")).toBe("casual");
+    expect(normalizeDictationStyle("semi-casual")).toBe("semi-casual");
+    expect(normalizeDictationStyle("formal")).toBe("formal");
+    expect(normalizeDictationStyle("invalid")).toBe("semi-formal");
+    expect(normalizeDictationStyle(null)).toBe("semi-formal");
+  });
+
   it("normalizes local Whisper model id with base.en default", () => {
     expect(normalizeLocalWhisperModel(null)).toBe(DEFAULT_LOCAL_WHISPER_MODEL);
     expect(normalizeLocalWhisperModel(undefined)).toBe("base.en");

@@ -31,6 +31,7 @@ src-tauri/resources/oww/*.onnx
 # On-device LLM GGUF (fetch via npm run fetch-models / fetch-llm-models)
 src-tauri/resources/qwen2.5-3b-instruct-q4_k_m.gguf
 src-tauri/resources/d1-2B-Q4_K_M.gguf
+src-tauri/resources/s1-mini-q4_k_m.gguf
 
 # Legacy Picovoice Porcupine assets (wake engine removed; do not commit)
 src-tauri/resources/porcupine/

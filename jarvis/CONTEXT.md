@@ -43,8 +43,12 @@ STT event tag (`audio/transcript_event.rs`): `growth`, `revision`, `silence_rese
 
 ## Dictation session controller
 
-Lifecycle module (`dictation/session.rs`): active session, inserted text tail for spacing and Whisper context, and utterance count. Slow insertion runs outside its mutex.
+Lifecycle module (`dictation/session.rs`): active session, inserted text tail for spacing and Whisper context, utterance count, and email/general context captured from the focused app at session start. Slow cleanup and insertion run outside its mutex.
 
 ## Dictation insertion
 
 Final text is pasted through the existing clipboard and key-chord helpers, then the previous text clipboard is restored. Batched UTF-16 keyboard input is the fallback. Dictation never backspaces or rewrites the focused field.
+
+## Dictation cleanup
+
+S1-mini by Superwhisper runs in a separate resident llama-server sidecar. Each final utterance uses the model's exact normalization prompt, with an 800 ms timeout and raw-text fallback when unavailable or invalid. Cleanup style is configurable; personal vocabulary feeds only the Whisper dictation prompt.

@@ -242,6 +242,9 @@ mod tests {
             llm_composer_enabled: false,
             llm_composer_model_path: None,
             llm_composer_warmup_on_launch: false,
+            dictation_cleanup: true,
+            dictation_style: "semi-formal".into(),
+            dictation_vocabulary: String::new(),
             dictation_hotkey: crate::db::settings::DEFAULT_DICTATION_HOTKEY.to_string(),
             dictation_hotkey_mode: crate::db::settings::DEFAULT_DICTATION_HOTKEY_MODE.to_string(),
         };

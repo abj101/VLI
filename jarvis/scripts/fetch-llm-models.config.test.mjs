@@ -6,6 +6,7 @@ describe("fetch-llm-models.config", () => {
     expect(llmModels.map((m) => m.file)).toEqual([
       "d1-2B-Q4_K_M.gguf",
       "qwen2.5-3b-instruct-q4_k_m.gguf",
+      "s1-mini-q4_k_m.gguf",
     ]);
   });
 });

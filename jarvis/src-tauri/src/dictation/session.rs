@@ -26,6 +26,7 @@ pub struct DictationSessionController {
     session_id: Option<u64>,
     inserted_tail: String,
     utterance_count: usize,
+    context: &'static str,
 }
 impl DictationSessionController {
     pub fn is_active(&self) -> bool {
@@ -43,6 +44,13 @@ impl DictationSessionController {
         self.utterance_count = 0;
         Ok(session_id)
     }
+    pub fn set_context(&mut self, context: &'static str) {
+        self.context = context;
+    }
+    pub fn context(&self) -> &'static str {
+        self.context
+    }
+
     pub fn stop(&mut self) -> u64 {
         self.session_id.take().unwrap_or(0)
     }
@@ -50,7 +58,11 @@ impl DictationSessionController {
         self.session_id == Some(id)
     }
     pub fn final_text(&self, id: u64, text: &str, is_final: bool) -> Option<String> {
-        if self.accepts(id) && is_final { Some(join_and_capitalize(self.tail(), text)) } else { None }
+        if self.accepts(id) && is_final {
+            Some(join_and_capitalize(self.tail(), text))
+        } else {
+            None
+        }
     }
     pub fn tail(&self) -> &str {
         &self.inserted_tail
@@ -115,12 +127,25 @@ mod tests {
     #[test]
     fn partials_never_insert_and_final_inserts_once() {
         let mut ctrl = DictationSessionController::default();
-        ctrl.start(7, HudSnapshot { visible: false, phase: HudPhase::Idle, overlay_mode: HudOverlayMode::Command }).unwrap();
+        ctrl.start(
+            7,
+            HudSnapshot {
+                visible: false,
+                phase: HudPhase::Idle,
+                overlay_mode: HudOverlayMode::Command,
+            },
+        )
+        .unwrap();
         let mut inserted = Vec::new();
-        for (text, final_update) in [("hel", false), ("hello world", false), ("hello world", true)] {
-            if let Some(text) = ctrl.final_text(7, text, final_update) { inserted.push(text); }
+        for (text, final_update) in [
+            ("hel", false),
+            ("hello world", false),
+            ("hello world", true),
+        ] {
+            if let Some(text) = ctrl.final_text(7, text, final_update) {
+                inserted.push(text);
+            }
         }
         assert_eq!(inserted, vec!["Hello world"]);
     }
-
 }

@@ -645,10 +645,9 @@ fn dictation_loop(
     let mut last_decode = Instant::now();
     let mut speech = false;
     let finalize = |buffer: &[f32]| {
-        let prompt = crate::dictation::prompt_tail(app, id);
+        let prompt = crate::dictation::dictation_prompt(app, id);
         let started = Instant::now();
         let decoded = run_decode_prompt(app, model, trim_utterance(buffer), gpu, &prompt);
-        debug!("dictation: decode {} ms", started.elapsed().as_millis());
         if let Ok(raw) = decoded {
             if let Some(text) = normalize_transcript_candidate(&raw) {
                 let _ = crate::dictation::publish_transcript(
@@ -659,6 +658,7 @@ fn dictation_loop(
                         hud_session_id: id,
                         kind: TranscriptPartialKind::Growth,
                     },
+                    started.elapsed().as_millis(),
                 );
             }
         }
@@ -681,7 +681,7 @@ fn dictation_loop(
         if last_decode.elapsed() >= INFER_EVERY {
             last_decode = Instant::now();
             let start = buffer.len().saturating_sub(MAX_BUFFER_SAMPLES);
-            let prompt = crate::dictation::prompt_tail(app, id);
+            let prompt = crate::dictation::dictation_prompt(app, id);
             if let Ok(raw) = run_decode_prompt(app, model, &buffer[start..], gpu, &prompt) {
                 if let Some(text) = normalize_transcript_candidate(&raw) {
                     let _ = crate::dictation::publish_transcript(
@@ -692,6 +692,7 @@ fn dictation_loop(
                             hud_session_id: id,
                             kind: TranscriptPartialKind::Growth,
                         },
+                        0,
                     );
                 }
             }
@@ -715,7 +716,9 @@ mod tests {
     #[test]
     fn dictation_buffer_keeps_ten_seconds() {
         let mut buffer = Vec::new();
-        for _ in 0..10 { super::push_dictation(&mut buffer, &vec![0.1; TARGET_RATE as usize]); }
+        for _ in 0..10 {
+            super::push_dictation(&mut buffer, &vec![0.1; TARGET_RATE as usize]);
+        }
         assert_eq!(buffer.len(), TARGET_RATE as usize * 10);
     }
 

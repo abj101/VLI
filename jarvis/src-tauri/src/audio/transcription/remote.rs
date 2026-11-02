@@ -47,6 +47,8 @@ struct RemoteAudioBody<'a> {
 struct RemoteRequestBody<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt: Option<&'a str>,
     audio: RemoteAudioBody<'a>,
 }
 
@@ -65,7 +67,11 @@ fn parse_transcript_from_response(body: &str) -> Result<String, String> {
     Err("remote STT: response missing text/transcript".into())
 }
 
-fn post_transcription(params: &RemoteSttParams, pcm_16k: &[f32]) -> Result<String, String> {
+fn post_transcription(
+    params: &RemoteSttParams,
+    pcm_16k: &[f32],
+    prompt: Option<&str>,
+) -> Result<String, String> {
     if pcm_16k.len() < MIN_DECODE_SAMPLES || !audio_has_speech(pcm_16k) {
         return Ok(String::new());
     }
@@ -73,6 +79,7 @@ fn post_transcription(params: &RemoteSttParams, pcm_16k: &[f32]) -> Result<Strin
     let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);
     let body = RemoteRequestBody {
         model: params.model.as_deref(),
+        prompt,
         audio: RemoteAudioBody {
             encoding: "pcm_s16le",
             sample_rate_hz: TARGET_RATE,
@@ -184,7 +191,7 @@ fn remote_stt_loop(
         }
         last_infer = Instant::now();
 
-        let text = match post_transcription(&params, &buffer_16k) {
+        let text = match post_transcription(&params, &buffer_16k, None) {
             Ok(t) => {
                 consecutive_errors = 0;
                 t
@@ -238,7 +245,7 @@ fn remote_stt_loop(
     }
 
     if buffer_16k.len() >= MIN_DECODE_SAMPLES {
-        if let Ok(text) = post_transcription(&params, &buffer_16k) {
+        if let Ok(text) = post_transcription(&params, &buffer_16k, None) {
             if let Some(text) = normalize_transcript_candidate(&text) {
                 let _ = app.emit(
                     "transcript-update",
@@ -281,8 +288,11 @@ fn remote_dictation_loop(
     let mut speech = false;
     let finalize = |buffer: &[f32]| {
         let started = std::time::Instant::now();
-        let decoded = post_transcription(params, crate::audio::stt::trim_utterance(buffer));
-        debug!("dictation: decode {} ms", started.elapsed().as_millis());
+        let decoded = post_transcription(
+            params,
+            crate::audio::stt::trim_utterance(buffer),
+            Some(&crate::dictation::dictation_prompt(app, id)),
+        );
         if let Ok(raw) = decoded {
             if let Some(text) = normalize_transcript_candidate(&raw) {
                 let _ = crate::dictation::publish_transcript(
@@ -293,6 +303,7 @@ fn remote_dictation_loop(
                         hud_session_id: id,
                         kind: TranscriptPartialKind::Growth,
                     },
+                    started.elapsed().as_millis(),
                 );
             }
         }
@@ -312,7 +323,11 @@ fn remote_dictation_loop(
         if last_infer.elapsed() >= INFER_EVERY {
             last_infer = std::time::Instant::now();
             let start = buffer.len().saturating_sub(TARGET_RATE as usize * 4);
-            if let Ok(raw) = post_transcription(params, &buffer[start..]) {
+            if let Ok(raw) = post_transcription(
+                params,
+                &buffer[start..],
+                Some(&crate::dictation::dictation_prompt(app, id)),
+            ) {
                 if let Some(text) = normalize_transcript_candidate(&raw) {
                     let _ = crate::dictation::publish_transcript(
                         app,
@@ -322,6 +337,7 @@ fn remote_dictation_loop(
                             hud_session_id: id,
                             kind: TranscriptPartialKind::Growth,
                         },
+                        0,
                     );
                 }
             }

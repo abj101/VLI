@@ -20,6 +20,9 @@ pub const SETTING_LLM_ROUTER_WARMUP_ON_LAUNCH: &str = "llm_router_warmup_on_laun
 pub const SETTING_LLM_COMPOSER_ENABLED: &str = "llm_composer_enabled";
 pub const SETTING_LLM_COMPOSER_MODEL_PATH: &str = "llm_composer_model_path";
 pub const SETTING_LLM_COMPOSER_WARMUP_ON_LAUNCH: &str = "llm_composer_warmup_on_launch";
+pub const SETTING_DICTATION_CLEANUP: &str = "dictation_cleanup";
+pub const SETTING_DICTATION_STYLE: &str = "dictation_style";
+pub const SETTING_DICTATION_VOCABULARY: &str = "dictation_vocabulary";
 pub const SETTING_DICTATION_HOTKEY: &str = "dictation_hotkey";
 pub const SETTING_DICTATION_HOTKEY_MODE: &str = "dictation_hotkey_mode";
 pub const SETTING_HUD_COMMAND_POSITION: &str = "hud_command_position";
@@ -161,6 +164,9 @@ pub struct AppSettings {
     /// When true, warm the composer model at app startup.
     pub llm_composer_warmup_on_launch: bool,
     /// Global shortcut to start/stop dictation into the focused text field.
+    pub dictation_cleanup: bool,
+    pub dictation_style: String,
+    pub dictation_vocabulary: String,
     pub dictation_hotkey: String,
     /// `toggle` or `push_to_talk`.
     pub dictation_hotkey_mode: String,
@@ -184,6 +190,9 @@ pub struct SettingsPatch {
     pub llm_composer_enabled: Option<bool>,
     pub llm_composer_model_path: Option<String>,
     pub llm_composer_warmup_on_launch: Option<bool>,
+    pub dictation_cleanup: Option<bool>,
+    pub dictation_style: Option<String>,
+    pub dictation_vocabulary: Option<String>,
     pub dictation_hotkey: Option<String>,
     pub dictation_hotkey_mode: Option<String>,
 }
@@ -235,6 +244,9 @@ pub fn get_app_settings(conn: &Connection) -> Result<AppSettings, DbError> {
             conn,
             SETTING_LLM_COMPOSER_WARMUP_ON_LAUNCH,
         )?),
+        dictation_cleanup: get_setting(conn, SETTING_DICTATION_CLEANUP)?.map(|v| v.trim() == "1").unwrap_or(true),
+        dictation_style: crate::dictation::cleanup::style(get_setting(conn, SETTING_DICTATION_STYLE)?.as_deref().unwrap_or("semi-formal")).to_string(),
+        dictation_vocabulary: get_setting(conn, SETTING_DICTATION_VOCABULARY)?.unwrap_or_default(),
         dictation_hotkey: get_setting(conn, SETTING_DICTATION_HOTKEY)?
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
@@ -385,6 +397,15 @@ pub fn apply_settings_patch(conn: &Connection, patch: &SettingsPatch) -> Result<
             if on { "1" } else { "0" },
         )?;
     }
+    if let Some(on) = patch.dictation_cleanup {
+        set_setting(conn, SETTING_DICTATION_CLEANUP, if on { "1" } else { "0" })?;
+    }
+    if let Some(ref style) = patch.dictation_style {
+        set_setting(conn, SETTING_DICTATION_STYLE, crate::dictation::cleanup::style(style))?;
+    }
+    if let Some(ref vocabulary) = patch.dictation_vocabulary {
+        set_setting(conn, SETTING_DICTATION_VOCABULARY, vocabulary)?;
+    }
     if let Some(ref hotkey) = patch.dictation_hotkey {
         let trimmed = hotkey.trim();
         if trimmed.is_empty() {
@@ -510,6 +531,9 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_cleanup: None,
+                dictation_style: None,
+                dictation_vocabulary: None,
                 dictation_hotkey: None,
                 dictation_hotkey_mode: None,
             },
@@ -541,6 +565,9 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_cleanup: None,
+                dictation_style: None,
+                dictation_vocabulary: None,
                 dictation_hotkey: None,
                 dictation_hotkey_mode: None,
             },
@@ -573,6 +600,9 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_cleanup: None,
+                dictation_style: None,
+                dictation_vocabulary: None,
                 dictation_hotkey: None,
                 dictation_hotkey_mode: None,
             },
@@ -606,6 +636,9 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_cleanup: None,
+                dictation_style: None,
+                dictation_vocabulary: None,
                 dictation_hotkey: None,
                 dictation_hotkey_mode: None,
             },
@@ -635,6 +668,9 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_cleanup: None,
+                dictation_style: None,
+                dictation_vocabulary: None,
                 dictation_hotkey: None,
                 dictation_hotkey_mode: None,
             },
@@ -665,6 +701,9 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_cleanup: None,
+                dictation_style: None,
+                dictation_vocabulary: None,
                 dictation_hotkey: None,
                 dictation_hotkey_mode: None,
             },
@@ -694,6 +733,9 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_cleanup: None,
+                dictation_style: None,
+                dictation_vocabulary: None,
                 dictation_hotkey: None,
                 dictation_hotkey_mode: None,
             },
@@ -719,6 +761,9 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_cleanup: None,
+                dictation_style: None,
+                dictation_vocabulary: None,
                 dictation_hotkey: None,
                 dictation_hotkey_mode: None,
             },
@@ -750,6 +795,9 @@ mod tests {
                 llm_composer_enabled: None,
                 llm_composer_model_path: None,
                 llm_composer_warmup_on_launch: None,
+                dictation_cleanup: None,
+                dictation_style: None,
+                dictation_vocabulary: None,
                 dictation_hotkey: None,
                 dictation_hotkey_mode: None,
             },
@@ -763,6 +811,22 @@ mod tests {
         assert!((s.llm_router_confidence_threshold - 0.55).abs() < 0.0001);
         assert!(s.llm_router_tier2_enabled);
         assert!(s.llm_router_warmup_on_launch);
+    }
+
+    #[test]
+    fn dictation_cleanup_settings_default_and_persist() {
+        let (_dir, conn) = open_temp();
+        let settings = get_app_settings(&conn).unwrap();
+        assert!(settings.dictation_cleanup);
+        assert_eq!(settings.dictation_style, "semi-formal");
+        assert_eq!(settings.dictation_vocabulary, "");
+        set_setting(&conn, SETTING_DICTATION_CLEANUP, "0").unwrap();
+        set_setting(&conn, SETTING_DICTATION_STYLE, "invalid").unwrap();
+        set_setting(&conn, SETTING_DICTATION_VOCABULARY, "Claude, Tauri").unwrap();
+        let settings = get_app_settings(&conn).unwrap();
+        assert!(!settings.dictation_cleanup);
+        assert_eq!(settings.dictation_style, "semi-formal");
+        assert_eq!(settings.dictation_vocabulary, "Claude, Tauri");
     }
 
     #[test]

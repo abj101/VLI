@@ -1732,6 +1732,27 @@ html[data-theme="dark"] .editor-app input[type="range"]::-moz-range-thumb {
   line-height: 1.45;
   color: var(--editor-settings-help);
 }
+.editor-settings-vocabulary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--editor-settings-heading);
+  font-size: 13px;
+  font-weight: 500;
+}
+.editor-settings-vocabulary textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 72px;
+  padding: 8px 10px;
+  border: 1px solid var(--glass-border-side);
+  border-radius: var(--radius-control);
+  color: var(--editor-input-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  resize: vertical;
+}
 
 /* Shared ring spinner — use via EditorSpinner (.editor-spinner). */
 .editor-spinner {

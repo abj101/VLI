@@ -11,6 +11,33 @@ export type LocalWhisperModelId = "tiny.en" | "base.en" | "small.en" | "large-v3
 
 export const DEFAULT_LOCAL_WHISPER_MODEL: LocalWhisperModelId = "base.en";
 
+export type DictationStyle = "casual" | "semi-casual" | "semi-formal" | "formal";
+export const DEFAULT_DICTATION_CLEANUP = true;
+export const DEFAULT_DICTATION_STYLE: DictationStyle = "semi-formal";
+export const DEFAULT_DICTATION_VOCABULARY = "";
+export const DICTATION_STYLE_OPTIONS: ReadonlyArray<{
+  value: DictationStyle;
+  label: string;
+}> = [
+  { value: "casual", label: "Casual" },
+  { value: "semi-casual", label: "Semi-casual" },
+  { value: "semi-formal", label: "Semi-formal" },
+  { value: "formal", label: "Formal" },
+];
+
+export function normalizeDictationStyle(raw: string | null | undefined): DictationStyle {
+  const value = (raw ?? "").trim().toLowerCase();
+  if (
+    value === "casual" ||
+    value === "semi-casual" ||
+    value === "semi-formal" ||
+    value === "formal"
+  ) {
+    return value;
+  }
+  return DEFAULT_DICTATION_STYLE;
+}
+
 export const LOCAL_WHISPER_MODEL_OPTIONS: ReadonlyArray<{
   value: LocalWhisperModelId;
   label: string;
