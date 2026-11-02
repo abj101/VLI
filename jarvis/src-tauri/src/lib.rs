@@ -289,6 +289,13 @@ fn shortcut_matches_stored(stored: &str, pressed: &Shortcut) -> bool {
         .unwrap_or(false)
 }
 
+fn shortcut_matches_binding(binding: &Mutex<String>, pressed: &Shortcut) -> bool {
+    binding
+        .lock()
+        .map(|stored| shortcut_matches_stored(&stored, pressed))
+        .unwrap_or(false)
+}
+
 pub(crate) fn resolve_fuzzy_threshold_pct(
     node_threshold_pct: u16,
     default_threshold_pct: u16,
@@ -811,7 +818,10 @@ fn strip_wake_prefix(text: &str) -> &str {
             .filter(|c| c.is_alphanumeric())
             .flat_map(char::to_lowercase)
             .collect();
-        if !matches!(w.as_str(), "hey" | "hay" | "hi" | "ok" | "okay" | "jarvis" | "javis" | "jervis") {
+        if !matches!(
+            w.as_str(),
+            "hey" | "hay" | "hi" | "ok" | "okay" | "jarvis" | "javis" | "jervis"
+        ) {
             break;
         }
         rest = rest[word.len()..].trim_start();
@@ -981,7 +991,10 @@ pub(crate) fn should_finalize_execution(
 }
 
 fn should_fire_no_match_timeout(rt: &HudRuntime, expected_session_id: u64) -> bool {
-    rt.visible && rt.phase == HudPhase::Listening && rt.session_id == expected_session_id
+    rt.visible
+        && rt.overlay_mode == HudOverlayMode::Command
+        && rt.phase == HudPhase::Listening
+        && rt.session_id == expected_session_id
 }
 
 /// Dismiss while listening: no STT words timeout, transcript idle, revision stable, or max listen cap.
@@ -1067,7 +1080,9 @@ pub(crate) fn finalize_decider_confirmation(
             || s.phase != HudPhase::Executing
             || s.session_id != expected_session_id
             || s.active_run_session_id != Some(expected_session_id)
-            || s.active_run_cancel.as_ref().is_some_and(|cancel| cancel.load(Ordering::Relaxed))
+            || s.active_run_cancel
+                .as_ref()
+                .is_some_and(|cancel| cancel.load(Ordering::Relaxed))
         {
             return Ok(false);
         }
@@ -1389,7 +1404,11 @@ fn process_transcript_update(
         };
         if let Some((session_id, revision)) = deferred {
             spawn_deferred_partial_match(
-                app.clone(), Arc::clone(rt), audio.clone(), session_id, revision,
+                app.clone(),
+                Arc::clone(rt),
+                audio.clone(),
+                session_id,
+                revision,
             );
             return Ok(());
         }
@@ -2003,8 +2022,8 @@ pub(crate) fn learned_actions_from_tool_calls(
                 .iter()
                 .map(|(key, value)| (key.clone(), serde_json::Value::String(value.clone())))
                 .collect::<serde_json::Map<_, _>>();
-            let args = llm::router::validate_args_against_tool(&tool, &raw_args)
-                .map_err(|e| e.message)?;
+            let args =
+                llm::router::validate_args_against_tool(&tool, &raw_args).map_err(|e| e.message)?;
             Ok(db::Action::RunTool {
                 tool: tool.name,
                 args,
@@ -2839,8 +2858,6 @@ pub fn run() {
                         touch_speech_on_amplitude(&amp_hud, a);
                     });
 
-                    let hud_hotkey_for_handler = configured_hotkey.clone();
-                    let dictation_hotkey_for_handler = configured_dictation_hotkey.clone();
                     let shortcut_plugin = ShortcutBuilder::new()
                         .with_shortcuts([
                             configured_hotkey.as_str(),
@@ -2860,12 +2877,15 @@ pub fn run() {
                                     return;
                                 }
 
-                                if shortcut_matches_stored(&dictation_hotkey_for_handler, shortcut)
+                                if shortcut_matches_binding(
+                                    &app.state::<DictationHotkeyBindingState>().current,
+                                    shortcut,
+                                )
                                 {
                                     info!(
                                         "dictation hotkey {:?} ({})",
                                         event.state,
-                                        dictation_hotkey_for_handler
+                                        shortcut
                                     );
                                     let mode = load_dictation_hotkey_mode(app);
                                     let pressed = event.state == ShortcutState::Pressed;
@@ -2911,13 +2931,16 @@ pub fn run() {
                                     return;
                                 }
 
-                                if !shortcut_matches_stored(&hud_hotkey_for_handler, shortcut) {
+                                if !shortcut_matches_binding(
+                                    &app.state::<HotkeyBindingState>().current,
+                                    shortcut,
+                                ) {
                                     return;
                                 }
                                 if event.state != ShortcutState::Pressed {
                                     return;
                                 }
-                                info!("voice HUD hotkey pressed ({hud_hotkey_for_handler})");
+                                info!("voice HUD hotkey pressed ({shortcut})");
                                 if let Err(err) = show_hud_from_hotkey(
                                     app,
                                     &hud_state,
@@ -3055,8 +3078,14 @@ mod tests {
 
     #[test]
     fn strip_wake_prefix_leaves_only_the_command() {
-        assert_eq!(super::strip_wake_prefix("Hey, Jarvis. Open Discord."), "Open Discord.");
-        assert_eq!(super::strip_wake_prefix("hey jarvis put chrome on the left"), "put chrome on the left");
+        assert_eq!(
+            super::strip_wake_prefix("Hey, Jarvis. Open Discord."),
+            "Open Discord."
+        );
+        assert_eq!(
+            super::strip_wake_prefix("hey jarvis put chrome on the left"),
+            "put chrome on the left"
+        );
         assert_eq!(super::strip_wake_prefix("Hey Jarvis."), "");
         assert_eq!(super::strip_wake_prefix("open notepad"), "open notepad");
     }
@@ -3076,13 +3105,19 @@ mod tests {
         assert!(deferred_partial_match_text(&state, 0, 1).is_none());
         assert!(!should_attempt_match_for_update(&state, true));
         state.last_transcript_activity = Some(Instant::now() - Duration::from_millis(1500));
-        assert_eq!(deferred_partial_match_text(&state, 0, 1).as_deref(), Some("open notepad"));
+        assert_eq!(
+            deferred_partial_match_text(&state, 0, 1).as_deref(),
+            Some("open notepad")
+        );
         state.pending_transcript = "Hey, Jarvis.".into();
         assert!(deferred_partial_match_text(&state, 0, 1).is_none());
         state.pending_transcript = "open notepad".into();
         state.last_transcript_activity = Some(Instant::now() - Duration::from_millis(1100));
         state.wake_activated = false;
-        assert_eq!(deferred_partial_match_text(&state, 0, 1).as_deref(), Some("open notepad"));
+        assert_eq!(
+            deferred_partial_match_text(&state, 0, 1).as_deref(),
+            Some("open notepad")
+        );
     }
 
     #[test]
@@ -3470,10 +3505,13 @@ mod tests {
         let mut rt = HudRuntime::default();
         let command_session_id = prepare_hud_listening_session(&mut rt);
         assert!(should_fire_no_match_timeout(&rt, command_session_id));
+
         rt.visible = false;
         let dictation_session_id = rt.session_id.wrapping_add(1);
         prepare_dictation_overlay(&mut rt, dictation_session_id);
         assert!(dictation_session_id > command_session_id);
+        rt.listening_started_at = Instant::now() - MAX_LISTEN_DURATION;
+        assert!(no_match_idle_should_dismiss(&rt));
         assert!(!should_fire_no_match_timeout(&rt, command_session_id));
     }
 
@@ -3786,6 +3824,27 @@ mod tests {
     fn shortcut_matches_stored_rejects_different_keys() {
         let hud = Shortcut::from_str("ctrl+shift+j").expect("parse hud");
         assert!(!shortcut_matches_stored("ctrl+shift+d", &hud));
+    }
+
+    #[test]
+    fn shortcut_handler_uses_rebound_keys_without_restart() {
+        // Keep the same handler alive while Settings replaces each binding.
+        for (initial, replacement) in [("ctrl+shift+d", "alt+x"), ("ctrl+shift+j", "alt+a")] {
+            let binding = Mutex::new(initial.to_string());
+            let handler = |shortcut: &Shortcut| shortcut_matches_binding(&binding, shortcut);
+            let old = Shortcut::from_str(initial).unwrap();
+            let new = Shortcut::from_str(replacement).unwrap();
+            assert!(handler(&old));
+            assert!(!handler(&new));
+
+            *binding.lock().unwrap() = replacement.to_string();
+            assert!(handler(&new), "new shortcut must work immediately");
+            assert!(!handler(&old), "old shortcut must stop matching");
+
+            *binding.lock().unwrap() = initial.to_string();
+            assert!(handler(&old), "registration rollback must restore matching");
+            assert!(!handler(&new));
+        }
     }
 
     #[test]
